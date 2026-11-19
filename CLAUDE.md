@@ -4,8 +4,9 @@
 
 **Mist** is Johnny's personal macOS browser, a fork of Phi Browser (`phibrowser/phibrowser-mac`, Apache 2.0). He adds the features he wants, removes the ones he doesn't, and replaces Phi's AI with his own. Nothing here is upstreamed.
 
-- Only `main` lives on `origin` (`BullDF/mist`).
-- The repo is public: never commit personal identifiers (email addresses, account and workspace names, Slack IDs, absolute home paths, machine names, employer details), in code, tests, docs, skills or commit messages. What agents need of them lives in Drifter memory `mist-private-ids`; fixtures use `example.com` names.
+- Only `main` lives on `origin` (`BullDF/mist`, private).
+- The tree is published to the public `BullDF/mist-public` as squashed snapshots, one commit each, never this repo's history. Publish only when Johnny asks: first `git grep` the tree for every identifier in Drifter memory `mist-private-ids`, then `git fetch git@github.com:BullDF/mist-public.git main`, `c=$(git commit-tree 'HEAD^{tree}' -p FETCH_HEAD -m "Update Mist to <date>")` with `GIT_AUTHOR_*`/`GIT_COMMITTER_*` set to `Johnny Meng` and `106421874+BullDF@users.noreply.github.com`, and `git push git@github.com:BullDF/mist-public.git $c:refs/heads/main`.
+- Because of those snapshots, never commit personal identifiers (email addresses, account and workspace names, Slack IDs, absolute home paths, machine names, employer details), in code, tests, docs, skills or commit messages. What agents need of them lives in Drifter memory `mist-private-ids`; fixtures use `example.com` names.
 - No PRs: commit straight to `main`. After an upstream sync rewrites `main`, push with `git push --force-with-lease`.
 - Commit messages are one concise summary line: no bullets, no body.
 - Removing a feature means deleting its code, state, UI, strings, project entries and the tests that only covered it. Never hide it behind a flag or leave dead code.
