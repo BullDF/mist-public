@@ -9,10 +9,6 @@ extension Bookmark: SidebarItem {
     
     var id: AnyHashable { return guid }
     
-    var iconName: String? {
-        return isFolder ? "folder" : "globe"
-    }
-    
     var isExpandable: Bool {
         return isFolder
     }

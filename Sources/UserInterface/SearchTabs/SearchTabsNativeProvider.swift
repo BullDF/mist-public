@@ -33,7 +33,6 @@ struct SearchTabsNativeProvider {
         let pinnedTabs: [Tab]
         let bookmarks: [Bookmark]
         let focusingTab: Tab?
-        let splits: [SplitGroup]
         let pinnedSplitPair: (Tab) -> (String, String)?
     }
 
@@ -47,7 +46,6 @@ struct SearchTabsNativeProvider {
             pinnedTabs: state.pinnedTabs,
             bookmarks: state.bookmarkManager.getAllBookmarks(),
             focusingTab: state.focusingTab,
-            splits: state.splits,
             pinnedSplitPair: { tab in state.pinnedSplitDBPair(forPinnedTab: tab) }
         )
     }
@@ -69,7 +67,6 @@ struct SearchTabsNativeProvider {
             pinnedTabs: pinnedTabs,
             bookmarks: bookmarks,
             focusingTab: focusingTab,
-            splits: splits,
             pinnedSplitPair: pinnedSplitPair
         )
     }

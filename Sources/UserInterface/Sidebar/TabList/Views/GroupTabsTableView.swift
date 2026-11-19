@@ -17,9 +17,8 @@ final class GroupTabsTableView: NSTableView {
     weak var phiTableDelegate: GroupTabsTableViewDelegate?
     private var pendingDragRow: Int?
     private var pendingDragStartPoint: NSPoint?
-    /// When the user presses inside the SwiftUI close or mute control areas, `NSHostingView` may
-    /// receive the mouse sequence but the SwiftUI `Button` actions do not run reliably in this
-    /// embedded inner-table path. We detect control hits in `mouseDown`, store the target here,
+    /// The embedded table can receive clicks over row controls. We detect
+    /// control hits in `mouseDown`, store the target here,
     /// and on `mouseUp` (same row and matching target) dispatch `didRequest` instead of row
     /// activation. Non-nil also suppresses manual row drag so a press on those controls does not
     /// start a tab drag.
@@ -186,9 +185,14 @@ final class GroupTabsTableView: NSTableView {
 
     private func interactionTarget(at point: NSPoint, row: Int) -> GroupTabsTableInteractionTarget? {
         guard row >= 0,
-              let cellView = view(atColumn: 0,
-                                  row: row,
-                                  makeIfNecessary: false) as? SidebarTabCellView,
+              let cell = view(atColumn: 0, row: row, makeIfNecessary: false) else { return nil }
+
+        let windowPoint = convert(point, to: nil)
+        let startPageTabID = (cell as? SidebarTabCellView)?.startPageTabID(at: windowPoint)
+            ?? (cell as? SidebarSplitPairCellView)?.startPageTabID(at: windowPoint)
+        if let startPageTabID { return .startPage(startPageTabID) }
+
+        guard let cellView = cell as? SidebarTabCellView,
               let tab = cellView.item as? Tab else {
             return nil
         }
@@ -230,11 +234,13 @@ final class GroupTabsTableView: NSTableView {
     }
 }
 
-enum GroupTabsTableInteractionTarget: String {
+enum GroupTabsTableInteractionTarget: Equatable {
     case close
     case mute
+    case startPage(Int)
 }
 
+@MainActor
 protocol GroupTabsTableViewDelegate: AnyObject {
     func tableView(_ tableView: GroupTabsTableView,
                    beginDraggingRow row: Int,

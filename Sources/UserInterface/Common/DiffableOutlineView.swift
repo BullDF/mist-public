@@ -136,9 +136,7 @@ class DiffableOutlineView: NSOutlineView {
 
     func reportInvalidSnapshot(_ error: DiffableOutlineSnapshotValidationError<AnyHashable>) {
         AppLogWarn("[DiffableOutlineView] invalid snapshot: \(error)")
-#if DEBUG
         assertionFailure("Invalid DiffableOutlineSnapshot: \(error)")
-#endif
     }
 
     func applyRemove(

@@ -7,8 +7,6 @@ import Foundation
 import CoreGraphics
 
 enum TabSwitchMetrics {
-    static let maxRecentTabs = 5
-
     private static let longPressThresholdKey = "TabSwitch.longPressThreshold"
     private static let defaultLongPressThreshold: TimeInterval = 0.25
 
@@ -20,8 +18,6 @@ enum TabSwitchMetrics {
     static let windowHorizontalInset: CGFloat = 16
     static let windowVerticalInset: CGFloat = 16
     static let windowCornerRadius: CGFloat = 20
-    static let windowShadowRadius: CGFloat = 14
-
     static let cellWidth: CGFloat = 182
     static let cellHeight: CGFloat = 157
     static let cellSpacing: CGFloat = 8
@@ -36,4 +32,18 @@ enum TabSwitchMetrics {
     static let titleLineLimit = 1
     static let hoverAnimationDuration: TimeInterval = 0.15
 
+    /// The panel stays this far inside its window's sides; tabs past it scroll.
+    static let windowParentMargin: CGFloat = 32
+
+    static func panelWidth(cellCount: Int) -> CGFloat {
+        CGFloat(cellCount) * cellWidth
+            + CGFloat(max(0, cellCount - 1)) * cellSpacing
+            + windowHorizontalInset * 2
+    }
+
+    /// Whole cells that fit a panel at most `width` wide, at least one.
+    static func visibleCellCount(fittingPanelWidth width: CGFloat) -> Int {
+        let fitting = (width - windowHorizontalInset * 2 + cellSpacing) / (cellWidth + cellSpacing)
+        return fitting >= 1 ? Int(fitting.rounded(.down)) : 1
+    }
 }

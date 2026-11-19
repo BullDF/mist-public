@@ -38,74 +38,6 @@ final class WebContentHeaderPageColorTests: XCTestCase {
         XCTAssertEqual(state.themeContext.currentTheme.id, Theme.pure.id)
     }
 
-    func testTabStripInheritsWhileChatIsExpandedAndRestoresLatestPageColor() throws {
-        let key = PhiPreferences.GeneralSettings.layoutModeKey
-        let originalMode = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.set(LayoutMode.comfortable.rawValue, forKey: key)
-        defer { UserDefaults.standard.set(originalMode, forKey: key) }
-        // Expanding the chat is gated on the AI switch.
-        let aiKey = PhiPreferences.AISettings.phiAIEnabled.rawValue
-        let originalAI = UserDefaults.standard.object(forKey: aiKey)
-        UserDefaults.standard.set(true, forKey: aiKey)
-        defer { UserDefaults.standard.set(originalAI, forKey: aiKey) }
-
-        let state = try makeState()
-        state.aiChatTabCreationGateOverrideForTesting = false
-        let (tab, wrapper) = makeTab(color: .black)
-        state.tabs = [tab]
-        state.focusingTab = tab
-        let controller = WebContentViewController(state: state, tab: tab)
-        showInWindow(controller)
-        let header = try XCTUnwrap(controller.leftContainerViewForTesting.subviews
-            .compactMap { $0 as? WebContentHeader }.first)
-        header.currentTab = tab
-        let bookmarkBar = BookmarkBar(browserState: state)
-        controller.attachBookmarkBar(bookmarkBar)
-        let bookmarkLabel = NSTextField(labelWithString: "Bookmark")
-        bookmarkBar.addSubview(bookmarkLabel)
-        assertBackground(bookmarkBar, .black)
-        XCTAssertEqual(bookmarkLabel.effectiveAppearance.phiAppearance, .dark)
-        let split = try XCTUnwrap(controller.children.compactMap { $0 as? NSSplitViewController }.first)
-        let chat = try XCTUnwrap(split.splitViewItems.last)
-        XCTAssertEqual(split.splitViewItems.count, 2)
-
-        var presentation = WebContentHeaderPageColorPresentation.inherited
-        let subscription = controller.tabStripPageColorPresentationPublisher.sink { presentation = $0 }
-        defer { subscription.cancel() }
-        XCTAssertEqual(presentation, header.pageColorPresentation)
-        XCTAssertEqual(presentation.appearance, .dark)
-
-        // The tab strip follows the page card, which separates once the
-        // chat's split item expands.
-        state.toggleAIChat(false)
-        waitUntil { !chat.isCollapsed && presentation == .inherited }
-        XCTAssertEqual(controller.tabStripPageColorPresentation, .inherited)
-        assertBackground(header, .black)
-        assertBackground(bookmarkBar, .black)
-        XCTAssertEqual(bookmarkBar.appearance?.phiAppearance, .dark)
-
-        wrapper.pageColor = .white
-        drainPageColorUpdates()
-        XCTAssertEqual(presentation, .inherited)
-        assertBackground(header, .white)
-        assertBackground(bookmarkBar, .white)
-        XCTAssertEqual(bookmarkLabel.effectiveAppearance.phiAppearance, .light)
-        var restoredPresentation: WebContentHeaderPageColorPresentation?
-        let restoredSubscription = controller.tabStripPageColorPresentationPublisher
-            .sink { restoredPresentation = $0 }
-        defer { restoredSubscription.cancel() }
-        XCTAssertEqual(restoredPresentation, .inherited)
-
-        // The card, and the tab strip with it, rejoins the header once the
-        // collapse animation ends.
-        state.toggleAIChat(true)
-        waitUntil { presentation != .inherited }
-        XCTAssertEqual(presentation, header.pageColorPresentation)
-        XCTAssertEqual(controller.tabStripPageColorPresentation, presentation)
-        XCTAssertEqual(presentation.appearance, .light)
-        assertBackground(bookmarkBar, .white)
-    }
-
     func testTabStripInheritsWhileReaderIsPresentedAndRestoresLatestPageColor() throws {
         let key = PhiPreferences.GeneralSettings.layoutModeKey
         let originalMode = UserDefaults.standard.object(forKey: key)
@@ -410,17 +342,6 @@ final class WebContentHeaderPageColorTests: XCTestCase {
         window.contentViewController = controller
         window.orderFront(nil)
         windows.append(window)
-    }
-
-    /// Runs the run loop until `condition` holds (the AI Chat animations
-    /// included), for at most two seconds.
-    private func waitUntil(_ condition: () -> Bool,
-                           file: StaticString = #filePath, line: UInt = #line) {
-        let deadline = Date().addingTimeInterval(2)
-        while !condition(), Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
-        XCTAssertTrue(condition(), "condition never held", file: file, line: line)
     }
 
     private func makeTab(guid: Int = 1, color: NSColor?) -> (Tab, PageColorTestWebContentWrapper) {

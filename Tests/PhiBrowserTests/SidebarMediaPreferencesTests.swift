@@ -12,12 +12,10 @@ final class SidebarMediaPreferencesTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        suiteName = "SidebarMediaPreferencesTests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suiteName)!
+        (defaults, suiteName) = makeTestDefaults()
     }
 
     override func tearDown() {
-        defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
         suiteName = nil
         super.tearDown()

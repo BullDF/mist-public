@@ -10,7 +10,7 @@ import SnapKit
 class AdvancedSettingViewController: NSViewController, SettingsPane {
     var paneIdentifier: Settings.PaneIdentifier = .advanced
     var paneTitle: String = NSLocalizedString("settings.navigation.advancedTitle", value: "Advanced", comment: "Settings - Tab title for advanced settings")
-    var toolbarItemIcon: NSImage = NSImage(systemSymbolName: "gearshape.2", accessibilityDescription: nil) ?? NSImage()
+    var toolbarItemIcon: NSImage = NSImage.settingsPaneIcon(systemSymbolName: "gearshape.2", pointSize: 15)
 
     let hostingController = AdvancedSettingHostingViewController()
 

@@ -30,14 +30,6 @@ import Foundation
 ///    still-running cleaner (instead of letting it delete the fresh
 ///    instance's state), clears canonical-path residue the cleaner never
 ///    got to, and sweeps leftover `.phi-deleting-` directories.
-///
-/// The app-group shared container (`group.com.phibrowser.shared`) is
-/// deliberately untouched: every file in it is runtime machinery shared
-/// with the Sentinel side process (`SharedTokenLock` lock files,
-/// `SharedHeartbeatStore` heartbeats, `SharedAuth0Config` client-config
-/// mirrors, `SharedAppLanguagePreferenceStore` language state, Sentinel
-/// runtime-info markers), and account credentials live in the keychain,
-/// cleared separately by `AuthManager`.
 enum UserDataRemoval {
     /// The on-disk locations the mechanism erases. Injected so tests can
     /// point the mechanism at a throwaway tree; production uses
@@ -133,7 +125,7 @@ enum UserDataRemoval {
     /// standard-defaults write from here on would resurrect the dropped
     /// preferences domain. The debug menu quits right after this call; the
     /// account deletion runs its remaining clears in between and re-drops
-    /// the domain on its way out (see `AccountDeletionLocalDataRemoval`).
+    /// the domain on its way out.
     static func beginRemoval(of targets: Targets) {
         UserDefaults.standard.removePersistentDomain(forName: targets.preferencesDomain)
         let movedAside = moveAsideForDeletion(targets)

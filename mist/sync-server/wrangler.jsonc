@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mist-sync",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-22",
+  "durable_objects": {
+    "bindings": [{ "name": "SYNC_ROOMS", "class_name": "SyncRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncRoom"] }]
+}

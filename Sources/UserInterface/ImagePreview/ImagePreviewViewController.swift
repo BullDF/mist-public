@@ -45,8 +45,6 @@ private final class CircularHoverButton: NSView {
     private let button = NSButton()
     private let hoverLayer = CALayer()
     private var trackingArea: NSTrackingArea?
-    private let diameter: CGFloat
-
     weak var target: AnyObject? {
         get { button.target }
         set { button.target = newValue }
@@ -75,7 +73,6 @@ private final class CircularHoverButton: NSView {
         symbolPointSize: CGFloat = 14,
         contentVerticalOffset: CGFloat = 0
     ) {
-        self.diameter = diameter
         super.init(frame: .zero)
 
         wantsLayer = true
@@ -645,36 +642,4 @@ final class ImagePreviewViewController: NSViewController {
             NSApp.presentError(error)
         }
     }
-
-#if DEBUG
-    @objc private func openFiles() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [.image]
-        panel.title = "Select Images"
-        panel.message = "Choose one or more local images to append to the current preview list."
-
-        let completion: (NSApplication.ModalResponse) -> Void = { [weak self] response in
-            guard response == .OK, let self else { return }
-            let newItems = panel.urls.enumerated().map { index, url in
-                ImagePreviewItem(
-                    id: "debug-local-\(UUID().uuidString)-\(index)",
-                    source: .localFile(url),
-                    title: url.lastPathComponent,
-                    mimeType: UTType(filenameExtension: url.pathExtension)?.preferredMIMEType,
-                    suggestedFilename: url.lastPathComponent
-                )
-            }
-            self.state.append(items: newItems)
-        }
-
-        if let window = view.window {
-            panel.beginSheetModal(for: window, completionHandler: completion)
-        } else {
-            completion(panel.runModal())
-        }
-    }
-#endif
 }

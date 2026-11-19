@@ -318,52 +318,6 @@ final class ShortcutMenuOwnershipUITests: XCTestCase {
         assertReaderClosed(close)
     }
 
-    func testGlobalKioskShortcutActivatesFromFinderAndReleasesWhenDisabled() throws {
-        try launch(configuration: [[
-            "commandId": 90022,
-            "key": ["characters": "y", "modifiersRaw": (1 << 18) | (1 << 19) | (1 << 17)]
-        ]], additionalArguments: ["-openKioskWithGlobalShortcut", "YES"])
-        try navigateToFixture(title: firstTitle)
-        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
-        finder.activate()
-        XCTAssertTrue(finder.wait(for: .runningForeground, timeout: 5))
-        finder.typeKey("y", modifierFlags: [.control, .option, .shift])
-        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5),
-                      "The global hotkey must bring Phi forward from another app")
-        // Kiosk's toolbar address is static text; its initial editable address
-        // field belongs to a separate omnibox Dialog rather than this Window.
-        let kiosk = app.windows.containing(.button, identifier: "Choose Space").firstMatch
-        XCTAssertTrue(kiosk.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.dialogs.textFields["Search or Enter URL"].exists)
-        app.typeKey(.escape, modifierFlags: [])
-        XCTAssertFalse(kiosk.outlines["sidebarTabList"].exists)
-        XCTAssertTrue(app.outlines["sidebarTabList"].staticTexts[firstTitle].exists)
-        kiosk.buttons[XCUIIdentifierCloseWindow].click()
-        XCTAssertTrue(kiosk.waitForNonExistence(timeout: 5))
-
-        app.typeKey(",", modifierFlags: .command)
-        let pane = app.toolbars.buttons["Shortcuts"]
-        XCTAssertTrue(pane.waitForExistence(timeout: 5))
-        pane.click()
-        let settings = app.windows["Shortcuts"]
-        let search = settings.textFields["shortcuts.search"]
-        search.click()
-        search.typeText("New Kiosk Window")
-        let binding = settings.buttons["shortcuts.record.90022"]
-        XCTAssertTrue(binding.waitForExistence(timeout: 5))
-        binding.click()
-        app.typeKey(.delete, modifierFlags: [])
-        XCTAssertEqual(binding.label, "Add New")
-        settings.buttons[XCUIIdentifierCloseWindow].click()
-        let browserWindowCount = app.windows.count
-        finder.activate()
-        XCTAssertTrue(finder.wait(for: .runningForeground, timeout: 5))
-        finder.typeKey("y", modifierFlags: [.control, .option, .shift])
-        XCTAssertFalse(app.wait(for: .runningForeground, timeout: 2),
-                       "A disabled shortcut must release its global registration")
-        XCTAssertEqual(app.windows.count, browserWindowCount)
-    }
-
     private func readerFixtureURL() throws -> URL {
         // Start a loopback HTTP server rooted at Tests/Shortcuts/fixtures and
         // pass TEST_RUNNER_PHI_SHORTCUT_READER_FIXTURE_URL to xcodebuild.

@@ -14,7 +14,10 @@ returns a near-empty page whose one iframe is `crossOrigin: true` from
 `interstitial` (full-page gate), `turnstile` (widget embedded in a normal
 page, e.g. a login form), or `blocked` (a hard block/error page). A stale
 "Just a moment..." title alone is not enough: detection also requires a
-Cloudflare DOM/asset marker or characteristic verification copy.
+Cloudflare DOM/asset marker or characteristic verification copy. Nor is
+`window._cf_chl_opt` alone: Cloudflare's own page scripts (Bot Management's
+precursor, JS Detections) define it on healthy pages, so it counts only as the
+challenge page's config (`cType`/`cRay`).
 
 A managed Cloudflare browser check can sometimes finish by itself. Before
 handoff, call `waitForChallengeClearance()` once. It makes at most two timed,

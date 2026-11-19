@@ -414,12 +414,6 @@ final class TabPreviewController {
         resolver = TabPreviewContentResolver()
     }
 
-    init(window: NSWindow, resolver: TabPreviewContentResolver) {
-        self.window = window
-        presentationController = window.customTooltipController
-        self.resolver = resolver
-    }
-
     func pointerEntered(
         ownerID: UUID,
         anchorView: NSView,

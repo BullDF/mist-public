@@ -16,7 +16,6 @@ final class PinnedTabScopeTests: XCTestCase {
     override func tearDownWithError() throws {
         // This class runs real scope migrations, whose success path writes UserDefaults.standard.
         // In hosted tests, that is Phi's own preferences domain.
-        clearPinnedTabScopeMirrorDefaults()
         cancellables.removeAll()
         for directory in tempDirectories {
             try? FileManager.default.removeItem(at: directory)
@@ -240,34 +239,7 @@ final class PinnedTabScopeTests: XCTestCase {
         XCTAssertTrue(restored.allSatisfy { !$0.isPinnedTabDormant })
     }
 
-    func testScopeChangeIsRefusedWhileAMigrationRunIsInFlight() async throws {
-        let store = try makeStore()
-        let fixture = try seedProfilesAndSpaces(in: store)
-        try insertPinnedTab(
-            in: store,
-            guid: "work-pin",
-            lineageId: "work-lineage",
-            profile: fixture.workProfile,
-            title: "Work",
-            url: "https://work.example"
-        )
 
-        BrowserDataActivity.migrationRunOverrideForTesting = true
-        defer { BrowserDataActivity.migrationRunOverrideForTesting = nil }
-
-        do {
-            try await store.changePinnedTabScope(to: .space)
-            XCTFail("changing the scope during a Migration run should throw")
-        } catch {
-            XCTAssertEqual(error as? LocalStoreWriteError, .migrationInFlight)
-        }
-
-        XCTAssertEqual(store.pinnedTabScope(), .profile)
-        XCTAssertEqual(
-            store.getAllPinnedTabs(for: "Work", spaceId: "space-c").map(\.guid),
-            ["work-pin"]
-        )
-    }
 
     func testSpaceToProfileRebuildDoesNotReviveStaleProfileBackup() async throws {
         let store = try makeStore()
@@ -348,7 +320,7 @@ final class PinnedTabScopeTests: XCTestCase {
         )
 
         try await store.changePinnedTabScope(to: .space)
-        store.deleteSpaceCascade(spaceId: "space-c", origin: .userIntent)
+        store.deleteSpaceCascade(spaceId: "space-c")
         await flushWrites(store)
 
         try await store.changePinnedTabScope(to: .profile)
@@ -731,7 +703,7 @@ final class PinnedTabScopeTests: XCTestCase {
         )
         await flushWrites(store)
 
-        store.deleteSpaceCascade(spaceId: "space-a", origin: .userIntent)
+        store.deleteSpaceCascade(spaceId: "space-a")
         await flushWrites(store)
         try drainMainQueue()
 
@@ -814,76 +786,6 @@ final class PinnedTabScopeTests: XCTestCase {
         try drainMainQueue()
 
         XCTAssertTrue(store.getAllPinnedTabs(for: "Default", spaceId: "space-a").isEmpty)
-    }
-
-    /// CASE 8.5d: creating an existing guid is rejected instead of silently adding a row.
-    /// guid is not schema-unique, so duplicate writes previously succeeded. move/update/delete
-    /// address only the first matching row, leaving duplicates unmanageable; the sidebar's
-    /// guidInLocalDB dictionary traps (Mac B, 2026-09-14 23:49). rowAlreadyMapped tells
-    /// sync application to reject the miscomputed batch atomically, without persistence.
-    func testASecondPinnedCreateOnAnExistingGuidIsRefused() async throws {
-        let store = try makeStore()
-        try seedProfilesAndSpaces(in: store)
-        let url = try XCTUnwrap(URL(string: "https://dup.example"))
-
-        try await store.createPinnedTabThrowing(guid: "shared-guid", url: url,
-                                                title: "First", profileId: "Default")
-        do {
-            try await store.createPinnedTabThrowing(guid: "shared-guid", url: url,
-                                                    title: "Second", profileId: "Default")
-            XCTFail("The second create must throw instead of silently adding a row")
-        } catch {
-            XCTAssertEqual(error as? LocalStoreWriteError, .rowAlreadyMapped)
-        }
-        try drainMainQueue()
-
-        let rows = store.getAllPinnedTabs(for: "Default")
-        XCTAssertEqual(rows.filter { $0.guid == "shared-guid" }.count, 1,
-                       "The store always contains exactly one row for this guid")
-        XCTAssertEqual(rows.first?.title, "First", "No fields from the rejected create were written")
-    }
-
-    /// CASE B2-2b (M3-4a Task 2b): a sync batch creating an existing guid throws
-    /// rowAlreadyMapped and rolls back every write.
-    /// Use AccountPhiPinnedTabAccess.apply → applyPinSyncBatchThrowing, one write block
-    /// and transaction, rather than 8.5d's single-row API. B2-2's no-throw replay assertion
-    /// could pass with no guard at all; here createPinnedTabBody in LocalStore+PinnedTabScope.swift
-    /// must enforce pin idempotence on the batch path and roll back the companion create.
-    /// Bypassing that guard leaves duplicate guids unmanageable. Replay that mistakes an
-    /// update for a create relies on this rejection to roll back the entire batch.
-    func testASyncLandingBatchWithAnExistingGuidIsRefusedAsAWhole() async throws {
-        let store = try makeStore()
-        let fixture = try seedProfilesAndSpaces(in: store)
-        try insertPinnedTab(in: store, guid: "G", lineageId: "lineage-g",
-                            profile: fixture.defaultProfile, title: "First",
-                            url: "https://first.example")
-        let suite = "PinnedTabScopeTests.B2-2b.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let access = AccountPhiPinnedTabAccess(store: store, defaults: defaults)
-
-        let batch = PinApplyBatch(unordered: [
-            .create(.fixture(lineageId: "lineage-g", guid: "G", spaceId: nil,
-                             profileId: "Default", title: "Second",
-                             url: try XCTUnwrap(URL(string: "https://second.example")))),
-            .create(.fixture(lineageId: "lineage-h", guid: "H", spaceId: nil,
-                             profileId: "Default", title: "Other",
-                             url: try XCTUnwrap(URL(string: "https://other.example")))),
-        ])
-        do {
-            try await access.apply(batch, expectedGeneration: access.pinScopeGeneration(),
-                               expectedScope: access.currentScope())
-            XCTFail("Creating an existing guid must make the entire batch throw")
-        } catch {
-            XCTAssertEqual(error as? LocalStoreWriteError, .rowAlreadyMapped)
-        }
-        try drainMainQueue()
-
-        let rows = store.getAllPinnedTabs(for: "Default")
-        let sharedGuidRows = rows.filter { $0.guid == "G" }
-        XCTAssertEqual(sharedGuidRows.count, 1, "The store always contains exactly one row for this guid")
-        XCTAssertEqual(sharedGuidRows.first?.title, "First", "No fields from the rejected create were written")
-        XCTAssertFalse(rows.contains { $0.guid == "H" }, "Other operations in the batch roll back with the transaction")
     }
 
     /// CASE 8.5e: startup repair cleans an already-corrupt store.

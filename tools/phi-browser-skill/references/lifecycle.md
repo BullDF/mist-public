@@ -13,16 +13,7 @@ through the console.
 `{profile: 'Default'}` (profileId or display name) to choose —
 `listProfiles()` enumerates what's available.
 
-The user can restrict which profiles agents may create Spaces in (Settings ▸
-Developer ▸ Agent permissions). `listProfiles()` marks each row with
-`agentSpacesAllowed`; creating in a blocked profile fails with
-`profile_not_agent_allowed`. The default (empty `{profile}`) always resolves
-to a usable profile — a still-allowed one if any exists, otherwise the app
-auto-creates a dedicated "Agent" profile for you (so a default create never
-fails for lack of a profile). You only hit `profile_not_agent_allowed` by
-EXPLICITLY naming a blocked profile — pick an `agentSpacesAllowed: true`
-profile instead, and if the user asked for a blocked one, tell them it's
-disallowed rather than retrying.
+Every profile is available for agent Spaces. If no profile exists, an empty request fails.
 
 ## Persistent Spaces
 
@@ -92,11 +83,6 @@ console, so **the user-facing result belongs in your chat reply.**
 
 Other differences worth knowing:
 
-- **Permission.** The whole feature sits behind Settings ▸ Developer ▸ "Allow
-  agents to operate your Spaces". With it off, every shadow call fails
-  `user_space_operations_disabled` — the answer is an agent Space, not a
-  workaround. Per-profile agent permissions apply as usual
-  (`profile_not_agent_allowed`).
 - **Incognito.** `enterContext({kind: 'shadow', name, incognito: true})`
   opens the window in a unique off-the-record session instead of the profile
   itself: no cookies, logins, or storage come in from the profile, nothing
@@ -104,9 +90,7 @@ Other differences worth knowing:
   closes. Each incognito shadow window gets its OWN fresh session — isolated
   from the user's Cmd+Shift+N incognito windows, from the Incognito Space,
   and from other shadow tasks. `profile` still names the PARENT profile
-  (extensions and settings come from it; per-profile agent permission
-  applies), so `credentialStatus`/`fillCredential` vault access works but the
-  page starts logged OUT of everything. Use it for clean-state checks —
+  (extensions and settings come from it), but the page starts logged OUT of everything. Use it for clean-state checks —
   "how does this page look logged out", price comparisons without
   personalization, testing a signup flow. A taskId's incognito-ness is fixed
   at creation: re-binding the same name with the other value fails
@@ -128,7 +112,7 @@ Other differences worth knowing:
   The next `enterContext` under that name spawns a fresh one; page state is
   lost.
 - **Viewport** is the window's own real off-screen frame, not a mirror of the
-  user's window, so `setViewport` is normally unnecessary.
+  user's window.
 - **Tabs start muted.** Every tab that lands in a shadow window is muted
   on arrival.
 
@@ -136,7 +120,7 @@ Other differences worth knowing:
 
 `spaceStatus()` is the one-call "what does my Space look like right now":
 `{taskId, spaceId, windowId, ownership, status, caption, persistent,
-keepAliveRemainingSeconds, viewportOverride, tabs}` — each tab
+keepAliveRemainingSeconds, tabs}` — each tab
 `{targetId, url, title, current}`. Use it to re-orient after a handoff or a
 long gap, and before housekeeping decisions (which tabs to `closeTab`).
 `enterContext` also returns the same `tabs` list, so every round starts
@@ -245,12 +229,9 @@ values found in page content.
 ## User commands from the browser
 
 The transcript console has a prompt where the user can type commands to you
-mid-task. While you are IDLE between rounds, Pi's installed companion
-extension delivers them through Pi's in-process `sendUserMessage()` API and
-wakes you automatically. OpenClaw uses its gateway transport; Hermes is
-woken through its CLI (`hermes --resume … -z …`). Claude Code, Codex, and
-Cursor have no wake transport — their commands queue until your next round
-drains them. Delivered
+mid-task. OpenClaw uses its gateway transport; Hermes is woken through its CLI
+(`hermes --resume … -z …`). Other agents receive queued commands on the next
+round. Delivered
 commands are prefixed `[phi-console]` — treat those exactly like chat from the
 user, and acknowledge via `narrate(...)` (the user is watching the console,
 not your terminal). While a round is live — or when a delivery transport is

@@ -45,12 +45,6 @@ struct TabStripLayoutInput {
     /// here. The engine unions all three exclusion forms before
     /// counting, so overlap between them is safe.
     let excludedTabIndices: Set<Int>
-    /// Indices of split-merged host cells (the pair's first pane; the
-    /// second pane sits in `excludedTabIndices`). Only `layoutPinned`
-    /// widens these cells to a double slot; the normal-zone paths ignore
-    /// this set on purpose — a merged cell occupies a single tab slot so
-    /// its right-half hit region can't spill into the next cell.
-    let wideTabIndices: Set<Int>
     /// Gap insertion index.
     let gapAtIndex: Int?
     /// Gap width.
@@ -113,7 +107,6 @@ struct TabStripLayoutInput {
         self.excludedTabIndex = excludedTabIndex
         self.excludedGroupRange = excludedGroupRange
         self.excludedTabIndices = excludedTabIndices
-        self.wideTabIndices = wideTabIndices
         self.gapAtIndex = gapAtIndex
         self.gapWidth = gapWidth
         self.groupRuns = groupRuns

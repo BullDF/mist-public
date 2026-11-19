@@ -56,10 +56,6 @@ struct TabMultiSelection: Equatable {
         bookmarkGuids.insert(guid)
     }
 
-    mutating func removeBookmark(_ guid: String) {
-        bookmarkGuids.remove(guid)
-    }
-
     /// Drops any guids not present in `valid`, e.g. after their tabs close.
     mutating func formIntersection(_ valid: Set<Int>) {
         guids.formIntersection(valid)

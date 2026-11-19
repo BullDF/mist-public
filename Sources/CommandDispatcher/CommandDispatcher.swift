@@ -6,35 +6,20 @@
 import Foundation
 import AppKit
 struct CommandDispatcher {
-    // Shortcut -> Chromium command mapping for events handled on the native side.
-    private static let shortcutCommandMap: [ShortcutsKey: CommandWrapper] = [
-        ShortcutsKey(characters: "t", modifiers: [.command]): .IDC_NEW_TAB,
-        ShortcutsKey(characters: "0", modifiers: [.command]): .IDC_SELECT_TAB_0,
-        ShortcutsKey(characters: "1", modifiers: [.command]): .IDC_SELECT_TAB_1,
-        ShortcutsKey(characters: "2", modifiers: [.command]): .IDC_SELECT_TAB_2,
-        ShortcutsKey(characters: "3", modifiers: [.command]): .IDC_SELECT_TAB_3,
-        ShortcutsKey(characters: "4", modifiers: [.command]): .IDC_SELECT_TAB_4,
-        ShortcutsKey(characters: "5", modifiers: [.command]): .IDC_SELECT_TAB_5,
-        ShortcutsKey(characters: "6", modifiers: [.command]): .IDC_SELECT_TAB_6,
-        ShortcutsKey(characters: "7", modifiers: [.command]): .IDC_SELECT_TAB_7,
-    ]
-
     /// PHI-only commands intercepted in `handleKeyEquivalent` before Chromium sees them.
     private static let phiInterceptedCommands: [CommandWrapper] = [
         .PHI_TAB_SWITCHER_FORWARD,
         .PHI_TAB_SWITCHER_BACKWARD,
-        .PHI_SELECT_NEXT_SPACE,
-        .PHI_SELECT_PREVIOUS_SPACE,
-        .PHI_FARRINGDON_TOGGLE,
         .PHI_COPY_URL,
-        .PHI_TOGGLE_READER,
-        .PHI_NEW_KIOSK_WINDOW,
-        .PHI_NEW_INCOGNITO_SPACE,
-        .PHI_SHARE_PAGE,
+        .PHI_ALTERNATE_NEW_TAB,
         .PHI_CAPTURE_FULL_PAGE,
         .PHI_CAPTURE_AREA,
-        .PHI_SAVE_FOR_LATER,
-    ] + CommandWrapper.spaceSelectionCommands
+        .PHI_DRIFTER_MODEL_MENU,
+        .PHI_DRIFTER_EFFORT_MENU,
+        .PHI_DRIFTER_PREVIOUS_MARKER,
+        .PHI_DRIFTER_NEXT_MARKER,
+        .PHI_SWITCH_CHAT_PANEL_AND_TAB,
+    ]
 
     /// Commands swallowed while the focused tab shows the native NTP — it has no
     /// WebContents to inspect or view source of.
@@ -44,14 +29,6 @@ struct CommandDispatcher {
         .IDC_DEV_TOOLS_CONSOLE,
         .IDC_VIEW_SOURCE,
     ]
-
-    /// Commands that stay available while a window is agent-controlled — only
-    /// Space navigation, so the user can always leave the agent Space. Every
-    /// other browser command (menu or shortcut) is blocked until they take
-    /// control. See `isWindowAgentLocked`.
-    private static let agentLockAllowedCommands: Set<CommandWrapper> =
-        Set(CommandWrapper.spaceSelectionCommands
-            + [.PHI_SELECT_NEXT_SPACE, .PHI_SELECT_PREVIOUS_SPACE])
 
     /// Reverse lookup: user-configured shortcut key → PHI command.
     /// Rebuilt when shortcuts change via `reloadPhiShortcutMap()`.
@@ -70,7 +47,7 @@ struct CommandDispatcher {
         }
         return map
     }
-    
+
     @MainActor
     static func dispatchCommand(_ sender: Any, window: NSWindow) -> Bool {
         guard let command = CommandWrapper(rawValue: (sender as AnyObject).tag) else {
@@ -78,7 +55,7 @@ struct CommandDispatcher {
         }
         return dispatchCommand(command, to: window)
     }
-    
+
     /// True while `window` shows an agent Space the agent currently controls.
     /// Its workspace is off-limits to the user until they take control.
     @MainActor
@@ -91,52 +68,39 @@ struct CommandDispatcher {
     @MainActor
     private static func dispatchCommand(_ command: CommandWrapper, to window: NSWindow,
                                         initiatingShortcut: ShortcutsKey? = nil) -> Bool {
-        if SpaceSessionControllersManager.shared
-            .isGuestTransitionInteractionBlocked {
-            return true
-        }
-        if command == .PHI_NEW_KIOSK_WINDOW {
-            guard let appController = AppController.shared else { return false }
-            appController.newKioskWindowFromMenu(nil)
-            return true
-        }
-        if command == .PHI_NEW_INCOGNITO_SPACE {
-            guard spacesShortcutsEnabled else { return true }
-            guard let appController = AppController.shared else { return false }
-            appController.newIncognitoSpaceFromMenu(nil)
-            return true
-        }
         guard let windowController = SpaceSessionControllersManager.shared.findControllerWith(window: window) else {
             return false
         }
-        if let kioskWindowController = windowController as? KioskBrowserWindowController {
-            switch command {
-            case .PHI_COPY_URL, .PHI_SHARE_PAGE, .PHI_TOGGLE_READER, .PHI_SAVE_FOR_LATER,
-                 .PHI_CAPTURE_FULL_PAGE, .PHI_CAPTURE_AREA:
-                // Kiosk already exposes these native page actions through its
-                // menu/toolbar. Run their common handlers below, rather than
-                // treating the Kiosk-specific switch's false as action failure.
-                break
-            default:
-                return kioskWindowController.handleCommand(command)
-            }
-        }
-        // Agent lock: while the agent controls this window, block every command
-        // except Space navigation. The menu items are greyed and the shortcuts
-        // swallowed in `handleKeyEquivalent`; this is the execution backstop for
-        // anything that still reaches dispatch. Returning true = swallowed.
-        if !agentLockAllowedCommands.contains(command), isWindowAgentLocked(window) {
+        // Agent lock blocks every browser command until the user takes control.
+        if isWindowAgentLocked(window) {
             return true
         }
         // DevTools can't attach to the native NTP (no WebContents) — swallow the command.
         if nativeNtpBlockedCommands.contains(command),
            let tab = windowController.browserState.focusingTab,
-           tab.isShowingNativeNTP {
+           (tab.isShowingNativeNTP || (!windowController.browserState.isIncognito && (MistApps.address(tab.url) != nil))) {
             AppLogDebug("[DevToolsBlock] swallowed \(command) on native NTP")
             return true
         }
 
         switch command {
+        case .PHI_SWITCH_CHAT_PANEL_AND_TAB:
+            return MistChatPanelViewController.performPanelTabSwitch(in: windowController)
+        case .PHI_DRIFTER_MODEL_MENU, .PHI_DRIFTER_EFFORT_MENU:
+            guard let row = MistDrifterLaunchRow.focused(in: window) else { return false }
+            row.showPicker(command == .PHI_DRIFTER_MODEL_MENU ? .model : .effort)
+            return true
+        case .PHI_DRIFTER_PREVIOUS_MARKER, .PHI_DRIFTER_NEXT_MARKER:
+            guard case let .app(page) = nativePage(in: windowController), let chat = page as? AgentChatViewController else { return false }
+            chat.stepMarker(forward: command == .PHI_DRIFTER_NEXT_MARKER)
+            return true
+        case .IDC_RELOAD, .IDC_RELOAD_BYPASSING_CACHE:
+            if case let .app(page) = nativePage(in: windowController) { return page.performPageCommand(command) }
+            return false
+        case .IDC_FIND, .IDC_FIND_NEXT, .IDC_FIND_PREVIOUS, .IDC_ZOOM_PLUS, .IDC_ZOOM_MINUS, .IDC_ZOOM_NORMAL:
+            guard let page = nativePage(in: windowController) else { return false }
+            page.perform(command)
+            return true
         case .IDC_SHOW_BOOKMARK_BAR:
             // Keep the Chromium command identity while Phi owns its presentation.
             if PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional {
@@ -158,6 +122,13 @@ struct CommandDispatcher {
         case .IDC_NEW_TAB:
             windowController.newBrowserTab(nil)
             return true
+        case .IDC_RESTORE_TAB:
+            let state = windowController.browserState
+            return !state.isIncognito
+                && AgentChatStore.shared.restoreClosedTabSkippingAgentFolders(windowId: state.windowId)
+        case .PHI_ALTERNATE_NEW_TAB:
+            windowController.newAlternateBrowserTab()
+            return true
         case .IDC_NEW_TAB_TO_RIGHT:
             // Placeholder mode has no active tab, so "to the right" has no
             // meaning — fall back to a plain new tab. Outside placeholder,
@@ -171,13 +142,11 @@ struct CommandDispatcher {
             if windowController.handleCloseTab() {
                 return true
             }
-            // ⌘W closing the last tab in a Space tears the whole window
-            // slot down — same as ⇧⌘W / the red ✕ — rather than switching
-            // to a sibling Space. It therefore deliberately does NOT tag
-            // the slot as a tab-driven close (only the tab-row ✕ button,
-            // `Tab.close()`, still does): an untagged close reaches
-            // `unregisterWindow` as window-driven and cascades every
-            // remaining Space in the slot shut.
+            // ⌘W closing the last home page tears the whole window slot
+            // down — same as ⇧⌘W / the red ✕. It deliberately does NOT tag
+            // the slot as a tab-driven close (tab UI closes do).
+            // A last real page gets a home page first; closing that home
+            // page goes through the shell's window-driven cascade below.
             //
             // An INCOGNITO Space is the exception: it is an ephemeral
             // session inside the slot, not a user-perceived window of its
@@ -190,10 +159,21 @@ struct CommandDispatcher {
             // tab with it, on cancel nothing must close.
             let state = windowController.browserState
             if state.isIncognitoSpace, state.tabs.count <= 1 {
-                MainActor.assumeIsolated {
+                _ = MainActor.assumeIsolated {
                     SpaceManager.shared.requestCloseIncognitoSpace(spaceId: windowController.spaceId)
                 }
                 return true
+            }
+            if let tab = state.focusingTab,
+               state.applyLastTabClosePolicy(to: [tab], intent: .windowDriven) {
+                return true
+            }
+            return false
+        case .IDC_CLOSE_TAB_GROUP:
+            let state = windowController.browserState
+            if let token = state.focusingTab?.groupToken {
+                let members = state.normalTabs.filter { $0.groupToken == token }
+                if state.applyLastTabClosePolicy(to: members, intent: .windowDriven) { return true }
             }
             return false
         case .IDC_FOCUS_LOCATION:
@@ -203,6 +183,16 @@ struct CommandDispatcher {
             windowController.toggleSearchTabs()
             return true
         case .IDC_WINDOW_PIN_TAB:
+            return true
+        case .IDC_WINDOW_CLOSE_OTHER_TABS:
+            // The tab context menus' Close Other Tabs, which show this
+            // shortcut: on the selection, else the focused tab.
+            let state = windowController.browserState
+            if state.multiSelection.isActive {
+                state.closeTabsOutsideMultiSelection()
+            } else if let tab = state.focusingTab {
+                state.closeTabs(keeping: [tab.guid])
+            }
             return true
         case .IDC_SELECT_PREVIOUS_TAB:
             windowController.browserState.swicthTab(.back)
@@ -218,26 +208,10 @@ struct CommandDispatcher {
             windowController.browserState.tabSwitchManager.handleStep(
                 .backward, initiatingKey: initiatingShortcut)
             return true
-        case .PHI_SELECT_NEXT_SPACE:
-            return activateSpace(by: 1, from: windowController)
-        case .PHI_SELECT_PREVIOUS_SPACE:
-            return activateSpace(by: -1, from: windowController)
-        case .PHI_FARRINGDON_TOGGLE:
-            guard FarringdonOrganizer.canOrganizeTabs(in: windowController.browserState) else {
-                return false
-            }
-            FarringdonOrganizer.organizeFocusedWindow()
-            return true
         case .PHI_COPY_URL:
             let state = windowController.browserState
             guard let copiedURLs = state.copySelectedTabURLs() else { return false }
             OverlayToastCenter.shared.showURLCopyConfirmation(copiedURLs: copiedURLs, in: state)
-            return true
-        case .PHI_SHARE_PAGE:
-            guard PageSharingPresenter.canShare(tab: windowController.browserState.pageCommandTarget) else {
-                return false
-            }
-            windowController.sharePage(nil)
             return true
         case .PHI_CAPTURE_FULL_PAGE, .PHI_CAPTURE_AREA:
             let state = windowController.browserState
@@ -245,32 +219,11 @@ struct CommandDispatcher {
             guard PageScreenshotService.shared.canCapture(in: state, area: area) else { return false }
             PageScreenshotService.shared.capture(in: state, area: area)
             return true
-        case .PHI_TOGGLE_READER:
-            let state = windowController.browserState
-            guard let tab = state.readerViewTarget(focusingTab: state.focusingTab),
-                  !tab.isShowingNativeNTP else {
-                return false
-            }
-            state.toggleReaderView(for: tab, from: .shortcut)
-            return true
-        case .PHI_SAVE_FOR_LATER:
-            let state = windowController.browserState
-            guard let tab = state.pageCommandTarget, SaveForLaterService.canSave(tab) else {
-                return false
-            }
-            SaveForLaterService.save(tab: tab, in: state)
-            return true
-        case let c where c.spaceSelectionIndex != nil:
-            guard let index = c.spaceSelectionIndex else { return false }
-            return activateSpace(at: index, from: windowController)
         case .IDC_SELECT_LAST_TAB:
             windowController.browserState.swicthTab(.last)
             return true
         case .IDC_FOCUS_SEARCH:
             windowController.newBrowserTab(nil)
-            return true
-        case .IDC_FEEDBACK:
-            windowController.showFeedbackWindow()
             return true
         case .IDC_IMPORT_SETTINGS:
             // Migration and browser-data import must not write into the user's
@@ -279,7 +232,6 @@ struct CommandDispatcher {
             // Chromium, so the refusal lives at the chokepoint every route
             // passes through. Swallowed rather than explained: the greyed item
             // is where the user is told.
-            guard !BrowserDataActivity.migrationBlocksImport else { return true }
             // Import targets the active Space's profile; off-the-record
             // windows (standalone incognito and the Incognito Space) have
             // no importable profile — tell the user instead of opening the
@@ -308,60 +260,7 @@ struct CommandDispatcher {
     }
 
     @MainActor
-    private static func activateSpace(by step: Int, from windowController: SpaceSessionController) -> Bool {
-        guard spacesShortcutsEnabled else { return false }
-        // The slot's own list: agent Spaces hosted by other windows are not
-        // cycled through here (`SpaceWindowSlot.presents`).
-        guard let slot = windowController.slot else { return true }
-        let spaces = slot.presentedSpaces
-        guard spaces.count > 1 else { return true }
-        guard let currentId = slot.activeSpaceId,
-              let currentIdx = spaces.firstIndex(where: { $0.spaceId == currentId }) else {
-            slot.activate(spaceId: spaces[0].spaceId, userInitiated: true)
-            return true
-        }
-        let nextIdx = (currentIdx + step + spaces.count) % spaces.count
-        slot.activate(spaceId: spaces[nextIdx].spaceId, userInitiated: true)
-        return true
-    }
-
-    @MainActor
-    private static func activateSpace(at index: Int, from windowController: SpaceSessionController) -> Bool {
-        guard spacesShortcutsEnabled else { return false }
-        guard let slot = windowController.slot else { return false }
-        // Indexed into the slot's own list, matching the Spaces menu's
-        // ⌃-number rows for this window (`AppController.rebuildSpacesMenu`).
-        let spaces = slot.presentedSpaces
-        guard spaces.indices.contains(index) else { return false }
-        slot.activate(spaceId: spaces[index].spaceId, userInitiated: true)
-        return true
-    }
-
-    private static var spacesShortcutsEnabled: Bool {
-        PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue()
-        && ApplicationState.shared.canUseBrowser
-    }
-    
-    @MainActor
     static func handleKeyEquivalent(_ event: NSEvent, window: NSWindow) -> Bool {
-        if SpaceSessionControllersManager.shared
-            .isGuestTransitionInteractionBlocked {
-            // Keep application lifecycle shortcuts available while every
-            // browser command remains frozen behind the migration boundary.
-            if ShortcutsKey.eventKeys(for: event)?.canonical
-                == ShortcutsKey(characters: "q", modifiers: .command) {
-                return false
-            }
-            return true
-        }
-
-        // Kiosk Space actions have independent keys and take precedence over
-        // the ordinary window's menu equivalents only inside Kiosk windows.
-        if let kiosk = SpaceSessionControllersManager.shared
-                .findControllerWith(window: window) as? KioskBrowserWindowController,
-           let command = interceptedKioskCommand(for: event) {
-            return kiosk.handleCommand(command)
-        }
 
         // An applicable binding owns the key even when its action currently
         // has no result (for example, Copy URL without a copyable selection).
@@ -369,14 +268,12 @@ struct CommandDispatcher {
         // alias execute a different command for the same press.
         if let phiCommand = interceptedPhiCommand(for: event),
            phiShortcutApplies(phiCommand, to: window) {
+            if phiCommand == .PHI_ALTERNATE_NEW_TAB, event.isARepeat { return true }
             _ = dispatchCommand(phiCommand, to: window, initiatingShortcut: Shortcuts.key(for: phiCommand))
             return true
         }
 
-        // Agent lock: swallow every other browser shortcut while the agent
-        // controls this window, so Chromium never runs it. Space-navigation is
-        // handled above and stays live, so the user can still leave the agent
-        // Space with the keyboard.
+        // Swallow every other browser shortcut until the user takes control.
         if isWindowAgentLocked(window) {
             return true
         }
@@ -384,43 +281,81 @@ struct CommandDispatcher {
         return false
     }
 
+    /// A native page that takes find and zoom instead of Chromium's hidden page behind it.
+    @MainActor
+    private enum NativePage {
+        case reader(MarkdownReaderViewController)
+        case app(any MistAppPage)
+
+        func perform(_ command: CommandWrapper) {
+            switch self {
+            case let .reader(reader): reader.performPageCommand(command)
+            case let .app(page): _ = page.performPageCommand(command)
+            }
+        }
+
+        var zoom: CGFloat? {
+            switch self {
+            case let .reader(reader): reader.zoom
+            case let .app(page): page.pageZoom
+            }
+        }
+    }
+
+    /// A chat holding focus (its tab page or a Chat panel), else the focused tab's Markdown reader or chat page.
+    @MainActor
+    private static func nativePage(in windowController: SpaceSessionController) -> NativePage? {
+        var responder = windowController.window?.firstResponder
+        while let current = responder {
+            if let page = current as? any MistAppPage,
+               (page as? AgentChatViewController).map({ $0.conversation != nil }) ?? true { return .app(page) }
+            responder = current.nextResponder
+        }
+        let state = windowController.browserState
+        let container = windowController.mainSplitViewController.webContentContainerViewController
+        // Chromium passes its hosted window, not the shell window that shows native pages.
+        guard let tab = state.focusingTab, state.pageCommandTarget === tab else { return nil }
+        if !state.isIncognito, MistApps.address(tab.url) != nil, let page = container.appPage(for: tab),
+           page.isViewLoaded, page.view.window != nil, page.view.window === windowController.window { return .app(page) }
+        if tab.showsMarkdownReader, let reader = container.markdownReader(for: tab),
+           reader.isViewLoaded, reader.view.window != nil, reader.view.window === windowController.window {
+            return .reader(reader)
+        }
+        return nil
+    }
+
+    /// Whether a zoom menu item is enabled over the native page in `window`, or nil when Chromium decides.
+    /// Chromium answers for its hidden page, which stays at 100%, so Actual Size would stay disabled.
+    @MainActor
+    static func nativePageZoomEnabled(_ tag: Int, window: NSWindow) -> Bool? {
+        guard let command = CommandWrapper(rawValue: tag),
+              command == .IDC_ZOOM_PLUS || command == .IDC_ZOOM_MINUS || command == .IDC_ZOOM_NORMAL,
+              let controller = SpaceSessionControllersManager.shared.findControllerWith(window: window),
+              let page = nativePage(in: controller) else { return nil }
+        guard let zoom = page.zoom else { return false }
+        if command == .IDC_ZOOM_NORMAL { return abs(zoom - 1) > 0.0001 }
+        return MarkdownReaderZoom.canStep(zoom, up: command == .IDC_ZOOM_PLUS)
+    }
+
     /// Window/feature scope is distinct from transient action availability.
-    /// Keep non-browser windows, unsupported Kiosk commands and absent indexed
-    /// Space targets out of interception, without duplicating action validation.
+    /// Keep non-browser windows out of interception without duplicating action validation.
     @MainActor
     private static func phiShortcutApplies(_ command: CommandWrapper, to window: NSWindow) -> Bool {
-        if command == .PHI_NEW_KIOSK_WINDOW { return AppController.shared != nil }
-        if command == .PHI_NEW_INCOGNITO_SPACE {
-            return spacesShortcutsEnabled && AppController.shared != nil
-        }
         guard let controller = SpaceSessionControllersManager.shared.findControllerWith(window: window) else {
             return false
         }
-        if controller is KioskBrowserWindowController,
-           !command.shortcutScope.contains(.kiosk) { return false }
-        if command == .PHI_SELECT_NEXT_SPACE || command == .PHI_SELECT_PREVIOUS_SPACE {
-            return spacesShortcutsEnabled
+        // Elsewhere the keys stay with the page.
+        if command == .PHI_SWITCH_CHAT_PANEL_AND_TAB {
+            return MistChatPanelViewController.panelTabSwitch(in: controller.browserState) != nil
         }
-        if let index = command.spaceSelectionIndex {
-            return spacesShortcutsEnabled
-                && controller.slot?.presentedSpaces.indices.contains(index) == true
+        if command == .PHI_DRIFTER_PREVIOUS_MARKER || command == .PHI_DRIFTER_NEXT_MARKER {
+            if case let .app(page) = nativePage(in: controller), page is AgentChatViewController { return true }
+            return false
         }
-        if command == .PHI_SAVE_FOR_LATER { return SaveForLaterService.featureEnabled }
+        if command == .PHI_DRIFTER_MODEL_MENU || command == .PHI_DRIFTER_EFFORT_MENU {
+            return MistDrifterLaunchRow.focused(in: window) != nil
+        }
         return true
-    }
-
-    static func interceptedKioskCommand(
-        for event: NSEvent,
-        inputSourceIdentifier: String? = nil
-    ) -> CommandWrapper? {
-        Shortcuts.Group.kiosk.commands.first { command in
-            guard let key = Shortcuts.key(for: command) else { return false }
-            return matchedPhiCommand(
-                for: event,
-                shortcutMap: [key: command],
-                inputSourceIdentifier: inputSourceIdentifier
-            ) != nil
-        }
     }
 
     static func interceptedPhiCommand(
@@ -458,7 +393,7 @@ struct CommandDispatcher {
             $0.rank == $1.rank ? $0.command.rawValue < $1.command.rawValue : $0.rank < $1.rank
         }?.command
     }
-    
+
     @MainActor
     static func dispatchCommand(_ commandId: Int32, window: NSWindow) -> Bool {
         guard let command = CommandWrapper(rawValue: Int(commandId)) else {

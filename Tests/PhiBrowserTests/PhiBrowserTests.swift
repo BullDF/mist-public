@@ -4,6 +4,10 @@
 // found in the LICENSE file.
 
 import XCTest
+
+private final class BookmarkMenuTestTarget: NSObject {
+    @objc func menuAction(_ sender: Any?) {}
+}
 import AppKit
 import Carbon.HIToolbox
 import SwiftUI
@@ -71,131 +75,18 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(CommandWrapper.PHI_COPY_URL.displayName, "Copy URL")
     }
 
-    func testNewKioskWindowShortcutIsCustomizableFromFileShortcuts() {
-        XCTAssertEqual(
-            Shortcuts.DefaultShortcuts[.PHI_NEW_KIOSK_WINDOW],
-            ShortcutsKey(characters: "n", modifiers: [.command, .option])
-        )
-        XCTAssertTrue(
-            Shortcuts.Group.file.commands.contains(.PHI_NEW_KIOSK_WINDOW)
-        )
-        XCTAssertEqual(
-            CommandWrapper.PHI_NEW_KIOSK_WINDOW.displayName,
-            "New Kiosk Window"
-        )
+    func testAlternateNewTabFollowsNewTabInFileShortcuts() {
+        XCTAssertEqual(Array(Shortcuts.Group.file.commands.prefix(3)),
+                       [.IDC_NEW_TAB, .PHI_ALTERNATE_NEW_TAB, .IDC_NEW_WINDOW])
+        XCTAssertEqual(CommandWrapper.PHI_ALTERNATE_NEW_TAB.displayName, "Alternate New Tab")
     }
 
-    func testNewIncognitoSpaceShortcutIsCustomizableFromFileShortcuts() {
-        XCTAssertEqual(
-            Shortcuts.DefaultShortcuts[.PHI_NEW_INCOGNITO_SPACE],
-            ShortcutsKey(characters: "n", modifiers: [.control, .shift])
-        )
-        XCTAssertTrue(
-            Shortcuts.Group.file.commands.contains(.PHI_NEW_INCOGNITO_SPACE)
-        )
-        XCTAssertEqual(
-            CommandWrapper.PHI_NEW_INCOGNITO_SPACE.displayName,
-            "New Incognito Space"
-        )
+    private func matchedPeekCommand(for event: NSEvent, inputSourceIdentifier: String) -> CommandWrapper? {
+        guard let keys = ShortcutsKey.eventKeys(for: event, inputSourceIdentifier: inputSourceIdentifier) else { return nil }
+        return Shortcuts.Group.peek.commands.first { keys.matches(Shortcuts.key(for: $0)) }
     }
 
-    func testSharePageShortcutIsCustomizableFromFileShortcuts() {
-        XCTAssertEqual(
-            Shortcuts.DefaultShortcuts[.PHI_SHARE_PAGE],
-            ShortcutsKey(characters: "s", modifiers: [.control, .option])
-        )
-        XCTAssertTrue(
-            Shortcuts.Group.file.commands.contains(.PHI_SHARE_PAGE)
-        )
-        XCTAssertEqual(
-            CommandWrapper.PHI_SHARE_PAGE.displayName,
-            "Share Page"
-        )
-    }
-
-    func testKioskGlobalShortcutDefaultsOffAndFormatsCurrentShortcut() {
-        XCTAssertFalse(
-            PhiPreferences.GeneralSettings
-                .openKioskWithGlobalShortcut.defaultValue
-        )
-        XCTAssertEqual(
-            NavigationsSettingsView.globalShortcutTitle(
-                shortcutDescription: "⌘⌥N"
-            ),
-            "Open Kiosk when pressing ⌘⌥N in any app"
-        )
-    }
-
-    func testKioskGlobalShortcutRegistrationRequiresEnabledPreference() throws {
-        let shortcut = try XCTUnwrap(
-            Shortcuts.DefaultShortcuts[.PHI_NEW_KIOSK_WINDOW]
-        )
-
-        XCTAssertNil(
-            KioskGlobalShortcutRegistrar.configurations(
-                for: shortcut,
-                isEnabled: false
-            ).first
-        )
-
-        let configuration = try XCTUnwrap(
-            KioskGlobalShortcutRegistrar.configurations(
-                for: shortcut,
-                isEnabled: true
-            ).first
-        )
-        XCTAssertEqual(configuration.keyCode, UInt32(kVK_ANSI_N))
-        XCTAssertEqual(
-            configuration.modifiers,
-            UInt32(cmdKey | optionKey)
-        )
-    }
-
-    @MainActor
-    func testGlobalKioskWaitsForApplicationActivationBeforeOpening() {
-        let events = KioskFrontingEventRecorder()
-        let notificationCenter = NotificationCenter()
-        let activationObject = NSObject()
-        let registrar = KioskGlobalShortcutRegistrar(
-            action: {
-                events.values.append("open")
-            },
-            isApplicationActive: { false },
-            activateApplication: {
-                events.values.append("activate")
-            },
-            notificationCenter: notificationCenter,
-            activationNotificationObject: activationObject,
-            scheduleAfterActivation: { action in
-                events.values.append("schedule")
-                action()
-            }
-        )
-
-        registrar.performActionAfterApplicationActivation()
-        XCTAssertEqual(events.values, ["activate"])
-
-        notificationCenter.post(
-            name: NSApplication.didBecomeActiveNotification,
-            object: activationObject
-        )
-        XCTAssertEqual(events.values, ["activate", "schedule", "open"])
-    }
-
-    @MainActor
-    func testGlobalKioskFrontingOrdersAndKeysWindow() {
-        let events = KioskFrontingEventRecorder()
-        let window = KioskFrontingTestWindow(events: events)
-
-        AppController.bringKioskWindowToFront(window)
-
-        XCTAssertEqual(
-            events.values,
-            ["orderFrontRegardless", "makeKey"]
-        )
-    }
-
-    func testKioskSpaceShortcutsIgnoreOrdinaryWindowOverrides() throws {
+    func testPeekSpaceShortcutsIgnoreOrdinaryWindowOverrides() throws {
         let previousConfiguration = Shortcuts.configuration
         defer {
             Shortcuts.configuration = previousConfiguration
@@ -208,66 +99,52 @@ final class PhiBrowserTests: XCTestCase {
         ))
         shortcutOverrides[.PHI_TOGGLE_SIDEBAR] = .disabled
 
-        for (character, modifiers, command) in [
-            ("o", NSEvent.ModifierFlags.command, CommandWrapper.PHI_KIOSK_OPEN_IN_SPACE),
-            ("O", NSEvent.ModifierFlags([.command, .shift]), CommandWrapper.PHI_KIOSK_CHOOSE_SPACE),
-        ] {
-            let event = try makeShortcutKeyEvent(
-                characters: character,
-                charactersIgnoringModifiers: character,
-                modifiers: modifiers,
-                keyCode: UInt16(kVK_ANSI_O)
-            )
-            XCTAssertEqual(
-                CommandDispatcher.interceptedKioskCommand(
-                    for: event, inputSourceIdentifier: InputSource.us
-                ),
-                command
-            )
-            XCTAssertNil(CommandDispatcher.interceptedPhiCommand(
-                for: event, inputSourceIdentifier: InputSource.us
-            ))
-        }
+        let event = try makeShortcutKeyEvent(
+            characters: "o", charactersIgnoringModifiers: "o",
+            modifiers: .command, keyCode: UInt16(kVK_ANSI_O)
+        )
+        XCTAssertEqual(matchedPeekCommand(
+            for: event, inputSourceIdentifier: InputSource.us
+        ), .PHI_PEEK_OPEN_IN_SPACE)
+        XCTAssertNil(CommandDispatcher.interceptedPhiCommand(
+            for: event, inputSourceIdentifier: InputSource.us
+        ))
     }
 
-    func testKioskSpaceShortcutsSupportRebindingDisablingAndRestoring() throws {
+    func testPeekSpaceShortcutsSupportRebindingDisablingAndRestoring() throws {
         let previousConfiguration = Shortcuts.configuration
         defer { Shortcuts.configuration = previousConfiguration }
         shortcutOverrides = [:]
-        for (character, modifiers, command) in [
-            ("o", NSEvent.ModifierFlags.command, CommandWrapper.PHI_KIOSK_OPEN_IN_SPACE),
-            ("O", NSEvent.ModifierFlags([.command, .shift]), CommandWrapper.PHI_KIOSK_CHOOSE_SPACE),
-        ] {
-            let originalEvent = try makeShortcutKeyEvent(
-                characters: character, charactersIgnoringModifiers: character,
-                modifiers: modifiers, keyCode: UInt16(kVK_ANSI_O)
-            )
-            let customEvent = try makeShortcutKeyEvent(
-                characters: "o", charactersIgnoringModifiers: "o",
-                modifiers: [.command, .control], keyCode: UInt16(kVK_ANSI_O)
-            )
-            shortcutOverrides[command] = .custom(ShortcutsKey(
-                characters: "o", modifiers: [.command, .control]
-            ))
-            XCTAssertNil(CommandDispatcher.interceptedKioskCommand(
-                for: originalEvent, inputSourceIdentifier: InputSource.us
-            ))
-            XCTAssertEqual(CommandDispatcher.interceptedKioskCommand(
-                for: customEvent, inputSourceIdentifier: InputSource.us
-            ), command)
+        let command = CommandWrapper.PHI_PEEK_OPEN_IN_SPACE
+        let originalEvent = try makeShortcutKeyEvent(
+            characters: "o", charactersIgnoringModifiers: "o",
+            modifiers: .command, keyCode: UInt16(kVK_ANSI_O)
+        )
+        let customEvent = try makeShortcutKeyEvent(
+            characters: "o", charactersIgnoringModifiers: "o",
+            modifiers: [.command, .control], keyCode: UInt16(kVK_ANSI_O)
+        )
+        shortcutOverrides[command] = .custom(ShortcutsKey(
+            characters: "o", modifiers: [.command, .control]
+        ))
+        XCTAssertNil(matchedPeekCommand(
+            for: originalEvent, inputSourceIdentifier: InputSource.us
+        ))
+        XCTAssertEqual(matchedPeekCommand(
+            for: customEvent, inputSourceIdentifier: InputSource.us
+        ), command)
 
-            shortcutOverrides[command] = .disabled
-            XCTAssertNil(CommandDispatcher.interceptedKioskCommand(
-                for: customEvent, inputSourceIdentifier: InputSource.us
-            ))
-            XCTAssertNil(CommandDispatcher.interceptedKioskCommand(
-                for: originalEvent, inputSourceIdentifier: InputSource.us
-            ))
-            shortcutOverrides.removeValue(forKey: command)
-            XCTAssertEqual(CommandDispatcher.interceptedKioskCommand(
-                for: originalEvent, inputSourceIdentifier: InputSource.us
-            ), command)
-        }
+        shortcutOverrides[command] = .disabled
+        XCTAssertNil(matchedPeekCommand(
+            for: customEvent, inputSourceIdentifier: InputSource.us
+        ))
+        XCTAssertNil(matchedPeekCommand(
+            for: originalEvent, inputSourceIdentifier: InputSource.us
+        ))
+        shortcutOverrides.removeValue(forKey: command)
+        XCTAssertEqual(matchedPeekCommand(
+            for: originalEvent, inputSourceIdentifier: InputSource.us
+        ), command)
         XCTAssertEqual(Shortcuts.key(for: .PHI_TOGGLE_SIDEBAR),
                        Shortcuts.DefaultShortcuts[.PHI_TOGGLE_SIDEBAR])
         XCTAssertEqual(Shortcuts.key(for: .IDC_OPEN_FILE),
@@ -275,57 +152,57 @@ final class PhiBrowserTests: XCTestCase {
     }
 
     @MainActor
-    func testKioskShortcutSettingsIgnoreCommandsUnavailableInKiosk() throws {
+    func testPeekShortcutSettingsIgnoreCommandsUnavailableInPeek() throws {
         let previousConfiguration = Shortcuts.configuration
         defer { Shortcuts.configuration = previousConfiguration }
         shortcutOverrides = [:]
         let viewModel = ShortcutsViewModel()
 
         for command in [
-            CommandWrapper.PHI_NEW_CONVERSATION, .PHI_TOGGLE_CHATBAR,
+            CommandWrapper.PHI_TOGGLE_CHATBAR,
             .IDC_TAB_SEARCH, .IDC_DEV_TOOLS,
         ] {
-            shortcutOverrides[.PHI_KIOSK_CHOOSE_SPACE] =
+            shortcutOverrides[.PHI_PEEK_OPEN_IN_SPACE] =
                 .custom(try XCTUnwrap(Shortcuts.key(for: command)))
             viewModel.rebuildSections()
             let items = viewModel.sections.flatMap(\.items)
-            let picker = try XCTUnwrap(items.first {
-                $0.command == .PHI_KIOSK_CHOOSE_SPACE
+            let expansion = try XCTUnwrap(items.first {
+                $0.command == .PHI_PEEK_OPEN_IN_SPACE
             })
             let other = try XCTUnwrap(items.first { $0.command == command })
-            XCTAssertFalse(picker.hasConflict, "Unexpected conflict with \(command)")
-            XCTAssertFalse(other.conflictingCommandNames.contains(picker.name))
+            XCTAssertFalse(expansion.hasConflict, "Unexpected conflict with \(command)")
+            XCTAssertFalse(other.conflictingCommandNames.contains(expansion.name))
         }
 
-        shortcutOverrides[.PHI_KIOSK_CHOOSE_SPACE] =
-            .custom(try XCTUnwrap(Shortcuts.key(for: .PHI_NEW_CONVERSATION)))
+        shortcutOverrides[.PHI_PEEK_OPEN_IN_SPACE] =
+            .custom(try XCTUnwrap(Shortcuts.key(for: .PHI_TOGGLE_CHATBAR)))
         let event = try makeShortcutKeyEvent(
-            characters: "O", charactersIgnoringModifiers: "O",
-            modifiers: [.command, .shift], keyCode: UInt16(kVK_ANSI_O)
+            characters: "e", charactersIgnoringModifiers: "e",
+            modifiers: [.command], keyCode: UInt16(kVK_ANSI_E)
         )
-        XCTAssertEqual(CommandDispatcher.interceptedKioskCommand(
+        XCTAssertEqual(matchedPeekCommand(
             for: event, inputSourceIdentifier: InputSource.us
-        ), .PHI_KIOSK_CHOOSE_SPACE)
+        ), .PHI_PEEK_OPEN_IN_SPACE)
     }
 
     @MainActor
-    func testKioskShortcutSettingsSeparateWindowContextsButReportSharedConflicts() throws {
+    func testPeekShortcutSettingsSeparateWindowContextsButReportSharedConflicts() throws {
         let previousConfiguration = Shortcuts.configuration
         defer { Shortcuts.configuration = previousConfiguration }
         shortcutOverrides = [:]
         let viewModel = ShortcutsViewModel()
         let section = try XCTUnwrap(viewModel.sections.first {
-            $0.category == Shortcuts.Group.kiosk.title
+            $0.category == Shortcuts.Group.peek.title
         })
-        XCTAssertEqual(section.items.map(\.command), Shortcuts.Group.kiosk.commands)
+        XCTAssertEqual(section.items.map(\.command), Shortcuts.Group.peek.commands)
         XCTAssertTrue(section.items.allSatisfy { !$0.hasConflict })
 
-        shortcutOverrides[.PHI_KIOSK_CHOOSE_SPACE] =
+        shortcutOverrides[.PHI_PEEK_OPEN_IN_SPACE] =
             .custom(try XCTUnwrap(Shortcuts.key(for: .PHI_COPY_URL)))
         viewModel.rebuildSections()
         let items = viewModel.sections.flatMap(\.items)
         XCTAssertTrue(try XCTUnwrap(items.first {
-            $0.command == .PHI_KIOSK_CHOOSE_SPACE
+            $0.command == .PHI_PEEK_OPEN_IN_SPACE
         }).hasConflict)
         XCTAssertTrue(try XCTUnwrap(items.first {
             $0.command == .PHI_COPY_URL
@@ -333,111 +210,94 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(items.first {
             $0.command == .PHI_TOGGLE_SIDEBAR
         }).hasConflict)
-
-        shortcutOverrides[.PHI_KIOSK_CHOOSE_SPACE] =
-            .custom(try XCTUnwrap(Shortcuts.key(for: .PHI_KIOSK_OPEN_IN_SPACE)))
-        viewModel.rebuildSections()
-        let kioskItems = try XCTUnwrap(viewModel.sections.first {
-            $0.category == Shortcuts.Group.kiosk.title
-        }).items
-        XCTAssertTrue(kioskItems.allSatisfy(\.hasConflict))
     }
 
-    func testNewKioskWindowShortcutInterceptsChromiumNewSplitTabShortcut() throws {
+    func testFileMenuInstallsAlternateNewTabAfterNewTabWithoutDuplicates() throws {
         let previousConfiguration = Shortcuts.configuration
-        defer {
-            Shortcuts.configuration = previousConfiguration
-            CommandDispatcher.reloadPhiShortcutMap()
+        defer { Shortcuts.configuration = previousConfiguration }
+        shortcutOverrides.removeValue(forKey: .PHI_ALTERNATE_NEW_TAB)
+
+        let menu = NSMenu(title: "File")
+        for command in [CommandWrapper.IDC_NEW_WINDOW, .IDC_NEW_TAB, .IDC_NEW_INCOGNITO_WINDOW] {
+            let item = NSMenuItem(title: "Existing command", action: nil, keyEquivalent: "")
+            item.tag = command.rawValue
+            menu.addItem(item)
         }
-        shortcutOverrides.removeValue(forKey: .PHI_NEW_KIOSK_WINDOW)
-        CommandDispatcher.reloadPhiShortcutMap()
+        AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
+        AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
 
-        let event = try makeShortcutKeyEvent(
-            characters: "n",
-            charactersIgnoringModifiers: "n",
-            modifiers: [.command, .option],
-            keyCode: UInt16(kVK_ANSI_N)
-        )
+        let items = menu.items.filter { $0.tag == CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue }
+        let item = try XCTUnwrap(items.first)
+        XCTAssertEqual(items.count, 1)
+        let newTabIndex = try XCTUnwrap(menu.items.firstIndex { $0.tag == CommandWrapper.IDC_NEW_TAB.rawValue })
+        XCTAssertEqual(menu.items.firstIndex(of: item), newTabIndex + 1)
+        XCTAssertEqual(item.title, NSLocalizedString("app.fileMenu.alternateNewTab", value: "Alternate New Tab",
+            comment: "File menu and Shortcuts settings - Command title for opening the opposite of the configured New Tab action"))
+        XCTAssertEqual(item.action, NSSelectorFromString("alternateNewTabFromMenu:"))
+        XCTAssertEqual(item.keyEquivalent, "t")
+        XCTAssertEqual(item.keyEquivalentModifierMask, [.command, .option])
 
-        XCTAssertEqual(CommandWrapper.IDC_NEW_SPLIT_TAB.rawValue, 34057)
-        XCTAssertEqual(
-            CommandDispatcher.interceptedPhiCommand(
-                for: event,
-                inputSourceIdentifier: InputSource.us
-            ),
-            .PHI_NEW_KIOSK_WINDOW
-        )
+        shortcutOverrides[.PHI_ALTERNATE_NEW_TAB] = .custom(.init(characters: "j", modifiers: [.control, .command]))
+        AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
+        let customized = try XCTUnwrap(menu.items.first { $0.tag == CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue })
+        XCTAssertEqual(customized.keyEquivalent, "j")
+        XCTAssertEqual(customized.keyEquivalentModifierMask, [.control, .command])
+
+        shortcutOverrides[.PHI_ALTERNATE_NEW_TAB] = .disabled
+        AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
+        let disabled = try XCTUnwrap(menu.items.first { $0.tag == CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue })
+        XCTAssertTrue(disabled.keyEquivalent.isEmpty)
+        XCTAssertEqual(disabled.keyEquivalentModifierMask.rawValue, 0)
     }
 
-    func testChromiumNewSplitTabShortcutFallsThroughAfterKioskShortcutChanges() throws {
-        let previousConfiguration = Shortcuts.configuration
-        defer {
-            Shortcuts.configuration = previousConfiguration
-            CommandDispatcher.reloadPhiShortcutMap()
-        }
-        shortcutOverrides[.PHI_NEW_KIOSK_WINDOW] = .custom(ShortcutsKey(
-            characters: "k",
-            modifiers: [.command, .control]
-        ))
-        CommandDispatcher.reloadPhiShortcutMap()
-
-        let splitTabEvent = try makeShortcutKeyEvent(
-            characters: "n",
-            charactersIgnoringModifiers: "n",
-            modifiers: [.command, .option],
-            keyCode: UInt16(kVK_ANSI_N)
-        )
-        let kioskEvent = try makeShortcutKeyEvent(
-            characters: "k",
-            charactersIgnoringModifiers: "k",
-            modifiers: [.command, .control],
-            keyCode: UInt16(kVK_ANSI_K)
-        )
-
-        XCTAssertNil(
-            CommandDispatcher.interceptedPhiCommand(
-                for: splitTabEvent,
-                inputSourceIdentifier: InputSource.us
-            )
-        )
-        XCTAssertEqual(
-            CommandDispatcher.interceptedPhiCommand(
-                for: kioskEvent,
-                inputSourceIdentifier: InputSource.us
-            ),
-            .PHI_NEW_KIOSK_WINDOW
-        )
+    func testFileMenuAlternateNewTabFallsBackToFirstItem() {
+        let menu = NSMenu(title: "File")
+        AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
+        XCTAssertEqual(menu.items.first?.tag, CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue)
     }
 
-    func testNewIncognitoSpaceShortcutIsIntercepted() throws {
-        let previousConfiguration = Shortcuts.configuration
-        defer {
-            Shortcuts.configuration = previousConfiguration
-            CommandDispatcher.reloadPhiShortcutMap()
+    @MainActor func testAppsMenuFollowsSpacesWithoutDuplicates() throws {
+        let menu = NSMenu(title: "Main")
+        let spaces = NSMenuItem(title: "Spaces", action: nil, keyEquivalent: "")
+        spaces.tag = AppController.spacesMenuItemTag
+        menu.addItem(spaces)
+        let target = AppController.shared
+        for _ in 0..<3 {
+            AppController.installOrUpdateAppsMenu(in: menu, target: target)
+            let apps = try XCTUnwrap(menu.items.first { $0.tag == AppController.appsMenuItemTag })
+            XCTAssertEqual(menu.items.filter { $0.tag == AppController.appsMenuItemTag }.count, 1)
+            XCTAssertEqual(menu.items.firstIndex(of: apps), try XCTUnwrap(menu.items.firstIndex(of: spaces)) + 1)
+            let items = try XCTUnwrap(apps.submenu?.items)
+            XCTAssertEqual(items.count, 5)
+            XCTAssertTrue(items[3].isSeparatorItem)
+            XCTAssertEqual(items[4].title, "New Drifter Chat")
+            XCTAssertEqual(items[4].tag, CommandWrapper.PHI_NEW_DRIFTER_CHAT.rawValue)
+            XCTAssertEqual(items[4].keyEquivalent, "")
+            let rows = Array(items.prefix(3))
+            XCTAssertEqual(rows.count, 3)
+            XCTAssertEqual(rows.map(\.title), MistAppID.allCases.map(\.name))
+            XCTAssertEqual(rows.map(\.tag), [CommandWrapper.PHI_OPEN_CLIPBOARD.rawValue, CommandWrapper.PHI_OPEN_DRIFTER.rawValue, CommandWrapper.PHI_OPEN_MAIL.rawValue])
+            XCTAssertEqual(rows.map(\.keyEquivalent), ["", "D", ""])
+            XCTAssertEqual(rows[1].keyEquivalentModifierMask, .command)
+            let mail = try XCTUnwrap(rows.last)
+            XCTAssertEqual(mail.title, "Mail")
+            XCTAssertEqual(mail.tag, CommandWrapper.PHI_OPEN_MAIL.rawValue)
+            XCTAssertEqual(mail.action, NSSelectorFromString("openMistApp:"))
+            XCTAssertEqual(mail.representedObject as? String, MistAppID.mail.rawValue)
+            XCTAssertTrue(mail.target === target)
+            XCTAssertEqual(mail.image?.size, NSSize(width: 16, height: 16))
         }
-        shortcutOverrides.removeValue(forKey: .PHI_NEW_INCOGNITO_SPACE)
-        CommandDispatcher.reloadPhiShortcutMap()
+    }
 
-        let event = try makeShortcutKeyEvent(
-            characters: "N",
-            charactersIgnoringModifiers: "n",
-            modifiers: [.control, .shift],
-            keyCode: UInt16(kVK_ANSI_N)
-        )
-
-        XCTAssertEqual(
-            CommandDispatcher.interceptedPhiCommand(
-                for: event,
-                inputSourceIdentifier: InputSource.us
-            ),
-            .PHI_NEW_INCOGNITO_SPACE
-        )
+    func testFileMenuDoesNotOfferMail() {
+        let menu = NSMenu(title: "File")
+        for _ in 0..<2 { AppController.installOrUpdateFileMenuItems(in: menu, target: nil) }
+        XCTAssertFalse(menu.items.contains { $0.tag == CommandWrapper.PHI_OPEN_MAIL.rawValue })
     }
 
     func testFileMenuInstallsPhiItemsBelowIncognitoWindow() throws {
         let previousConfiguration = Shortcuts.configuration
         defer { Shortcuts.configuration = previousConfiguration }
-        shortcutOverrides.removeValue(forKey: .PHI_NEW_KIOSK_WINDOW)
         shortcutOverrides.removeValue(forKey: .PHI_NEW_INCOGNITO_SPACE)
 
         let menu = NSMenu(title: "File")
@@ -452,41 +312,17 @@ final class PhiBrowserTests: XCTestCase {
         AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
         AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
 
-        let kioskItems = menu.items.filter {
-            $0.tag == CommandWrapper.PHI_NEW_KIOSK_WINDOW.rawValue
-        }
         let incognitoSpaceItems = menu.items.filter {
             $0.tag == CommandWrapper.PHI_NEW_INCOGNITO_SPACE.rawValue
         }
-        let kioskItem = try XCTUnwrap(kioskItems.first)
         let incognitoSpaceItem = try XCTUnwrap(incognitoSpaceItems.first)
         let incognitoIndex = try XCTUnwrap(menu.items.firstIndex(of: incognitoItem))
-        let kioskIndex = try XCTUnwrap(menu.items.firstIndex(of: kioskItem))
         let incognitoSpaceIndex = try XCTUnwrap(
             menu.items.firstIndex(of: incognitoSpaceItem)
         )
 
-        XCTAssertEqual(kioskItems.count, 1)
         XCTAssertEqual(incognitoSpaceItems.count, 1)
-        XCTAssertEqual(kioskIndex, incognitoIndex + 1)
-        XCTAssertEqual(incognitoSpaceIndex, kioskIndex + 1)
-        XCTAssertEqual(
-            kioskItem.title,
-            NSLocalizedString(
-                "app.fileMenu.createNewKioskWindow",
-                value: "New Kiosk Window",
-                comment: "File menu - Create a Kiosk window and open its omnibox"
-            )
-        )
-        XCTAssertEqual(
-            kioskItem.action,
-            NSSelectorFromString("newKioskWindowFromMenu:")
-        )
-        XCTAssertEqual(kioskItem.keyEquivalent, "n")
-        XCTAssertEqual(
-            kioskItem.keyEquivalentModifierMask,
-            [.command, .option]
-        )
+        XCTAssertEqual(incognitoSpaceIndex, incognitoIndex + 1)
         XCTAssertEqual(
             incognitoSpaceItem.title,
             NSLocalizedString(
@@ -499,24 +335,10 @@ final class PhiBrowserTests: XCTestCase {
             incognitoSpaceItem.action,
             NSSelectorFromString("newIncognitoSpaceFromMenu:")
         )
-        XCTAssertEqual(incognitoSpaceItem.keyEquivalent, "N")
+        XCTAssertEqual(incognitoSpaceItem.keyEquivalent, "")
         XCTAssertEqual(
             incognitoSpaceItem.keyEquivalentModifierMask,
-            [.control]
-        )
-
-        shortcutOverrides[.PHI_NEW_KIOSK_WINDOW] = .custom(ShortcutsKey(
-            characters: "k",
-            modifiers: [.command, .control]
-        ))
-        AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
-        let customizedItem = try XCTUnwrap(menu.items.first {
-            $0.tag == CommandWrapper.PHI_NEW_KIOSK_WINDOW.rawValue
-        })
-        XCTAssertEqual(customizedItem.keyEquivalent, "k")
-        XCTAssertEqual(
-            customizedItem.keyEquivalentModifierMask,
-            [.command, .control]
+            []
         )
 
         shortcutOverrides[.PHI_NEW_INCOGNITO_SPACE] = .custom(ShortcutsKey(
@@ -527,10 +349,10 @@ final class PhiBrowserTests: XCTestCase {
         let customizedIncognitoSpaceItem = try XCTUnwrap(menu.items.first {
             $0.tag == CommandWrapper.PHI_NEW_INCOGNITO_SPACE.rawValue
         })
-        XCTAssertEqual(customizedIncognitoSpaceItem.keyEquivalent, "i")
+        XCTAssertEqual(customizedIncognitoSpaceItem.keyEquivalent, "")
         XCTAssertEqual(
             customizedIncognitoSpaceItem.keyEquivalentModifierMask,
-            [.command, .control]
+            []
         )
     }
 
@@ -570,14 +392,16 @@ final class PhiBrowserTests: XCTestCase {
         let areaItems = menu.items.filter { $0.action == NSSelectorFromString("capturePageAreaFromMenu:") }
         XCTAssertEqual(areaItems.count, 1)
         XCTAssertEqual(menu.items.firstIndex(of: try XCTUnwrap(areaItems.first)), shareIndex - 1)
-        XCTAssertEqual(screenshotItem.keyEquivalent, "")
+        XCTAssertEqual(screenshotItem.keyEquivalent, "!")
+        // The shifted printable key already carries Shift in AppKit's menu equivalent.
+        XCTAssertEqual(screenshotItem.keyEquivalentModifierMask, [.command])
         XCTAssertFalse(screenshotItem.isHidden)
         XCTAssertEqual(
             shareItem.action,
             NSSelectorFromString("sharePageFromMenu:")
         )
-        XCTAssertEqual(shareItem.keyEquivalent, "s")
-        XCTAssertEqual(shareItem.keyEquivalentModifierMask, [.control, .option])
+        XCTAssertEqual(shareItem.keyEquivalent, "")
+        XCTAssertEqual(shareItem.keyEquivalentModifierMask, [])
         XCTAssertFalse(shareItem.isHidden)
         XCTAssertFalse(menu.items.contains(chromiumShareItem))
         for index in 1..<menu.items.count {
@@ -595,10 +419,10 @@ final class PhiBrowserTests: XCTestCase {
         let customizedItem = try XCTUnwrap(menu.items.first {
             $0.tag == CommandWrapper.PHI_SHARE_PAGE.rawValue
         })
-        XCTAssertEqual(customizedItem.keyEquivalent, "u")
+        XCTAssertEqual(customizedItem.keyEquivalent, "")
         XCTAssertEqual(
             customizedItem.keyEquivalentModifierMask,
-            [.command, .control]
+            []
         )
     }
 
@@ -606,7 +430,7 @@ final class PhiBrowserTests: XCTestCase {
         // The live File menu as Chromium lays it out while no tabbed browser
         // window is key: the Shift-Cmd-W row is parked hidden with tag 0 and
         // no action, and the Cmd-W row acts as Close Window. The hook re-runs
-        // on this menu (PostHog flags, the agent CDP switch); deleting the
+        // on this menu (the agent CDP switch); deleting the
         // parked row leaves Chromium nothing to swap Close Tab back onto.
         let menu = NSMenu(title: "File")
         menu.addItem(.separator())
@@ -830,11 +654,11 @@ final class PhiBrowserTests: XCTestCase {
         let previousConfiguration = Shortcuts.configuration
         defer { Shortcuts.configuration = previousConfiguration }
         shortcutOverrides = [
-            .IDC_BACK: .custom(ShortcutsKey(
+            .IDC_RELOAD: .custom(ShortcutsKey(
                 characters: "+",
                 modifiers: [.command, .shift]
             )),
-            .IDC_FORWARD: .custom(ShortcutsKey(
+            .IDC_NEW_WINDOW: .custom(ShortcutsKey(
                 characters: "+",
                 modifiers: [.command]
             )),
@@ -843,40 +667,17 @@ final class PhiBrowserTests: XCTestCase {
         let viewModel = ShortcutsViewModel()
         let items = viewModel.sections.flatMap(\.items)
         let backItem = try XCTUnwrap(
-            items.first { $0.command == .IDC_BACK }
+            items.first { $0.command == .IDC_RELOAD }
         )
         let forwardItem = try XCTUnwrap(
-            items.first { $0.command == .IDC_FORWARD }
+            items.first { $0.command == .IDC_NEW_WINDOW }
         )
 
         XCTAssertTrue(backItem.hasConflict)
         XCTAssertTrue(forwardItem.hasConflict)
     }
 
-    func testShiftedBracketDefaultsUseDistinctAppKitMenuIdentities() throws {
-        let backKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.IDC_BACK])
-        let forwardKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.IDC_FORWARD])
-        let previousTabKey = try XCTUnwrap(
-            Shortcuts.DefaultShortcuts[.IDC_SELECT_PREVIOUS_TAB]
-        )
-        let nextTabKey = try XCTUnwrap(
-            Shortcuts.DefaultShortcuts[.IDC_SELECT_NEXT_TAB]
-        )
-
-        XCTAssertEqual(previousTabKey.characters, "{")
-        XCTAssertEqual(previousTabKey.modifiers, [.command, .shift])
-        XCTAssertEqual(previousTabKey.menuKeyEquivalent.characters, "{")
-        XCTAssertEqual(previousTabKey.menuKeyEquivalent.modifiers, [.command])
-        XCTAssertNotEqual(previousTabKey.menuKeyEquivalent, backKey.menuKeyEquivalent)
-
-        XCTAssertEqual(nextTabKey.characters, "}")
-        XCTAssertEqual(nextTabKey.modifiers, [.command, .shift])
-        XCTAssertEqual(nextTabKey.menuKeyEquivalent.characters, "}")
-        XCTAssertEqual(nextTabKey.menuKeyEquivalent.modifiers, [.command])
-        XCTAssertNotEqual(nextTabKey.menuKeyEquivalent, forwardKey.menuKeyEquivalent)
-    }
-
-    func testShiftedBracketCaptureMatchesDefaultNextTabShortcut() throws {
+    func testShiftedBracketCaptureKeepsShiftedIdentity() throws {
         let event = try makeShortcutKeyEvent(
             characters: "]",
             charactersIgnoringModifiers: "}",
@@ -893,33 +694,11 @@ final class PhiBrowserTests: XCTestCase {
 
         XCTAssertEqual(
             recordedKey,
-            Shortcuts.DefaultShortcuts[.IDC_SELECT_NEXT_TAB]
+            ShortcutsKey(characters: "}", modifiers: [.command, .shift])
         )
     }
 
-    func testShortcutViewModelPresentsBracketDefaultsWithoutFalseConflicts() throws {
-        let previousConfiguration = Shortcuts.configuration
-        defer { Shortcuts.configuration = previousConfiguration }
-        shortcutOverrides = [:]
-
-        let viewModel = ShortcutsViewModel()
-        let items = viewModel.sections.flatMap(\.items)
-        let previousTabItem = try XCTUnwrap(
-            items.first { $0.command == .IDC_SELECT_PREVIOUS_TAB }
-        )
-        let nextTabItem = try XCTUnwrap(
-            items.first { $0.command == .IDC_SELECT_NEXT_TAB }
-        )
-
-        XCTAssertEqual(previousTabItem.shortcutDisplay, "⇧⌘[")
-        let back = try XCTUnwrap(items.first { $0.command == .IDC_BACK })
-        XCTAssertFalse(previousTabItem.conflictingCommandNames.contains(back.name))
-        XCTAssertEqual(nextTabItem.shortcutDisplay, "⇧⌘]")
-        let forward = try XCTUnwrap(items.first { $0.command == .IDC_FORWARD })
-        XCTAssertFalse(nextTabItem.conflictingCommandNames.contains(forward.name))
-    }
-
-    func testNativeMenuWriterProjectsDefaultShiftedPrintableShortcut() {
+    func testNativeMenuWriterProjectsChatPanelDefault() {
         let command = CommandWrapper.PHI_TOGGLE_CHATBAR
         let previousConfiguration = Shortcuts.configuration
         defer { Shortcuts.configuration = previousConfiguration }
@@ -935,7 +714,7 @@ final class PhiBrowserTests: XCTestCase {
 
         Shortcuts.updateShortcut(for: item)
 
-        XCTAssertEqual(item.keyEquivalent, "S")
+        XCTAssertEqual(item.keyEquivalent, "e")
         XCTAssertEqual(item.keyEquivalentModifierMask, [.command])
     }
 
@@ -1273,10 +1052,10 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(
             CommandDispatcher.matchedPhiCommand(
                 for: event,
-                shortcutMap: [semanticKey: .PHI_FARRINGDON_TOGGLE],
+                shortcutMap: [semanticKey: .PHI_COPY_URL],
                 inputSourceIdentifier: InputSource.russian
             ),
-            .PHI_FARRINGDON_TOGGLE
+            .PHI_COPY_URL
         )
     }
 
@@ -2190,453 +1969,18 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
-    @MainActor
-    func testAuthManagerStartRenewTimerDoesNotReplaceExistingValidTimer() async throws {
-        let suiteName = "AuthRenewTimerTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let authManager = AuthManager(defaults: defaults)
-        defer { authManager.stopRenewTimer() }
-        XCTAssertFalse(authManager.blocksAutomaticCredentialRecovery)
 
-        authManager.startRenewTimer()
-        let firstTimer = try await waitForRenewTimer(in: authManager)
 
-        authManager.startRenewTimer()
-        let secondTimer = try await waitForRenewTimer(in: authManager)
 
-        authManager.stopRenewTimer()
 
-        XCTAssertTrue(
-            firstTimer === secondTimer,
-            "Starting the renew timer while an existing valid timer is already running should keep the original timer instance instead of invalidating and replacing it."
-        )
-    }
 
-    func testAuthSessionGenerationOnlyCommitsToCapturedSession() {
-        let sessions = AuthSessionGeneration()
-        let session = sessions.capture()
-        var canonicalCredential = "old-session"
 
-        let currentCommit = sessions.performIfCurrent(session) {
-            canonicalCredential = "renewed-session"
-            return true
-        }
 
-        XCTAssertEqual(currentCommit, true)
-        XCTAssertEqual(canonicalCredential, "renewed-session")
 
-        sessions.advance {
-            canonicalCredential = "new-session"
-        }
-        let staleCommit = sessions.performIfCurrent(session) {
-            canonicalCredential = "late-renewal"
-            return true
-        }
 
-        XCTAssertFalse(sessions.isCurrent(session))
-        XCTAssertNil(staleCommit)
-        XCTAssertEqual(canonicalCredential, "new-session")
-    }
 
-    func testExternalBrowserWebAuthAcceptsMatchingCallbackState() throws {
-        let authorizeURL = try XCTUnwrap(
-            URL(string: "https://auth.example/authorize?state=current-session")
-        )
-        let callbackURL = try XCTUnwrap(
-            URL(string: "phi://auth.example/callback?code=code&state=current-session")
-        )
 
-        XCTAssertTrue(
-            AuthManagerExternalBrowserWebAuthUserAgent.callbackMatchesAuthorizeRequest(
-                authorizeURL: authorizeURL,
-                callbackURL: callbackURL
-            )
-        )
-    }
 
-    func testExternalBrowserWebAuthRejectsCallbackFromReplacedSession() throws {
-        let authorizeURL = try XCTUnwrap(
-            URL(string: "https://auth.example/authorize?state=new-session")
-        )
-        let callbackURL = try XCTUnwrap(
-            URL(string: "phi://auth.example/callback?code=code&state=old-session")
-        )
-
-        XCTAssertFalse(
-            AuthManagerExternalBrowserWebAuthUserAgent.callbackMatchesAuthorizeRequest(
-                authorizeURL: authorizeURL,
-                callbackURL: callbackURL
-            )
-        )
-    }
-
-    func testReauthenticationAttemptReplacementIgnoresPreviousResult() {
-        var attempts = AuthReauthenticationAttemptState()
-        let previousAttemptID = attempts.begin()
-        let replacementAttemptID = attempts.begin()
-
-        XCTAssertFalse(attempts.finishIfCurrent(previousAttemptID))
-        XCTAssertEqual(attempts.currentID, replacementAttemptID)
-        XCTAssertTrue(attempts.finishIfCurrent(replacementAttemptID))
-        XCTAssertNil(attempts.currentID)
-    }
-
-    @MainActor
-    func testReauthenticationWebAuthRunnerReplacesSessionBeforeStartingNextAttempt() async throws {
-        let session = AuthReauthenticationWebAuthTestSession()
-        let firstAttemptStarted = expectation(description: "First attempt started")
-        let replacementAttemptStarted = expectation(description: "Replacement attempt started")
-        session.onStart = { startCount in
-            if startCount == 1 {
-                firstAttemptStarted.fulfill()
-            } else if startCount == 2 {
-                replacementAttemptStarted.fulfill()
-            }
-        }
-
-        let firstAttempt = Task { @MainActor in
-            try await AuthReauthenticationWebAuthRunner.run(
-                replacingActiveSession: false,
-                cancel: { session.cancel() },
-                start: { session.start($0) }
-            )
-        }
-        await fulfillment(of: [firstAttemptStarted], timeout: 1)
-
-        let replacementAttempt = Task { @MainActor in
-            try await AuthReauthenticationWebAuthRunner.run(
-                replacingActiveSession: true,
-                cancel: { session.cancel() },
-                start: { session.start($0) }
-            )
-        }
-        await fulfillment(of: [replacementAttemptStarted], timeout: 1)
-
-        XCTAssertEqual(session.events, [.start, .cancel, .start])
-        XCTAssertEqual(session.transactionActiveFailureCount, 0)
-
-        session.succeed(with: 2)
-        let replacementValue = try await replacementAttempt.value
-        XCTAssertEqual(replacementValue, 2)
-
-        do {
-            _ = try await firstAttempt.value
-            XCTFail("Expected the replaced attempt to be cancelled.")
-        } catch let error as AuthReauthenticationWebAuthTestError {
-            XCTAssertEqual(error, .cancelled)
-        } catch {
-            XCTFail("Unexpected replaced-attempt error: \(error)")
-        }
-    }
-
-    func testAuthenticatedSessionPublicationStagesUntilSignedInCommit() {
-        XCTAssertTrue(
-            AuthenticatedSessionPublicationPolicy.stagesCredentials(
-                for: .guest
-            )
-        )
-        XCTAssertTrue(
-            AuthenticatedSessionPublicationPolicy.stagesCredentials(
-                for: .loginRequired
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedSessionPublicationPolicy.stagesCredentials(
-                for: .signedIn
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedSessionPublicationPolicy.canPublishSharedSession(
-                browserAccessState: .guest
-            )
-        )
-        XCTAssertTrue(
-            AuthenticatedSessionPublicationPolicy.canPublishSharedSession(
-                browserAccessState: .signedIn
-            )
-        )
-    }
-
-    func testStagedOnboardingCredentialRequiresMatchingActiveOnboardingAccount() {
-        let futureExpiry = Date().addingTimeInterval(300)
-
-        XCTAssertTrue(
-            StagedOnboardingCredentialPolicy.canUseToken(
-                browserAccessState: .guest,
-                onboardingPhaseRawValue:
-                    LoginController.Phase.setName.rawValue,
-                loginPhaseRawValue: LoginController.Phase.login.rawValue,
-                donePhaseRawValue: LoginController.Phase.done.rawValue,
-                credentialUserID: "auth0|target",
-                onboardingAccountUserID: "auth0|target",
-                expectedUserID: "auth0|target",
-                expiresAt: futureExpiry
-            )
-        )
-        XCTAssertFalse(
-            StagedOnboardingCredentialPolicy.canUseToken(
-                browserAccessState: .guest,
-                onboardingPhaseRawValue:
-                    LoginController.Phase.setName.rawValue,
-                loginPhaseRawValue: LoginController.Phase.login.rawValue,
-                donePhaseRawValue: LoginController.Phase.done.rawValue,
-                credentialUserID: "auth0|other",
-                onboardingAccountUserID: "auth0|target",
-                expectedUserID: "auth0|target",
-                expiresAt: futureExpiry
-            )
-        )
-        XCTAssertFalse(
-            StagedOnboardingCredentialPolicy.canUseToken(
-                browserAccessState: .signedIn,
-                onboardingPhaseRawValue:
-                    LoginController.Phase.setName.rawValue,
-                loginPhaseRawValue: LoginController.Phase.login.rawValue,
-                donePhaseRawValue: LoginController.Phase.done.rawValue,
-                credentialUserID: "auth0|target",
-                onboardingAccountUserID: "auth0|target",
-                expectedUserID: "auth0|target",
-                expiresAt: futureExpiry
-            )
-        )
-        XCTAssertFalse(
-            StagedOnboardingCredentialPolicy.canUseToken(
-                browserAccessState: .loginRequired,
-                onboardingPhaseRawValue:
-                    LoginController.Phase.done.rawValue,
-                loginPhaseRawValue: LoginController.Phase.login.rawValue,
-                donePhaseRawValue: LoginController.Phase.done.rawValue,
-                credentialUserID: "auth0|target",
-                onboardingAccountUserID: "auth0|target",
-                expectedUserID: "auth0|target",
-                expiresAt: futureExpiry
-            )
-        )
-    }
-
-    func testSentinelSessionRunsOnlyForCommittedAuthenticatedAccess() {
-        XCTAssertFalse(
-            AuthenticatedSentinelSessionPolicy.shouldRun(
-                browserAccessState: .guest,
-                isAuthenticated: false,
-                aiEnabled: true
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedSentinelSessionPolicy.shouldRun(
-                browserAccessState: .loginRequired,
-                isAuthenticated: false,
-                aiEnabled: true
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedSentinelSessionPolicy.shouldRun(
-                browserAccessState: .signedIn,
-                isAuthenticated: true,
-                aiEnabled: false
-            )
-        )
-        XCTAssertTrue(
-            AuthenticatedSentinelSessionPolicy.shouldRun(
-                browserAccessState: .signedIn,
-                isAuthenticated: true,
-                aiEnabled: true
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedSentinelSessionPolicy.shouldTerminate(
-                browserAccessState: .guest,
-                isAuthenticated: false,
-                aiEnabled: true
-            )
-        )
-        XCTAssertTrue(
-            AuthenticatedSentinelSessionPolicy.shouldTerminate(
-                browserAccessState: .guest,
-                isAuthenticated: false,
-                aiEnabled: false
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedSentinelSessionPolicy.shouldTerminate(
-                browserAccessState: .loginRequired,
-                isAuthenticated: false,
-                aiEnabled: true
-            )
-        )
-        XCTAssertTrue(
-            AuthenticatedSentinelSessionPolicy.shouldTerminate(
-                browserAccessState: .signedIn,
-                isAuthenticated: true,
-                aiEnabled: false
-            )
-        )
-        XCTAssertTrue(
-            AuthenticatedSentinelSessionPolicy.shouldRegisterAtLogin(
-                browserAccessState: .signedIn,
-                isAuthenticated: true,
-                aiEnabled: true,
-                launchOnLogin: true
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedSentinelSessionPolicy.shouldRegisterAtLogin(
-                browserAccessState: .signedIn,
-                isAuthenticated: true,
-                aiEnabled: true,
-                launchOnLogin: false
-            )
-        )
-    }
-
-    func testDeferredGuestCleanupResumesOnlyMatchingStagedIdentity() {
-        XCTAssertTrue(
-            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
-                hasRecoverableCredentials: true,
-                storedCredentialUserID: "auth0|target",
-                journalTargetUserID: "auth0|target"
-            )
-        )
-        XCTAssertFalse(
-            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
-                hasRecoverableCredentials: true,
-                storedCredentialUserID: "auth0|other",
-                journalTargetUserID: "auth0|target"
-            )
-        )
-        XCTAssertFalse(
-            DeferredGuestMigrationRecoveryPolicy.shouldSuspendGuestAccess(
-                hasRecoverableCredentials: false,
-                storedCredentialUserID: "auth0|target",
-                journalTargetUserID: "auth0|target"
-            )
-        )
-    }
-
-    func testReauthenticationIdentityAcceptsOnlyJournalTargetDuringRecovery() {
-        XCTAssertTrue(
-            AuthenticatedAccountIdentityPolicy.accepts(
-                candidateUserID: "auth0|target",
-                publishedUserID: nil,
-                pendingUserID: nil,
-                recoveryTargetUserID: "auth0|target",
-                isGuestMigrationRecoveryInProgress: true
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedAccountIdentityPolicy.accepts(
-                candidateUserID: "auth0|other",
-                publishedUserID: nil,
-                pendingUserID: nil,
-                recoveryTargetUserID: "auth0|target",
-                isGuestMigrationRecoveryInProgress: true
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedAccountIdentityPolicy.accepts(
-                candidateUserID: "auth0|target",
-                publishedUserID: nil,
-                pendingUserID: "auth0|other",
-                recoveryTargetUserID: "auth0|target",
-                isGuestMigrationRecoveryInProgress: true
-            )
-        )
-    }
-
-    func testReauthenticationIdentityUsesPublishedOrPendingAccountNormally() {
-        XCTAssertTrue(
-            AuthenticatedAccountIdentityPolicy.accepts(
-                candidateUserID: "auth0|published",
-                publishedUserID: "auth0|published",
-                pendingUserID: nil,
-                recoveryTargetUserID: nil,
-                isGuestMigrationRecoveryInProgress: false
-            )
-        )
-        XCTAssertTrue(
-            AuthenticatedAccountIdentityPolicy.accepts(
-                candidateUserID: "auth0|pending",
-                publishedUserID: nil,
-                pendingUserID: "auth0|pending",
-                recoveryTargetUserID: nil,
-                isGuestMigrationRecoveryInProgress: false
-            )
-        )
-        XCTAssertFalse(
-            AuthenticatedAccountIdentityPolicy.accepts(
-                candidateUserID: "auth0|pending",
-                publishedUserID: "auth0|published",
-                pendingUserID: "auth0|pending",
-                recoveryTargetUserID: nil,
-                isGuestMigrationRecoveryInProgress: false
-            )
-        )
-    }
-
-    func testAuthSessionGenerationSerializesRestoreAndRenewalCommits() {
-        let state = AuthCredentialCommitTestState()
-        let session = state.sessions.capture()
-        let restoreEntered = DispatchSemaphore(value: 0)
-        let allowRestoreToFinish = DispatchSemaphore(value: 0)
-        let renewalEntered = DispatchSemaphore(value: 0)
-        let restoreFinished = expectation(description: "Restore finished")
-        let renewalFinished = expectation(description: "Renewal finished")
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = state.sessions.performIfCurrent(session) {
-                restoreEntered.signal()
-                allowRestoreToFinish.wait()
-                state.currentCredential = state.canonicalCredential
-            }
-            restoreFinished.fulfill()
-        }
-
-        XCTAssertEqual(restoreEntered.wait(timeout: .now() + 1), .success)
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = state.sessions.performIfCurrent(session) {
-                renewalEntered.signal()
-                state.canonicalCredential = "renewed"
-                state.currentCredential = "renewed"
-            }
-            renewalFinished.fulfill()
-        }
-
-        XCTAssertEqual(
-            renewalEntered.wait(timeout: .now() + 0.1),
-            .timedOut,
-            "Renewal must not interleave between a persisted credential read and restore commit."
-        )
-
-        allowRestoreToFinish.signal()
-        wait(for: [restoreFinished, renewalFinished], timeout: 1)
-
-        XCTAssertEqual(state.canonicalCredential, "renewed")
-        XCTAssertEqual(state.currentCredential, "renewed")
-    }
-
-    func testInMemoryCredentialsStorageKeepsSnapshotWritesIsolated() {
-        let key = "credentials"
-        let canonicalData = Data("canonical".utf8)
-        let renewedData = Data("renewed".utf8)
-        let canonicalStorage = InMemoryCredentialsStorage(
-            entry: canonicalData,
-            forKey: key
-        )
-        let snapshotStorage = InMemoryCredentialsStorage(
-            entry: canonicalStorage.getEntry(forKey: key),
-            forKey: key
-        )
-
-        XCTAssertTrue(snapshotStorage.setEntry(renewedData, forKey: key))
-        XCTAssertEqual(snapshotStorage.getEntry(forKey: key), renewedData)
-        XCTAssertEqual(canonicalStorage.getEntry(forKey: key), canonicalData)
-
-        XCTAssertTrue(snapshotStorage.deleteEntry(forKey: key))
-        XCTAssertNil(snapshotStorage.getEntry(forKey: key))
-        XCTAssertEqual(canonicalStorage.getEntry(forKey: key), canonicalData)
-    }
 
     @MainActor
     func testExtensionPopupAnchorUsesPrimaryScreenHeightForChromiumFlip() {
@@ -2715,523 +2059,25 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
-    func testAuthFailureTraceBufferKeepsMostRecentEntries() {
-        let baseDate = Date(timeIntervalSince1970: 1_713_600_000)
-        var tick: TimeInterval = 0
-        let buffer = AuthFailureTraceBuffer(
-            capacity: 2,
-            dateProvider: {
-                defer { tick += 1 }
-                return baseDate.addingTimeInterval(tick)
-            }
-        )
 
-        buffer.record("launch-recovery", details: ["result": "skipped"])
-        buffer.record("credentials", details: ["result": "loaded"])
-        buffer.record("renew", details: ["result": "failed"])
 
-        let rendered = buffer.renderedTrace()
 
-        XCTAssertFalse(
-            rendered.contains("launch-recovery"),
-            "The oldest auth trace entry should be discarded once the buffer reaches capacity."
-        )
-        XCTAssertTrue(rendered.contains("credentials"))
-        XCTAssertTrue(rendered.contains("renew"))
-    }
 
-    func testAuthFailureTraceBufferRendersCallSiteAndSortedDetails() {
-        let buffer = AuthFailureTraceBuffer(
-            capacity: 4,
-            dateProvider: { Date(timeIntervalSince1970: 1_713_600_100) }
-        )
 
-        buffer.record(
-            "transition-logout",
-            details: [
-                "operation": "renew credentials",
-                "reason": "invalid_refresh_token"
-            ],
-            fileID: "Phi/AuthManager.swift",
-            function: "logCredentialsFailure(_:operation:)",
-            line: 321
-        )
 
-        let rendered = buffer.renderedTrace()
 
-        XCTAssertTrue(rendered.contains("transition-logout"))
-        XCTAssertTrue(rendered.contains("operation=renew credentials"))
-        XCTAssertTrue(rendered.contains("reason=invalid_refresh_token"))
-        XCTAssertTrue(rendered.contains("Phi/AuthManager.swift:321"))
-        XCTAssertTrue(rendered.contains("logCredentialsFailure(_:operation:)"))
-    }
 
-    func testAuthFailureTraceBufferEmitsCallStackWhenProvided() {
-        let buffer = AuthFailureTraceBuffer(
-            capacity: 2,
-            dateProvider: { Date(timeIntervalSince1970: 1_713_600_200) }
-        )
 
-        buffer.record(
-            "transition-to-logged-out",
-            details: ["reason": "invalid_refresh_token"],
-            callStackSymbols: ["0  Phi  AuthManager.renew", "1  Phi  AuthManager.run"]
-        )
 
-        let rendered = buffer.renderedTrace()
-        XCTAssertTrue(
-            rendered.contains("stack:"),
-            "Trace lines for forced-logout transitions must include the captured call stack so refresh-token reuse incidents can be correlated to the triggering caller."
-        )
-        XCTAssertTrue(rendered.contains("Phi  AuthManager.renew"))
-    }
 
-    func testLoginWindowGateKeepsOnboardingVisibleUntilAccountPhaseIsDone() {
-        XCTAssertTrue(
-            LoginWindowGate.shouldShowLoginWindow(
-                hasRecoverableSession: true,
-                accountPhase: .setName
-            ),
-            "A recoverable session should not bypass account-scoped onboarding before the phase reaches done."
-        )
-        XCTAssertFalse(
-            LoginWindowGate.shouldShowLoginWindow(
-                hasRecoverableSession: true,
-                accountPhase: .done
-            ),
-            "A completed account-scoped onboarding phase should allow cold-open URLs to continue into Chromium."
-        )
-        XCTAssertTrue(
-            LoginWindowGate.shouldShowLoginWindow(
-                hasRecoverableSession: false,
-                accountPhase: .done
-            ),
-            "Without a recoverable auth session, Phi should still present login."
-        )
-    }
 
-    func testOnboardingPhaseRawValuesSkipLegacyImportDataWithoutChangingDone() {
-        XCTAssertEqual(LoginController.Phase.login.rawValue, 0)
-        XCTAssertEqual(LoginController.Phase.setName.rawValue, 1)
-        XCTAssertEqual(LoginController.Phase.setTheme.rawValue, 2)
-        XCTAssertEqual(LoginController.Phase.layoutSelection.rawValue, 3)
-        XCTAssertEqual(LoginController.Phase.passwordManager.rawValue, 4)
-        XCTAssertEqual(LoginController.Phase.nextStep.rawValue, 5)
-        XCTAssertEqual(LoginController.Phase.done.rawValue, 6)
-    }
 
-    func testNextStepConsentRequiresLegalAgreementToBegin() {
-        var state = NextStepConsentState(locale: Locale(identifier: "en_US"))
 
-        XCTAssertFalse(state.hasAcceptedLegalTerms)
-        XCTAssertTrue(state.sharesUsageMetrics)
-        XCTAssertFalse(state.canBegin)
 
-        state.hasAcceptedLegalTerms = true
-        XCTAssertTrue(state.canBegin)
 
-        state.sharesUsageMetrics = false
-        XCTAssertTrue(state.canBegin)
-    }
 
-    func testNextStepMetricsConsentDefaultsByLocaleRegion() {
-        XCTAssertFalse(
-            NextStepConsentState(locale: Locale(identifier: "fr_FR")).sharesUsageMetrics
-        )
-        XCTAssertFalse(
-            NextStepConsentState(locale: Locale(identifier: "en_GB")).sharesUsageMetrics
-        )
-        XCTAssertFalse(
-            NextStepConsentState(locale: Locale(identifier: "de_CH")).sharesUsageMetrics
-        )
-        XCTAssertFalse(
-            NextStepConsentState(locale: Locale(identifier: "el_CY")).sharesUsageMetrics
-        )
-        XCTAssertFalse(
-            NextStepConsentState(locale: Locale(identifier: "en")).sharesUsageMetrics
-        )
-        XCTAssertTrue(
-            NextStepConsentState(locale: Locale(identifier: "en_US")).sharesUsageMetrics
-        )
-        XCTAssertTrue(
-            NextStepConsentState(locale: Locale(identifier: "zh_CN")).sharesUsageMetrics
-        )
-    }
 
-    @MainActor
-    func testNextStepGuideContentIntrinsicHeightGrowsForWrappedLocalizedCopy() {
-        let shortTitles = [
-            "Onboard your AI assistant",
-            "Import data from another browser",
-            "Have your AI assistant help you understand the fine print",
-            "Enjoy using Phi Browser 🎉"
-        ]
-        let longTitle = Array(
-            repeating: "A deliberately long localized onboarding instruction",
-            count: 10
-        ).joined(separator: " ")
-        let longTitles = [longTitle, shortTitles[1], longTitle, shortTitles[3]]
-        let shortController = NSHostingController(
-            rootView: NextStepGuideContentView(stepTitles: shortTitles)
-                .frame(width: NextStepGuideLayout.innerContentWidth)
-        )
-        let longController = NSHostingController(
-            rootView: NextStepGuideContentView(stepTitles: longTitles)
-                .frame(width: NextStepGuideLayout.innerContentWidth)
-        )
-        let fittingSize = CGSize(
-            width: NextStepGuideLayout.innerContentWidth,
-            height: .greatestFiniteMagnitude
-        )
 
-        let shortSize = shortController.sizeThatFits(in: fittingSize)
-        let longSize = longController.sizeThatFits(in: fittingSize)
-
-        XCTAssertGreaterThan(longSize.height, shortSize.height)
-    }
-
-    func testNextStepGuideOverflowIndicatorOnlyShowsWhileContentRemainsBelow() {
-        XCTAssertFalse(
-            NextStepGuideOverflow.shouldShowIndicator(
-                contentBottom: 450,
-                viewportHeight: 0
-            )
-        )
-        XCTAssertFalse(
-            NextStepGuideOverflow.shouldShowIndicator(
-                contentBottom: 350,
-                viewportHeight: 400
-            )
-        )
-        XCTAssertFalse(
-            NextStepGuideOverflow.shouldShowIndicator(
-                contentBottom: 400,
-                viewportHeight: 400
-            )
-        )
-        XCTAssertFalse(
-            NextStepGuideOverflow.shouldShowIndicator(
-                contentBottom: 401,
-                viewportHeight: 400
-            )
-        )
-        XCTAssertTrue(
-            NextStepGuideOverflow.shouldShowIndicator(
-                contentBottom: 450,
-                viewportHeight: 400
-            )
-        )
-    }
-
-    func testNextStepFinishButtonWidthExpandsForLongLocalizedTitles() {
-        let standardWidth = NextStepFinishButtonLayout.width(for: "Let's Begin")
-        let doubledWidth = NextStepFinishButtonLayout.width(
-            for: "Let's Begin Let's Begin"
-        )
-        let maximumWidth = NextStepFinishButtonLayout.width(
-            for: String(repeating: "A very long localized finish title ", count: 20)
-        )
-
-        XCTAssertEqual(standardWidth, NextStepFinishButtonLayout.minimumWidth)
-        XCTAssertGreaterThan(doubledWidth, standardWidth)
-        XCTAssertEqual(maximumWidth, NextStepFinishButtonLayout.maximumWidth)
-    }
-
-    @MainActor
-    func testNextStepTitleUsesBaseOnboardingLayout() {
-        let controller = NextStepViewController()
-
-        controller.loadView()
-        controller.view.layoutSubtreeIfNeeded()
-
-        XCTAssertEqual(
-            controller.titleLabel.bounds.height,
-            controller.titleLabel.intrinsicContentSize.height,
-            accuracy: 0.001
-        )
-        XCTAssertEqual(controller.titleLabel.cell?.usesSingleLineMode, false)
-        XCTAssertEqual(
-            controller.view.bounds.maxY - controller.titleLabel.frame.maxY,
-            96,
-            accuracy: 0.001
-        )
-    }
-
-    @MainActor
-    func testNextStepPlainConsentCopyCannotBeSelected() throws {
-        let row = OnboardingCheckboxRow(
-            title: "Help make Phi better by sharing usage metrics and crash reports",
-            isChecked: true
-        )
-        let titleLabel = try XCTUnwrap(
-            row.subviews.compactMap { $0 as? NSTextField }.first
-        )
-
-        XCTAssertFalse(titleLabel.isSelectable)
-        XCTAssertFalse(titleLabel.isEditable)
-        XCTAssertEqual(titleLabel.maximumNumberOfLines, 0)
-        XCTAssertEqual(titleLabel.lineBreakMode, .byWordWrapping)
-    }
-
-    @MainActor
-    func testNextStepLinkGradientUsesSpecifiedEndpointColors() throws {
-        let title = NSMutableAttributedString(string: "Privacy")
-        let range = NSRange(location: 0, length: title.length)
-
-        NextStepLinkGradient.apply(to: title, range: range)
-
-        let startColor = try XCTUnwrap(
-            title.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
-        ).usingColorSpace(.sRGB)
-        let endColor = try XCTUnwrap(
-            title.attribute(.foregroundColor, at: title.length - 1, effectiveRange: nil) as? NSColor
-        ).usingColorSpace(.sRGB)
-        let resolvedStartColor = try XCTUnwrap(startColor)
-        let resolvedEndColor = try XCTUnwrap(endColor)
-
-        XCTAssertEqual(resolvedStartColor.redComponent, 148.0 / 255.0, accuracy: 0.001)
-        XCTAssertEqual(resolvedStartColor.greenComponent, 82.0 / 255.0, accuracy: 0.001)
-        XCTAssertEqual(resolvedStartColor.blueComponent, 249.0 / 255.0, accuracy: 0.001)
-        XCTAssertEqual(resolvedEndColor.redComponent, 232.0 / 255.0, accuracy: 0.001)
-        XCTAssertEqual(resolvedEndColor.greenComponent, 192.0 / 255.0, accuracy: 0.001)
-        XCTAssertEqual(resolvedEndColor.blueComponent, 255.0 / 255.0, accuracy: 0.001)
-    }
-
-    @MainActor
-    func testNextStepLinkTextViewDoesNotOverrideGradientForegroundColors() throws {
-        let title = NSMutableAttributedString(
-            string: "Privacy",
-            attributes: [.font: NSFont.systemFont(ofSize: 15)]
-        )
-        let range = NSRange(location: 0, length: title.length)
-        title.addAttribute(
-            .link,
-            value: try XCTUnwrap(URL(string: "https://phibrowser.com/privacy/")),
-            range: range
-        )
-        NextStepLinkGradient.apply(to: title, range: range)
-
-        let textView = NextStepLinkTextView(
-            attributedString: title,
-            preferredLayoutWidth: 200
-        )
-
-        XCTAssertTrue(textView.isSelectable)
-        XCTAssertNil(textView.linkTextAttributes?[.foregroundColor])
-        let textStorage = try XCTUnwrap(textView.textStorage)
-        XCTAssertNotNil(textStorage.attribute(.foregroundColor, at: 0, effectiveRange: nil))
-        XCTAssertNotNil(
-            textStorage.attribute(
-                .foregroundColor,
-                at: textStorage.length - 1,
-                effectiveRange: nil
-            )
-        )
-    }
-
-    @MainActor
-    func testNextStepLinkTextViewIntrinsicHeightGrowsWhenTextWraps() {
-        let title = NSAttributedString(
-            string: Array(
-                repeating: "A deliberately long localized legal agreement",
-                count: 4
-            ).joined(separator: " "),
-            attributes: [.font: NSFont.systemFont(ofSize: 15)]
-        )
-        let narrowTextView = NextStepLinkTextView(
-            attributedString: title,
-            preferredLayoutWidth: 120
-        )
-        let wideTextView = NextStepLinkTextView(
-            attributedString: title,
-            preferredLayoutWidth: 396
-        )
-
-        XCTAssertGreaterThan(
-            narrowTextView.intrinsicContentSize.height,
-            wideTextView.intrinsicContentSize.height
-        )
-    }
-
-    @MainActor
-    func testGuestPrivacyLegalAgreementUsesRequestedLinkTitlesAndURLs() throws {
-        let agreement = GuestPrivacyLegalAgreement.makeAttributedTitle(
-            format: "I agree to the %1$@ and %2$@",
-            privacyTitle: "Privacy Policy",
-            termsTitle: "Terms of Service"
-        )
-        let privacyRange = try XCTUnwrap(
-            agreement.string.range(of: "Privacy Policy")
-        )
-        let termsRange = try XCTUnwrap(
-            agreement.string.range(of: "Terms of Service")
-        )
-        let privacyLocation = NSRange(
-            privacyRange,
-            in: agreement.string
-        ).location
-        let termsLocation = NSRange(
-            termsRange,
-            in: agreement.string
-        ).location
-
-        XCTAssertEqual(
-            agreement.string,
-            "I agree to the Privacy Policy and Terms of Service"
-        )
-        XCTAssertEqual(
-            agreement.attribute(
-                .link,
-                at: privacyLocation,
-                effectiveRange: nil
-            ) as? URL,
-            URL(string: "http://phibrowser.com/privacy/")
-        )
-        XCTAssertEqual(
-            agreement.attribute(
-                .link,
-                at: termsLocation,
-                effectiveRange: nil
-            ) as? URL,
-            URL(string: "http://phibrowser.com/terms/")
-        )
-    }
-
-    @MainActor
-    func testGuestPrivacyGuideUsesPlainLargerNoticeText() {
-        let titles = [
-            "No AI features until you sign in",
-            "No Browser Memory either",
-            "Sign in whenever you're ready"
-        ]
-        let fittingSize = CGSize(
-            width: NextStepGuideLayout.contentWidth,
-            height: .greatestFiniteMagnitude
-        )
-        let guestGuide = NSHostingController(
-            rootView: GuestPrivacyGuideView(noticeTitles: titles)
-                .frame(width: NextStepGuideLayout.contentWidth, height: 260)
-        )
-
-        XCTAssertGreaterThan(guestGuide.sizeThatFits(in: fittingSize).height, 0)
-    }
-
-    @MainActor
-    func testGuestPrivacyPageRequiresLegalConsentBeforeBeginning() throws {
-        let controller = GuestPrivacyConfirmationViewController()
-
-        controller.loadView()
-
-        XCTAssertEqual(
-            controller.titleLabel.stringValue,
-            NSLocalizedString(
-                "oobe.guestPrivacy.title",
-                value: "Before we begin.",
-                comment: "Guest privacy confirmation - Page title shown before entering Guest Mode"
-            )
-        )
-        XCTAssertEqual(
-            controller.nextButton.title,
-            NSLocalizedString(
-                "oobe.guestPrivacy.beginButton",
-                value: "Let's Begin",
-                comment: "Guest privacy confirmation - Button that confirms the choices and enters Guest Mode"
-            )
-        )
-        XCTAssertFalse(controller.nextButton.isEnabled)
-
-        func checkboxRows(in view: NSView) -> [OnboardingCheckboxRow] {
-            view.subviews.flatMap { subview in
-                let current = (subview as? OnboardingCheckboxRow).map { [$0] }
-                    ?? []
-                return current + checkboxRows(in: subview)
-            }
-        }
-
-        let rows = checkboxRows(in: controller.view)
-        XCTAssertEqual(rows.count, 2)
-        let expectedStates = [false, NextStepConsentState().sharesUsageMetrics]
-        for (row, expectedState) in zip(rows, expectedStates) {
-            let checkbox = try XCTUnwrap(
-                row.subviews.compactMap { $0 as? NSButton }.first
-            )
-            XCTAssertEqual(
-                checkbox.accessibilityValue() as? Int,
-                expectedState
-                    ? NSControl.StateValue.on.rawValue
-                    : NSControl.StateValue.off.rawValue
-            )
-        }
-    }
-
-    @MainActor
-    func testOnboardingRoutesGuestIntentToPrivacyConfirmation() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 800),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
-        let windowController = OnboardingWindowController(window: window)
-        let loginViewController = windowController.loginViewController
-        loginViewController.isGuestModeActiveProvider = { false }
-        window.contentViewController = loginViewController
-
-        loginViewController.continueAsGuestAction()
-
-        XCTAssertTrue(
-            window.contentViewController
-                is GuestPrivacyConfirmationViewController
-        )
-    }
-
-    func testSkipOnboardingLaunchPolicyChoosesGuestModeAtTheOnboardingGate() {
-        XCTAssertTrue(
-            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
-                hasLaunchArgument: true,
-                canUseBrowser: false,
-                isAccountDeletionInProgress: false,
-                presentsGuestMigrationRecovery: false
-            ),
-            "A request to present onboarding should be answered with Guest entry when the skip argument is passed."
-        )
-        XCTAssertFalse(
-            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
-                hasLaunchArgument: false,
-                canUseBrowser: false,
-                isAccountDeletionInProgress: false,
-                presentsGuestMigrationRecovery: false
-            ),
-            "Without the launch argument the onboarding window must be presented."
-        )
-        XCTAssertFalse(
-            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
-                hasLaunchArgument: true,
-                canUseBrowser: true,
-                isAccountDeletionInProgress: false,
-                presentsGuestMigrationRecovery: false
-            ),
-            "A presentation requested from an already usable browser is a deliberate sign-in and must show."
-        )
-        XCTAssertFalse(
-            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
-                hasLaunchArgument: true,
-                canUseBrowser: false,
-                isAccountDeletionInProgress: true,
-                presentsGuestMigrationRecovery: false
-            ),
-            "An account-deletion launch stays gated regardless of the skip argument."
-        )
-        XCTAssertFalse(
-            SkipOnboardingLaunchPolicy.shouldEnterGuestMode(
-                hasLaunchArgument: true,
-                canUseBrowser: false,
-                isAccountDeletionInProgress: false,
-                presentsGuestMigrationRecovery: true
-            ),
-            "Guest-migration recovery keeps its journal-bound login presentation."
-        )
-    }
 
     func testOmniBoxSearchCoordinatorSuppressesOnlyTheNextAutomaticSearchAfterPrefill() {
         let coordinator = OmniBoxSearchCoordinator()
@@ -3380,54 +2226,6 @@ final class PhiBrowserTests: XCTestCase {
         )
     }
 
-    func testSecondaryClickContainerNSViewInvokesSecondaryActionOnRightMouseDown() throws {
-        let view = SecondaryClickContainerNSView()
-        var didInvokeSecondaryAction = false
-        view.onSecondaryClick = {
-            didInvokeSecondaryAction = true
-        }
-
-        let event = NSEvent.mouseEvent(
-            with: .rightMouseDown,
-            location: .zero,
-            modifierFlags: [],
-            timestamp: 0,
-            windowNumber: 0,
-            context: nil,
-            eventNumber: 0,
-            clickCount: 1,
-            pressure: 1
-        )
-        view.rightMouseDown(with: try XCTUnwrap(event))
-        XCTAssertTrue(
-            didInvokeSecondaryAction,
-            "Popover grid items should handle right clicks through their dedicated AppKit container."
-        )
-    }
-
-    @MainActor
-    private func waitForRenewTimer(
-        in authManager: AuthManager,
-        timeout: TimeInterval = 1
-    ) async throws -> Timer {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        while Date() < deadline {
-            if let timer = renewTimer(in: authManager), timer.isValid {
-                return timer
-            }
-            await Task.yield()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
-
-        XCTFail("Expected renew timer to become available before timeout.")
-        throw NSError(domain: "PhiBrowserTests", code: 1)
-    }
-
-    private func renewTimer(in authManager: AuthManager) -> Timer? {
-        Mirror(reflecting: authManager).descendant("renewTimer") as? Timer
-    }
-
     /// Builds a pre-V2 payload without applying the current fixed-alpha rule.
     private func rawEditableColors(from theme: Theme) -> ThemeEditableColors {
         let overlay = theme.colorPair(for: .windowOverlayBackground)
@@ -3491,177 +2289,5 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(actualColor.greenComponent, expectedColor.greenComponent, accuracy: 0.001, file: file, line: line)
         XCTAssertEqual(actualColor.blueComponent, expectedColor.blueComponent, accuracy: 0.001, file: file, line: line)
         XCTAssertEqual(actualColor.alphaComponent, expectedColor.alphaComponent, accuracy: 0.001, file: file, line: line)
-    }
-}
-
-private final class KioskFrontingEventRecorder {
-    var values: [String] = []
-}
-
-private final class KioskFrontingTestWindow: NSWindow {
-    private let events: KioskFrontingEventRecorder
-
-    init(events: KioskFrontingEventRecorder) {
-        self.events = events
-        super.init(
-            contentRect: .zero,
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
-    }
-
-    override func orderFrontRegardless() {
-        events.values.append("orderFrontRegardless")
-    }
-
-    override func makeKey() {
-        events.values.append("makeKey")
-    }
-}
-
-private final class AuthCredentialCommitTestState: @unchecked Sendable {
-    let sessions = AuthSessionGeneration()
-    var canonicalCredential = "persisted"
-    var currentCredential: String?
-}
-
-private enum AuthReauthenticationWebAuthTestError: Error, Equatable {
-    case cancelled
-    case transactionActive
-}
-
-@MainActor
-private final class AuthReauthenticationWebAuthTestSession {
-    enum Event: Equatable {
-        case cancel
-        case start
-    }
-
-    var onStart: ((Int) -> Void)?
-    private(set) var events: [Event] = []
-    private(set) var transactionActiveFailureCount = 0
-
-    private var startCount = 0
-    private var activeCompletion: ((Result<Int, AuthReauthenticationWebAuthTestError>) -> Void)?
-
-    func cancel() {
-        events.append(.cancel)
-        guard let completion = activeCompletion else {
-            return
-        }
-        activeCompletion = nil
-        completion(.failure(.cancelled))
-    }
-
-    func start(
-        _ completion: @escaping (Result<Int, AuthReauthenticationWebAuthTestError>) -> Void
-    ) {
-        events.append(.start)
-        guard activeCompletion == nil else {
-            transactionActiveFailureCount += 1
-            completion(.failure(.transactionActive))
-            return
-        }
-
-        activeCompletion = completion
-        startCount += 1
-        onStart?(startCount)
-    }
-
-    func succeed(with value: Int) {
-        guard let completion = activeCompletion else {
-            return
-        }
-        activeCompletion = nil
-        completion(.success(value))
-    }
-}
-
-private final class BookmarkMenuTestTarget: NSObject {
-    @objc func menuAction(_ sender: Any?) {}
-}
-
-/// Exercises the actual AuthManager recovery gates without accessing real credentials.
-final class AuthLogoutRecoveryTests: XCTestCase {
-    private var suiteName: String!
-    private var defaults: UserDefaults!
-
-    override func setUpWithError() throws {
-        suiteName = "AuthLogoutRecoveryTests.\(UUID().uuidString)"
-        defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-    }
-
-    override func tearDownWithError() throws {
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
-    }
-
-    @MainActor
-    func testFailedDeletionBlocksRecoveryBeforeStorageIsTouched() {
-        let auth = AuthManager(defaults: defaults)
-        XCTAssertFalse(auth.blocksAutomaticCredentialRecovery)
-
-        let cleared = auth.invalidateLocalCredentialSession {
-            XCTAssertTrue(auth.blocksAutomaticCredentialRecovery)
-            XCTAssertFalse(auth.hasRecoverableLoginSession())
-            return false
-        }
-
-        XCTAssertFalse(cleared)
-        XCTAssertTrue(auth.blocksAutomaticCredentialRecovery)
-        XCTAssertNil(auth.storedUserInfo())
-        XCTAssertFalse(auth.checkLoginStatusOnChromiumLaunch())
-        XCTAssertNil(auth.getAccessTokenSyncly())
-        XCTAssertFalse(auth.shouldRenewOnReopen())
-    }
-
-    @MainActor
-    func testLogoutStillBlocksRecoveryAfterRelaunchForEitherCleanupResult() throws {
-        for cleanupSucceeded in [false, true] {
-            let auth = AuthManager(defaults: defaults)
-            XCTAssertEqual(
-                auth.invalidateLocalCredentialSession { cleanupSucceeded },
-                cleanupSucceeded
-            )
-
-            let reopenedDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-            let relaunched = AuthManager(defaults: reopenedDefaults)
-            XCTAssertTrue(relaunched.blocksAutomaticCredentialRecovery)
-            XCTAssertFalse(relaunched.hasRecoverableLoginSession())
-            XCTAssertNil(relaunched.storedUserInfo())
-        }
-    }
-
-    @MainActor
-    func testFailedDeletionPreventsAsynchronousCredentialRecoveryAndRenewal() async {
-        let auth = AuthManager(defaults: defaults)
-        auth.invalidateLocalCredentialSession { false }
-
-        await auth.refreshAuthStatus()
-        await auth.recoverFromSharedStoreIfNeeded()
-        let credentials = await auth.getActiveCredentials()
-        let renewed = await auth.renewCredentialsAsync(operation: "logout regression test", force: true)
-
-        XCTAssertNil(credentials)
-        XCTAssertNil(renewed)
-        XCTAssertNil(auth.currentCredentials)
-        XCTAssertTrue(auth.blocksAutomaticCredentialRecovery)
-    }
-
-    @MainActor
-    func testLogoutSuppressesPersistedReauthenticationAndLateFailure() async {
-        let auth = AuthManager(defaults: defaults)
-        auth.invalidateLocalCredentialSession { false }
-        auth.hasPersistedReauthenticationState = true
-
-        XCTAssertFalse(auth.requiresReauthentication)
-        XCTAssertFalse(auth.hasReauthenticationGraceSession())
-        auth.enterReauthenticationRequiredState(reason: .invalidRefreshToken)
-        XCTAssertEqual(auth.reauthenticationState, .normal)
-        let reauthenticated = await auth.reauthenticateExpiredSession()
-        let restarted = await auth.restartReauthenticationSession()
-        XCTAssertFalse(reauthenticated)
-        XCTAssertFalse(restarted)
     }
 }

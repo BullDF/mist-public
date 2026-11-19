@@ -8,16 +8,12 @@ import Combine
 import AppKit
 
 /// View model for the sidebar's tab-group header row. Mirrors `WebContentGroupInfo`
-/// (the data-layer source of truth for visuals) plus a derived tab count read
-/// from `BrowserState.normalTabs.filter { $0.groupToken == token }`. Membership
-/// is not stored on the group; the count is computed live and republished
-/// whenever `normalTabs` changes.
+/// (the data-layer source of truth for visuals).
 @Observable
 @MainActor
 final class TabGroupHeaderViewModel {
     var color: GroupColor = .grey
     var displayTitle: String = ""
-    var tabCount: Int = 0
     /// `true` when the pointer is over the header strip specifically
     /// (not the full group cell). Drives the close button's visibility
     /// — collapsed groups have header == cell so it's effectively
@@ -29,18 +25,14 @@ final class TabGroupHeaderViewModel {
     /// Mirrors `WebContentGroupInfo.isCollapsed` so the inline chevron
     /// in `TabGroupHeaderView` can rotate without driving the state.
     var isCollapsed: Bool = false
-    var isOverviewSelected: Bool = false
 
     private var configuredToken: String?
     private var cancellables = Set<AnyCancellable>()
 
-    func configure(with group: WebContentGroupInfo, in browserState: BrowserState) {
+    func configure(with group: WebContentGroupInfo) {
         configuredToken = group.token
-        let initialCount = browserState.normalTabs.lazy
-            .filter { $0.groupToken == group.token }.count
         color = group.color
-        tabCount = initialCount
-        displayTitle = group.displayTitle(memberCount: initialCount)
+        displayTitle = group.displayTitle
         isCollapsed = group.isCollapsed
 
         cancellables.removeAll()
@@ -61,34 +53,19 @@ final class TabGroupHeaderViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self, weak group] _ in
                 guard let self, let group, self.configuredToken == expectedToken else { return }
-                self.displayTitle = group.displayTitle(memberCount: self.tabCount)
+                self.displayTitle = group.displayTitle
             }
             .store(in: &cancellables)
 
         // Color flips both the bar tint and (for auto-named groups) the
-        // localized color name embedded in displayTitle.
+        // localized color name used as displayTitle.
         group.$color
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self, weak group] newColor in
                 guard let self, let group, self.configuredToken == expectedToken else { return }
                 self.color = newColor
-                self.displayTitle = group.displayTitle(memberCount: self.tabCount)
-            }
-            .store(in: &cancellables)
-
-        // Member count is derived from the tab list since `Tab.groupToken`
-        // is the single source of truth for membership. Republishes on
-        // every tab list change; `removeDuplicates()` filters out
-        // unrelated reorders that don't affect this group's count.
-        browserState.$normalTabs
-            .map { tabs in tabs.lazy.filter { $0.groupToken == expectedToken }.count }
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak group] newCount in
-                guard let self, let group, self.configuredToken == expectedToken else { return }
-                self.tabCount = newCount
-                self.displayTitle = group.displayTitle(memberCount: newCount)
+                self.displayTitle = group.displayTitle
             }
             .store(in: &cancellables)
     }
@@ -150,12 +127,6 @@ struct TabGroupHeaderView: View {
         .padding(.leading, 4)
         .padding(.trailing, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(viewModel.isOverviewSelected
-                      ? Color(nsColor: NSColor(resource: .sidebarTabSelected))
-                      : Color.clear)
-        )
         // `contentShape` makes the empty horizontal space between the
         // chevron / title / close button hit-testable so `.onHover`
         // fires across the entire header strip, not just on the
@@ -195,7 +166,7 @@ enum TabGroupHeaderHitTarget {
 }
 
 /// Resolves explicit control zones on the header. The title/body zone
-/// stays nil so it can request overview on click and start a group drag.
+/// stays nil so it can toggle collapse on click and start a group drag.
 struct TabGroupHeaderHitTargetResolver {
     static let controlSize: CGFloat = 24
     static let horizontalInset: CGFloat = 6

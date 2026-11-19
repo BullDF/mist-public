@@ -37,9 +37,7 @@ final class OmniBoxContainerViewController: NSViewController {
     private(set) var omniBoxController: OmniBoxViewController?
     private var cancellables = Set<AnyCancellable>()
     
-    private let omniBoxWidth: CGFloat = 520
     private let maxOmniBoxHeight: CGFloat = 284 // 57 (base) + 226 (max suggestions) + 1 (separator)
-    private let collapsedOmniBoxHeight: CGFloat = 52 // base 52 + separator 1
     private let centeredHorizontalInset: CGFloat
     private weak var parentView: EventBlockBgView?
     private var showFromAddressBar: Bool = false
@@ -140,9 +138,6 @@ final class OmniBoxContainerViewController: NSViewController {
         }
         guard event.type == .keyDown, hasShown,
               let window = view.window, event.window === window else { return event }
-        if omniBoxController?.handleKeywordSearchSpaceKeyDown(event) == true {
-            return nil
-        }
         return handleKeyDown(event: event)
     }
     
@@ -243,7 +238,6 @@ final class OmniBoxContainerViewController: NSViewController {
     
     
     func showOmniBox(fromAddressBar: Bool, addressView: NSView? = nil) {
-        omniBoxController?.prepareForPresentation()
         self.addressView = addressView
         showFromAddressBar = fromAddressBar && addressView != nil
         needsShowAnimation = true
@@ -575,22 +569,6 @@ final class OmniBoxContainerViewController: NSViewController {
     // Note: The anchorPoint change is localized to this view's layer and is safe because we compensate the position,
     // so the view's frame and layout are preserved and unaffected for other code.
 
-    /// Create a scale transform anchored at the top-left corner.
-    /// - Parameters:
-    ///   - viewSize: Final view size.
-    ///   - scale: Scale factor from `0.01` to `1.0`.
-    /// - Returns: A transform that scales from the top-left corner.
-    private func createTopLeftScaleTransform(viewSize: NSSize, scale: CGFloat) -> CATransform3D {
-        let anchorX: CGFloat = 0
-        let anchorY: CGFloat = viewSize.height
-
-        var transform = CATransform3DIdentity
-        transform = CATransform3DTranslate(transform, anchorX, anchorY, 0)
-        transform = CATransform3DScale(transform, scale, scale, 1.0)
-        transform = CATransform3DTranslate(transform, -anchorX, -anchorY, 0)
-        return transform
-    }
-    
     private func createCenterScaleTransform(for view: NSView, scale: CGFloat) -> CATransform3D {
         let bounds = view.bounds
         let centerX = bounds.width / 2

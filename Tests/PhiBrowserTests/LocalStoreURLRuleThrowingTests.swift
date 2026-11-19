@@ -8,14 +8,6 @@ import SwiftData
 import XCTest
 @testable import Phi
 
-// Throwing URL-rule storage APIs (M3-4a). Task 4 adds CASE C-1/C-2/C-10/C-11; Task 5
-// adds C-6–C-9, C-12, U-6, U-15e, the flag-setting table, U-13/U-13c, and U-14-legacy.
-//
-// LocalStoreCompatibilityTests uses placeholder files and disposable schemas; it cannot
-// open a real V11 store or run migrateV11toV12 (RT-8). Apart from production references
-// in LocalStore.swift and AppController+UserDataBackup.swift, no other tests reference
-// TabDataModelMigrationPlan. C-1/C-11 are the only real-store V11-to-V12 migration probes,
-// and C-1b is the V12-to-V13 one: every real-store migration probe lives in this file.
 @MainActor
 final class LocalStoreURLRuleThrowingTests: XCTestCase {
     private var tempDirectories: [URL] = []
@@ -112,7 +104,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         }
         XCTAssertTrue(Self.fourRules.contains { $0.pathPrefix == nil })
 
-        // All four syncIds are nonnil, distinct, and lowercase (R-M3-4a-23 backfill).
         let syncIds = try rules.map { try XCTUnwrap($0.syncId, "rule \($0.id) has no syncId after migration") }
         XCTAssertEqual(Set(syncIds).count, 4)
         for syncId in syncIds {
@@ -129,7 +120,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
             XCTAssertNil(row.mergePartnerSyncId)
         }
 
-        // The two ProfileModel columns are unused in M3-4a and are not backfilled.
         for profile in profiles {
             XCTAssertNil(profile.syncId)
             XCTAssertNil(profile.createdDate)
@@ -138,10 +128,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
 
     // MARK: - CASE C-1b: Real-store V12-to-V13 migration
 
-    // V13 adds one optional column, TabDataModel.locationUpdatedDate (C2 / R2.2). Detects an
-    // omitted model among the five, a mistyped column that prevents lightweight migration, and a
-    // backfill: nil means "no recorded move", and inventing a date here would publish a fabricated
-    // move time for every existing bookmark on the next sync round.
     func testV12StoreMigratesToV13LeavingLocationUpdatedDateNil() throws {
         let directory = try makeTemporaryDirectory()
         let seeded = try seedV12Store(at: directory, rules: Self.fourRules)
@@ -187,7 +173,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertTrue(LocalStore.compatibilityConfiguration.canReadStoreFormatVersion(13))
     }
 
-    // MARK: - CASE C-10: Default deletedDate read filtering (R-M3-4a-51)
 
     // Including soft-deleted rows in default reads includes them in dense sortOrder
     // normalization. The deleting device retains those indexes, while the follower hard-deletes
@@ -243,7 +228,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertFalse(published.contains { $0.id == softDeletedId })
     }
 
-    // MARK: - CASE C-11: Idempotent backfill of n distinct lowercase UUIDs for n rows (R-M3-4a-23)
 
     // Without lowercased(), local identities differ from other devices' lowercase UUIDs and
     // per-row syncId addressing can split one rule into two. Without the syncId == nil guard,
@@ -409,11 +393,8 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         )
     }
 
-    /// The V11/V12 sync columns the V12-to-V13 case checks survive the upgrade.
     private nonisolated static let seededContentEditDate = Date(timeIntervalSince1970: 1_700_000_300)
 
-    /// The V12 sibling of `seedV11Store`, with the V12 sync columns populated so the V13 upgrade
-    /// is shown to preserve them rather than merely to succeed.
     @discardableResult
     private func seedV12Store(at directory: URL, rules: [SeedRule]) throws -> SeededV11Store {
         let configuration = ModelConfiguration(
@@ -504,7 +485,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
     private nonisolated static let t0 = Date(timeIntervalSince1970: 1_700_000_000)
     private static let t1 = Date(timeIntervalSince1970: 1_700_000_500)
 
-    // MARK: CASE C-6: The sole public API throws, with no fire-and-forget alternative (R-M3-4a-49)
 
     // The old replace paths used performBackgroundWrite, returned silently for nil writeActor,
     // and swallowed body errors in catch { AppLogError... }. Callers could not distinguish
@@ -531,38 +511,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
                 deletedIds: []
             )
         }
-    }
-
-    func testApplyURLRuleEditsRejectsASyncIdCollisionAndLeavesEveryColumnUntouched() async throws {
-        // (b) A normal store containing A (R1) and B (R2).
-        let store = try makeStore()
-        try await seed([
-            RuleSeed(id: "A", spaceId: Self.spaceOne, host: "a.example", sortOrder: 0,
-                     syncId: "R1", contentUpdatedDate: Self.t0),
-            RuleSeed(id: "B", spaceId: Self.spaceOne, host: "b.example", sortOrder: 1,
-                     syncId: "R2", contentUpdatedDate: Self.t0),
-        ], in: store)
-        let before = try allRows(in: store)
-        XCTAssertEqual(before.count, 2)
-
-        await assertThrows(.rowAlreadyMapped) {
-            try await store.applyURLRuleEditsThrowing(
-                upserts: [LocalStore.URLRuleDraft(id: "A", host: "a.example", spaceId: Self.spaceOne,
-                                                  syncId: "R2")],
-                deletedIds: []
-            )
-        }
-        let after = try allRows(in: store)
-        XCTAssertEqual(after, before)
-
-        // Structural assertion: LocalStore has no nonthrowing applyURLRuleEdits(upserts:deletedIds:)
-        // and neither old replace API remains.
-        let source = try String(contentsOf: Self.repoFile("Sources/LocalStorage/LocalStore+SpaceURLRule.swift"),
-                                encoding: .utf8)
-        XCTAssertFalse(source.contains("func applyURLRuleEdits("))
-        XCTAssertFalse(source.contains("func replaceURLRules("))
-        XCTAssertFalse(source.contains("func replaceAllURLRules("))
-        XCTAssertTrue(source.contains("func applyURLRuleEditsThrowing("))
     }
 
     // MARK: CASE C-7: Change only the named rows and fields
@@ -597,7 +545,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         let end = Date()
 
         let after = try allRows(in: store)
-        XCTAssertEqual(after.count, 3, "a soft delete never removes a row")
+        XCTAssertEqual(after.count, 2)
 
         let r0 = try XCTUnwrap(after["r0"])
         XCTAssertEqual(r0.id, "r0")
@@ -607,15 +555,10 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         assertStampedNow(r0.contentUpdatedDate, between: start, and: end)
         XCTAssertNil(r0.targetUpdatedDate)
         XCTAssertNil(r0.deletedDate)
-        XCTAssertTrue(r0.pendingLocalEdit)
+        XCTAssertFalse(r0.pendingLocalEdit)
         XCTAssertEqual(r0.sortOrder, 0)
 
-        let r1 = try XCTUnwrap(after["r1"])
-        assertStampedNow(r1.deletedDate, between: start, and: end)
-        XCTAssertFalse(r1.pendingLocalEdit, "a delete is not an edit (R-M3-4a-69)")
-        XCTAssertEqual(r1.host, "r1.example")
-        XCTAssertEqual(r1.syncId, "R1")
-        XCTAssertEqual(r1.contentUpdatedDate, Self.t0)
+        XCTAssertNil(after["r1"])
 
         // r2 remains unchanged except sortOrder becomes 1 to close the soft-deletion gap (ruling 4).
         var r2Expected = try XCTUnwrap(before["r2"])
@@ -653,7 +596,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertEqual(after.count, 1)
     }
 
-    // MARK: CASE C-8: An id crossing buckets is a valid target change (R-M3-4a-80)
 
     // A per-target-Space index mistakes this move for a caller error and throws rowAlreadyMapped.
     // Inserting on lookup failure instead creates two rules sharing one syncId. Normalizing
@@ -665,7 +607,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
 
         let start = Date()
         try await store.applyURLRuleEditsThrowing(
-            upserts: [LocalStore.URLRuleDraft(id: "s1-1", syncId: "R-s1-1", content: nil,
+            upserts: [LocalStore.URLRuleDraft(id: "s1-1", content: nil,
                                               spaceId: Self.spaceTwo, sortOrder: 2)],
             deletedIds: []
         )
@@ -679,7 +621,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         assertStampedNow(moved.targetUpdatedDate, between: start, and: end)
         XCTAssertEqual(moved.contentUpdatedDate, Self.t0)
         XCTAssertEqual(moved.host, before["s1-1"]?.host)
-        XCTAssertTrue(moved.pendingLocalEdit)
+        XCTAssertFalse(moved.pendingLocalEdit)
         XCTAssertEqual(moved.sortOrder, 2)
         XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1])
         XCTAssertEqual(bucketOrder(Self.spaceTwo, in: after), [0, 1, 2])
@@ -696,7 +638,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         let start = Date()
         try await store.applyURLRuleEditsThrowing(
             upserts: [
-                LocalStore.URLRuleDraft(id: "s1-1", syncId: "R-s1-1", content: nil,
+                LocalStore.URLRuleDraft(id: "s1-1", content: nil,
                                         spaceId: Self.spaceTwo, sortOrder: 2),
                 LocalStore.URLRuleDraft(id: "s3-0",
                                         content: LocalStore.URLRuleDraft.ContentUnit(host: "s3-new.example"),
@@ -718,136 +660,14 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertEqual(edited.spaceId, Self.spaceThree)
         assertStampedNow(edited.contentUpdatedDate, between: start, and: end)
         XCTAssertNil(edited.targetUpdatedDate)
-        XCTAssertTrue(edited.pendingLocalEdit)
+        XCTAssertFalse(edited.pendingLocalEdit)
         XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1])
         XCTAssertEqual(bucketOrder(Self.spaceTwo, in: after), [0, 1, 2])
         XCTAssertEqual(bucketOrder(Self.spaceThree, in: after), [0])
     }
 
-    // MARK: CASE C-8b: Rules use rowAlreadyMapped only for syncId collisions (R-M3-4a-80)
 
-    // Checking only whether a row already has another syncId misses a syncId owned by a
-    // different id, allowing duplicate account identities. Per-row commits without
-    // performThrowing rollback leave partial application. Put the valid upsert first so rollback has real work to undo.
-    func testSyncIdOwnedByAnotherRowRejectsAndRollsBackTheLegitimateSibling() async throws {
-        let store = try makeStore()
-        try await seed([
-            RuleSeed(id: "A", spaceId: Self.spaceOne, host: "a.example", sortOrder: 0,
-                     syncId: "R1", contentUpdatedDate: Self.t0, targetUpdatedDate: Self.t0),
-            RuleSeed(id: "B", spaceId: Self.spaceOne, host: "b.example", sortOrder: 1,
-                     syncId: "R2", contentUpdatedDate: Self.t0, targetUpdatedDate: Self.t0),
-        ], in: store)
-        let before = try allRows(in: store)
 
-        await assertThrows(.rowAlreadyMapped) {
-            try await store.applyURLRuleEditsThrowing(
-                upserts: [
-                    LocalStore.URLRuleDraft(id: "B", host: "ok.example", spaceId: Self.spaceOne),
-                    LocalStore.URLRuleDraft(id: "A", host: "a.example", spaceId: Self.spaceOne, syncId: "R2"),
-                ],
-                deletedIds: []
-            )
-        }
-        let after = try allRows(in: store)
-        XCTAssertEqual(after, before)
-        XCTAssertEqual(after["B"]?.host, "b.example")
-    }
-
-    // MARK: CASE C-9: Per-row syncId guards and soft-deleted addressing (R-M3-4a-56 / R-M3-4a-42(a))
-
-    // Using default reads filtered by deletedDate == nil inserts a duplicate syncId for
-    // a soft-deleted row. Soft-deleting inbound tombstones never removes follower rows;
-    // stamping application with now fabricates freshness that can beat real remote edits.
-    func testPerRowPrimitivesAddressSoftDeletedRowsAndNeverMintStamps() async throws {
-        let store = try makeStore()
-        try await seed([
-            RuleSeed(id: "A", spaceId: Self.spaceOne, host: "old.example", sortOrder: 0, syncId: "R1",
-                     contentUpdatedDate: Self.t0, deletedDate: Self.t0, pendingLocalEdit: true,
-                     mergePartnerSyncId: "R9"),
-            RuleSeed(id: "B", spaceId: Self.spaceOne, host: "b.example", sortOrder: 1, syncId: "R2",
-                     contentUpdatedDate: Self.t0),
-        ], in: store)
-        let remoteCreated = Date(timeIntervalSince1970: 1_600_000_000)
-        let remoteContent = Date(timeIntervalSince1970: 1_650_000_000)
-        let remoteTarget = Date(timeIntervalSince1970: 1_660_000_000)
-
-        // ① Address the soft-deleted row without duplication; clear deletedDate and
-        // mergePartnerSyncId in the same write, preserve both input timestamps, and leave pendingLocalEdit unchanged.
-        try await store.upsertURLRuleThrowing(syncId: "R1", spaceId: Self.spaceOne, host: "a.example",
-                                              pathPrefix: nil, ask: false, sortOrder: 0,
-                                              createdDate: remoteCreated,
-                                              contentUpdatedDate: remoteContent,
-                                              targetUpdatedDate: remoteTarget)
-        let afterUpsert = try allRows(in: store)
-        XCTAssertEqual(afterUpsert.count, 2)
-        let a = try XCTUnwrap(afterUpsert["A"])
-        XCTAssertEqual(a.syncId, "R1")
-        XCTAssertNil(a.deletedDate)
-        XCTAssertNil(a.mergePartnerSyncId)
-        XCTAssertEqual(a.host, "a.example")
-        XCTAssertEqual(a.createdDate, remoteCreated)
-        XCTAssertEqual(a.contentUpdatedDate, remoteContent)
-        XCTAssertEqual(a.targetUpdatedDate, remoteTarget)
-        XCTAssertTrue(a.pendingLocalEdit)
-
-        // ② Hard deletion removes the row from the store.
-        try await store.hardDeleteURLRuleThrowing(syncId: "R1")
-        let afterDelete = try allRows(in: store)
-        XCTAssertEqual(afterDelete.count, 1)
-        XCTAssertNil(afterDelete["A"])
-        XCTAssertEqual(afterDelete["B"], afterUpsert["B"])
-        // A missing identity is a silent no-op for an inbound tombstone with no local row.
-        try await store.hardDeleteURLRuleThrowing(syncId: "R1")
-        XCTAssertEqual(try allRows(in: store).count, 1)
-
-        // ③ Change B.syncId to R3, then apply R2. The primitive addresses only syncId, with
-        // no local id parameter: R2 is absent from the full table, so create a row without
-        // changing B (see the Task 5 ledger note).
-        try await store.performBackgroundWriteAndWaitThrowing { context in
-            let rows = try context.fetch(FetchDescriptor<SpaceURLRule>(
-                predicate: #Predicate { $0.id == "B" }
-            ))
-            for row in rows { row.syncId = "R3" }
-        }
-        let beforeThird = try allRows(in: store)
-        XCTAssertEqual(beforeThird["B"]?.syncId, "R3")
-        try await store.upsertURLRuleThrowing(syncId: "R2", spaceId: Self.spaceOne, host: "b2.example",
-                                              pathPrefix: "/p", ask: true, sortOrder: 5,
-                                              createdDate: remoteCreated,
-                                              contentUpdatedDate: remoteContent,
-                                              targetUpdatedDate: nil)
-        let afterThird = try allRows(in: store)
-        XCTAssertEqual(afterThird.count, 2)
-        XCTAssertEqual(afterThird["B"], beforeThird["B"])
-        let landedR2 = try XCTUnwrap(afterThird.values.first { $0.syncId == "R2" })
-        XCTAssertEqual(landedR2.host, "b2.example")
-        XCTAssertNotEqual(landedR2.id, "B")
-
-        // ④ An unseen identity creates a row rather than throwing rowNotFound (R-M3-4a-42(a)).
-        try await store.upsertURLRuleThrowing(syncId: "R-never-seen", spaceId: Self.spaceTwo,
-                                              host: " New.Example. ", pathPrefix: "/x/",
-                                              ask: true, sortOrder: 0,
-                                              createdDate: remoteCreated,
-                                              contentUpdatedDate: remoteContent,
-                                              targetUpdatedDate: remoteTarget)
-        let afterFourth = try allRows(in: store)
-        XCTAssertEqual(afterFourth.count, 3)
-        let fresh = try XCTUnwrap(afterFourth.values.first { $0.syncId == "R-never-seen" })
-        XCTAssertNotNil(UUID(uuidString: fresh.id))
-        XCTAssertEqual(fresh.spaceId, Self.spaceTwo)
-        XCTAssertEqual(fresh.host, "new.example")
-        XCTAssertEqual(fresh.pathPrefix, "/x")
-        XCTAssertTrue(fresh.askBeforeRouting)
-        XCTAssertEqual(fresh.sortOrder, 0)
-        XCTAssertEqual(fresh.createdDate, remoteCreated)
-        XCTAssertEqual(fresh.contentUpdatedDate, remoteContent)
-        XCTAssertEqual(fresh.targetUpdatedDate, remoteTarget)
-        XCTAssertNil(fresh.deletedDate)
-        XCTAssertNil(fresh.mergePartnerSyncId)
-        XCTAssertFalse(fresh.pendingLocalEdit, "the engine's writes never raise the edit flag")
-    }
-
-    // MARK: CASE C-12: A draft with nil syncId matching a soft-deleted row creates a new row (R-M3-4a-104 / ruling 8)
 
     // An in-place upsert ignoring deletedDate writes the edit into an invisible row, then
     // tombstone acceptance hard-deletes it: a successful save loses the rule. Resurrecting
@@ -861,10 +681,10 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
                  contentUpdatedDate: t0),
     ]
 
-    private static func recoveryDraft(syncId: String?) -> LocalStore.URLRuleDraft {
+    private static func recoveryDraft() -> LocalStore.URLRuleDraft {
         LocalStore.URLRuleDraft(
             id: "I",
-            syncId: syncId,
+
             content: LocalStore.URLRuleDraft.ContentUnit(host: "new.example", pathPrefix: "/p",
                                                          askBeforeRouting: true),
             spaceId: spaceOne,
@@ -877,7 +697,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         try await seed(Self.softDeletedHitSeeds, in: store)
         let before = try allRows(in: store)
 
-        try await store.applyURLRuleEditsThrowing(upserts: [Self.recoveryDraft(syncId: nil)], deletedIds: [])
+        try await store.applyURLRuleEditsThrowing(upserts: [Self.recoveryDraft()], deletedIds: [])
 
         let after = try allRows(in: store)
         XCTAssertEqual(after.count, 3)
@@ -886,36 +706,18 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
 
         let fresh = try XCTUnwrap(after.values.first { $0.id != "I" && $0.id != "J" })
         XCTAssertNotNil(UUID(uuidString: fresh.id))
-        let freshSyncId = try XCTUnwrap(fresh.syncId)
-        XCTAssertNotEqual(freshSyncId, "R1")
-        XCTAssertNotEqual(freshSyncId, "RJ")
-        XCTAssertEqual(freshSyncId, freshSyncId.lowercased())
-        XCTAssertNotNil(UUID(uuidString: freshSyncId))
+        XCTAssertNil(fresh.syncId)
         XCTAssertEqual(fresh.host, "new.example")
         XCTAssertEqual(fresh.pathPrefix, "/p")
         XCTAssertTrue(fresh.askBeforeRouting)
         XCTAssertEqual(fresh.spaceId, Self.spaceOne)
         XCTAssertNil(fresh.deletedDate)
         XCTAssertNil(fresh.mergePartnerSyncId)
-        XCTAssertTrue(fresh.pendingLocalEdit)
+        XCTAssertFalse(fresh.pendingLocalEdit)
         XCTAssertNil(fresh.contentUpdatedDate, "a new row does not mint a content stamp (ruling 5)")
         XCTAssertNil(fresh.targetUpdatedDate)
         XCTAssertEqual(fresh.sortOrder, 0)
         XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1])
-    }
-
-    func testSyncCarryingDraftHittingASoftDeletedRowIsRejected() async throws {
-        let store = try makeStore()
-        try await seed(Self.softDeletedHitSeeds, in: store)
-        let before = try allRows(in: store)
-
-        await assertThrows(.rowAlreadyMapped) {
-            try await store.applyURLRuleEditsThrowing(upserts: [Self.recoveryDraft(syncId: "R1")],
-                                                      deletedIds: [])
-        }
-        let after = try allRows(in: store)
-        XCTAssertEqual(after, before)
-        XCTAssertEqual(after.count, 2)
     }
 
     func testEditorDraftHittingALiveRowIsAnOrdinaryUpsert() async throws {
@@ -925,7 +727,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         try await seed(seeds, in: store)
 
         let start = Date()
-        try await store.applyURLRuleEditsThrowing(upserts: [Self.recoveryDraft(syncId: nil)], deletedIds: [])
+        try await store.applyURLRuleEditsThrowing(upserts: [Self.recoveryDraft()], deletedIds: [])
         let end = Date()
 
         let after = try allRows(in: store)
@@ -934,10 +736,9 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertEqual(row.syncId, "R1")
         XCTAssertEqual(row.host, "new.example")
         assertStampedNow(row.contentUpdatedDate, between: start, and: end)
-        XCTAssertTrue(row.pendingLocalEdit)
+        XCTAssertFalse(row.pendingLocalEdit)
     }
 
-    // MARK: CASE U-6: Normalization is a fixed point (R-M3-4a-21 / §8.1)
 
     // Stripping trailing slashes before decoding makes f("/%2F") == "//", silently widening
     // semantics. Stripping dots before trimming maps host "a. ." to "a.". Without a fixed
@@ -980,39 +781,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertEqual(LocalStore.normalizedHost(" GitHub.COM. "), "github.com")
     }
 
-    func testLocalEditAndLandingNormalizeIdentically() async throws {
-        let rawHost = " GitHub.COM. "
-        let rawPath = "/Foo%2F"
-        let unit = LocalStore.URLRuleDraft.ContentUnit(host: rawHost, pathPrefix: rawPath)
-        XCTAssertEqual(unit.host, "github.com")
-        XCTAssertEqual(unit.pathPrefix, "/Foo")
-
-        let store = try makeStore()
-        try await store.applyURLRuleEditsThrowing(
-            upserts: [LocalStore.URLRuleDraft(id: "via-draft", content: unit, spaceId: Self.spaceOne)],
-            deletedIds: []
-        )
-        try await store.upsertURLRuleThrowing(syncId: "R-landed", spaceId: Self.spaceOne, host: rawHost,
-                                              pathPrefix: rawPath, ask: false, sortOrder: 1,
-                                              createdDate: Self.t0, contentUpdatedDate: nil,
-                                              targetUpdatedDate: nil)
-
-        let rows = try allRows(in: store)
-        let viaDraft = try XCTUnwrap(rows["via-draft"])
-        let landed = try XCTUnwrap(rows.values.first { $0.syncId == "R-landed" })
-        XCTAssertEqual(viaDraft.host, unit.host)
-        XCTAssertEqual(viaDraft.pathPrefix, unit.pathPrefix)
-        XCTAssertEqual(landed.host, unit.host)
-        XCTAssertEqual(landed.pathPrefix, unit.pathPrefix)
-        // The flat convenience initializer also passes through ContentUnit.
-        let flat = LocalStore.URLRuleDraft(host: rawHost, pathPrefix: rawPath, spaceId: Self.spaceOne)
-        XCTAssertEqual(flat.content?.host, unit.host)
-        XCTAssertEqual(flat.content?.pathPrefix, unit.pathPrefix)
-        XCTAssertEqual(flat.host, unit.host)
-        XCTAssertEqual(flat.pathPrefix, unit.pathPrefix)
-    }
-
-    // MARK: CASE U-15e: Retargeting moves buckets, store side (R-M3-4a-80)
 
     // Covers C-8 plus implementations that split retargeting into delete and insert:
     // changing syncId severs the account rule's history, including both timestamps.
@@ -1023,7 +791,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
 
         let start = Date()
         try await store.applyURLRuleEditsThrowing(
-            upserts: [LocalStore.URLRuleDraft(id: "s1-1", syncId: "R-s1-1", content: nil,
+            upserts: [LocalStore.URLRuleDraft(id: "s1-1", content: nil,
                                               spaceId: Self.spaceTwo, sortOrder: 2)],
             deletedIds: []
         )
@@ -1037,27 +805,11 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertEqual(moved.spaceId, Self.spaceTwo)
         XCTAssertEqual(moved.contentUpdatedDate, Self.t0)
         assertStampedNow(moved.targetUpdatedDate, between: start, and: end)
-        XCTAssertTrue(moved.pendingLocalEdit)
+        XCTAssertFalse(moved.pendingLocalEdit)
         XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1])
         XCTAssertEqual(bucketOrder(Self.spaceTwo, in: after), [0, 1, 2])
     }
 
-    func testRetargetUpsertCarryingAnotherRowsSyncIdIsRejected() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-        let before = try allRows(in: store)
-
-        await assertThrows(.rowAlreadyMapped) {
-            try await store.applyURLRuleEditsThrowing(
-                upserts: [LocalStore.URLRuleDraft(id: "s1-1", syncId: "R-s2-0", content: nil,
-                                                  spaceId: Self.spaceTwo, sortOrder: 2)],
-                deletedIds: []
-            )
-        }
-        XCTAssertEqual(try allRows(in: store), before)
-    }
-
-    // MARK: CASE 5 flag-setting table: One case per §4.3 row (R-M3-4a-11 / 48 / 65 / 69 / 72)
 
     // Stamping both groups on any row change advances targetUpdatedDate for a rename (⑤).
     // Treating nil cells as explicit nil/default writes clears spaceId in ① and host in ②.
@@ -1090,7 +842,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         assertStampedNow(r0.contentUpdatedDate, between: start, and: end)
         XCTAssertEqual(r0.targetUpdatedDate, Self.t0)
         XCTAssertEqual(r0.spaceId, Self.spaceOne)
-        XCTAssertTrue(r0.pendingLocalEdit)
+        XCTAssertFalse(r0.pendingLocalEdit)
     }
 
     func testStampTableTargetOnlyWritesTheTargetStamp() async throws {
@@ -1112,12 +864,12 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertEqual(r0.pathPrefix, "/r0")
         XCTAssertFalse(r0.askBeforeRouting)
         XCTAssertEqual(r0.spaceId, Self.spaceTwo)
-        XCTAssertTrue(r0.pendingLocalEdit)
+        XCTAssertFalse(r0.pendingLocalEdit)
         XCTAssertEqual(bucketOrder(Self.spaceOne, in: rows), [0])
         XCTAssertEqual(bucketOrder(Self.spaceTwo, in: rows), [0])
     }
 
-    func testStampTableReorderWritesNoStampButRaisesTheFlag() async throws {
+    func testStampTableReorderWritesNoStampOrPendingFlag() async throws {
         let store = try makeStore()
         try await seed(Self.stampTableSeeds, in: store)
 
@@ -1136,8 +888,8 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertEqual(r0.targetUpdatedDate, Self.t0)
         XCTAssertEqual(r1.contentUpdatedDate, Self.t0)
         XCTAssertEqual(r1.targetUpdatedDate, Self.t0)
-        XCTAssertTrue(r0.pendingLocalEdit)
-        XCTAssertTrue(r1.pendingLocalEdit)
+        XCTAssertFalse(r0.pendingLocalEdit)
+        XCTAssertFalse(r1.pendingLocalEdit)
         XCTAssertEqual(r0.sortOrder, 1)
         XCTAssertEqual(r1.sortOrder, 0)
     }
@@ -1189,7 +941,7 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         assertStampedNow(r0.contentUpdatedDate, between: start, and: end)
         XCTAssertEqual(r0.spaceId, Self.spaceTwo)
         XCTAssertEqual(r0.targetUpdatedDate, Self.t1)
-        XCTAssertTrue(r0.pendingLocalEdit)
+        XCTAssertFalse(r0.pendingLocalEdit)
     }
 
     func testStampTableAnEmptyUpsertIsAZeroWrite() async throws {
@@ -1207,45 +959,13 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(after["r0"]).pendingLocalEdit)
     }
 
-    // MARK: CASE U-13: User deletes a Space, store side (R-M3-4a-24 / 41 / 85)
 
-    // Hard-deleting rules loses deletedDate. Deleting SpaceModel in the same batch while
-    // retaining its mapping yields zero URL-rule tombstones and account orphans no device
-    // can delete. Flagging every row in the shared body makes these three soft-deleted
-    // rows yield to inbound tombstones.
-    func testUserIntentCascadeSoftDeletesRulesWithoutRaisingTheEditFlag() async throws {
-        let store = try makeStore()
-        try await seedCascadeFixture(in: store, preSoftDeletedRuleId: nil)
 
-        let start = Date()
-        store.deleteSpaceCascade(spaceId: Self.spaceOne, origin: .userIntent)
-        await store.performBackgroundWriteAndWait { _ in }
-        let end = Date()
-
-        try assertSpaceAndTabsGone(in: store)
-        let rows = try allRows(in: store)
-        XCTAssertEqual(rows.count, 4)
-        let deleted = ["s1-0", "s1-1", "s1-2"].compactMap { rows[$0] }
-        XCTAssertEqual(deleted.count, 3)
-        let stamps = Set(deleted.map(\.deletedDate))
-        XCTAssertEqual(stamps.count, 1, "one `now` shared by the whole cascade")
-        assertStampedNow(deleted[0].deletedDate, between: start, and: end)
-        XCTAssertEqual(deleted.map(\.syncId), ["R-s1-0", "R-s1-1", "R-s1-2"])
-        XCTAssertEqual(deleted.map(\.pendingLocalEdit), [false, false, false])
-        XCTAssertNil(rows["s2-0"]?.deletedDate)
-    }
-
-    // MARK: CASE U-13c: Purge is not deletion intent, store side (R-M3-4a-85)
-
-    // Treating purge as userIntent, or unconditionally soft-deleting in the shared body,
-    // sets deletedDate and triggers §5.7 origin (b), bypassing both ownership gates. That
-    // can delete a rule parked under another Space while it remains valid remotely.
-    // A default origin argument would hide a missing argument at either entry point.
-    func testRetentionPurgeCascadeHardDeletesRules() async throws {
+    func testSpaceCascadeHardDeletesRulesIncludingPreviouslyDeletedRows() async throws {
         let store = try makeStore()
         try await seedCascadeFixture(in: store, preSoftDeletedRuleId: "s1-2")
 
-        try await store.deleteSpaceCascadeThrowing(spaceId: Self.spaceOne, origin: .retentionPurge)
+        try await store.deleteSpaceCascadeThrowing(spaceId: Self.spaceOne)
 
         try assertSpaceAndTabsGone(in: store)
         let rows = try allRows(in: store)
@@ -1253,607 +973,6 @@ final class LocalStoreURLRuleThrowingTests: XCTestCase {
         XCTAssertNil(rows["s2-0"]?.deletedDate)
     }
 
-    func testUserIntentCascadeKeepsAnEarlierSoftDeleteStamp() async throws {
-        let store = try makeStore()
-        try await seedCascadeFixture(in: store, preSoftDeletedRuleId: "s1-2")
-
-        store.deleteSpaceCascade(spaceId: Self.spaceOne, origin: .userIntent)
-        await store.performBackgroundWriteAndWait { _ in }
-
-        try assertSpaceAndTabsGone(in: store)
-        let rows = try allRows(in: store)
-        XCTAssertEqual(rows.count, 4)
-        XCTAssertNotNil(rows["s1-0"]?.deletedDate)
-        XCTAssertNotNil(rows["s1-1"]?.deletedDate)
-        XCTAssertEqual(rows["s1-2"]?.deletedDate, Self.t1, "an already soft-deleted row keeps its stamp")
-        XCTAssertEqual(rows["s1-0"]?.deletedDate, rows["s1-1"]?.deletedDate)
-        XCTAssertEqual(["s1-0", "s1-1", "s1-2"].map { rows[$0]?.pendingLocalEdit }, [false, false, false])
-    }
-
-    // MARK: CASE U-14-legacy: Historical non-UUID id, store side (R-M3-4a-13 / ruling 3)
-
-    // Following §4.3 rule 3 literally and inserting on an id miss creates a second R1 row,
-    // so the next snapshot has two rows claiming one account identity. Throwing
-    // rowAlreadyMapped for the syncId fallback instead makes editor saves fail the entire batch.
-    func testLegacyIdIsAdoptedThroughTheSyncIdFallback() async throws {
-        let store = try makeStore()
-        try await seed([
-            RuleSeed(id: "legacy-7", spaceId: Self.spaceOne, host: "a.example", sortOrder: 0, syncId: "R1"),
-            RuleSeed(id: "n-1", spaceId: Self.spaceOne, host: "n1.example", sortOrder: 1, syncId: "RN1"),
-            RuleSeed(id: "n-2", spaceId: Self.spaceOne, host: "n2.example", sortOrder: 2, syncId: "RN2"),
-        ], in: store)
-        let before = try allRows(in: store)
-        let freshId = UUID().uuidString
-
-        try await store.applyURLRuleEditsThrowing(
-            upserts: [LocalStore.URLRuleDraft(id: freshId, host: "b.example", pathPrefix: nil,
-                                              askBeforeRouting: false, spaceId: Self.spaceOne,
-                                              syncId: "R1")],
-            deletedIds: []
-        )
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after.count, 3)
-        XCTAssertNil(after["legacy-7"])
-        let adopted = try XCTUnwrap(after[freshId])
-        XCTAssertEqual(adopted.syncId, "R1")
-        XCTAssertEqual(adopted.host, "b.example")
-        XCTAssertEqual(adopted.sortOrder, 0)
-        XCTAssertEqual(after["n-1"], before["n-1"])
-        XCTAssertEqual(after["n-2"], before["n-2"])
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1, 2])
-    }
-
-    // MARK: - Task 8: Batch application, AccountPhiURLRuleAccess, committed reads, and urlRuleChangesPublisher
-
-    // MARK: CASE U-10: Owner changes preserve identity and normalize both buckets (R-M3-4a-3 / R-M3-4a-51)
-
-    // Delete-plus-insert rehoming changes id and syncId, making the next diff tombstone
-    // the old identity. Normalizing only one bucket leaves a source index gap; sortOrder
-    // is the third Specificity component.
-    func testSyncMoveRehomesTheRowKeepingIdentityAndDensifiesBothBuckets() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-        let before = try allRows(in: store)
-
-        let values = landing("R-s1-0", spaceId: Self.spaceTwo, host: "s1-0.example", sortOrder: 0)
-        let batch = URLRuleApplyBatch(unordered: [.move(values)],
-                                      currentSpaceIds: ["R-s1-0": Self.spaceOne])
-        try await store.applyURLRuleSyncBatchThrowing(batch.ops)
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after.count, 5, "no second row for R-s1-0")
-        XCTAssertEqual(Set(after.keys), Set(before.keys))
-        XCTAssertEqual(after.values.filter { $0.syncId == "R-s1-0" }.count, 1)
-        let moved = try XCTUnwrap(after["s1-0"])
-        XCTAssertEqual(moved.id, "s1-0")
-        XCTAssertEqual(moved.syncId, "R-s1-0")
-        XCTAssertEqual(moved.spaceId, Self.spaceTwo)
-        XCTAssertEqual(moved.createdDate, before["s1-0"]?.createdDate)
-        XCTAssertFalse(moved.pendingLocalEdit, "engine writes never raise the edit flag")
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1])
-        XCTAssertEqual(bucketOrder(Self.spaceTwo, in: after), [0, 1, 2])
-    }
-
-    // MARK: CASE U-10b: A pure reorder must not become a rehome (real-store half)
-
-    // Treating every move as a rehome needlessly normalizes an untouched bucket.
-    // That write triggers §6.5's publisher and an extra push round, violating steady-state pushed == 0.
-    func testDemotedReorderTouchesOnlyItsOwnBucket() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-        let before = try allRows(in: store)
-
-        let values = landing("R-s1-0", spaceId: Self.spaceOne, host: "s1-0.example", sortOrder: 2)
-        let batch = URLRuleApplyBatch(unordered: [.move(values)],
-                                      currentSpaceIds: ["R-s1-0": Self.spaceOne])
-        XCTAssertEqual(batch.ops, [.reorder(syncId: "R-s1-0", spaceId: Self.spaceOne, sortOrder: 2)])
-        try await store.applyURLRuleSyncBatchThrowing(batch.ops)
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after.count, 5)
-        for id in ["s2-0", "s2-1"] {
-            XCTAssertEqual(after[id], before[id], "the untouched bucket must not be written (\(id))")
-        }
-        let reordered = try XCTUnwrap(after["s1-0"])
-        XCTAssertEqual(reordered.spaceId, Self.spaceOne)
-        XCTAssertEqual(reordered.host, before["s1-0"]?.host)
-        XCTAssertEqual(reordered.contentUpdatedDate, before["s1-0"]?.contentUpdatedDate)
-        XCTAssertEqual(reordered.targetUpdatedDate, before["s1-0"]?.targetUpdatedDate)
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1, 2])
-    }
-
-    // MARK: CASE U-10c: Retarget to Incognito using the bare prefix constant
-
-    // Resolving the reserved constant to a live incognito runtime id makes the rule's
-    // target invalid after restart, when isRoutableRuleTarget returns false.
-    func testSyncMoveToTheIncognitoTargetWritesTheBarePrefix() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-        let before = try allRows(in: store)
-
-        let values = landing("R-s1-0", spaceId: SpaceManager.incognitoRuleTargetId,
-                             host: "s1-0.example", sortOrder: 0)
-        let batch = URLRuleApplyBatch(unordered: [.move(values)],
-                                      currentSpaceIds: ["R-s1-0": Self.spaceOne])
-        try await store.applyURLRuleSyncBatchThrowing(batch.ops)
-
-        let after = try allRows(in: store)
-        let moved = try XCTUnwrap(after["s1-0"])
-        XCTAssertEqual(moved.spaceId, "space.incognito")
-        XCTAssertEqual(moved.spaceId, SpaceManager.incognitoRuleTargetId)
-        XCTAssertFalse(moved.spaceId.hasPrefix("space.incognito."), "never a runtime Incognito id")
-        XCTAssertEqual(moved.syncId, before["s1-0"]?.syncId)
-        XCTAssertEqual(moved.id, before["s1-0"]?.id)
-        XCTAssertEqual(moved.createdDate, before["s1-0"]?.createdDate)
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1])
-        XCTAssertEqual(bucketOrder(SpaceManager.incognitoRuleTargetId, in: after), [0])
-    }
-
-    // MARK: CASE U-10d: Incognito to Space normalizes both buckets once
-
-    // Skipping the reserved-constant bucket as unreal leaves an index gap in Incognito.
-    func testSyncMoveFromIncognitoBackToASpaceDensifiesBothBuckets() async throws {
-        let store = try makeStore()
-        let incognito = SpaceManager.incognitoRuleTargetId
-        try await seed(Self.twoBucketSeeds + [
-            RuleSeed(id: "inc-0", spaceId: incognito, host: "inc-0.example", sortOrder: 0, syncId: "R-inc-0"),
-            RuleSeed(id: "inc-1", spaceId: incognito, host: "inc-1.example", sortOrder: 1, syncId: "R-inc-1"),
-            RuleSeed(id: "inc-2", spaceId: incognito, host: "inc-2.example", sortOrder: 2, syncId: "R-inc-2"),
-        ], in: store)
-
-        let values = landing("R-inc-1", spaceId: Self.spaceTwo, host: "inc-1.example", sortOrder: 1)
-        let batch = URLRuleApplyBatch(unordered: [.move(values)],
-                                      currentSpaceIds: ["R-inc-1": incognito])
-        try await store.applyURLRuleSyncBatchThrowing(batch.ops)
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after.count, 8)
-        let moved = try XCTUnwrap(after["inc-1"])
-        XCTAssertEqual(moved.id, "inc-1")
-        XCTAssertEqual(moved.syncId, "R-inc-1")
-        XCTAssertEqual(moved.spaceId, Self.spaceTwo)
-        XCTAssertEqual(bucketOrder(incognito, in: after), [0, 1])
-        XCTAssertEqual(bucketOrder(Self.spaceTwo, in: after), [0, 1, 2])
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1, 2], "S1 was not touched")
-    }
-
-    // MARK: CASE U-10e ②: One write per identity per page, real-store half
-
-    func testMergedMoveAndUpdateLandsOnceWithBothBucketsDense() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-
-        let values = landing("R-s1-1", spaceId: Self.spaceTwo, host: "new.example", sortOrder: 0)
-        let batch = URLRuleApplyBatch(unordered: [.move(values), .update(values)],
-                                      currentSpaceIds: ["R-s1-1": Self.spaceOne])
-        XCTAssertEqual(batch.ops.count, 1)
-        try await store.applyURLRuleSyncBatchThrowing(batch.ops)
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after.count, 5)
-        XCTAssertEqual(after.values.filter { $0.syncId == "R-s1-1" }.count, 1)
-        let moved = try XCTUnwrap(after["s1-1"])
-        XCTAssertEqual(moved.host, "new.example", "the update's content group must not be lost")
-        XCTAssertEqual(moved.spaceId, Self.spaceTwo)
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1])
-        XCTAssertEqual(bucketOrder(Self.spaceTwo, in: after), [0, 1, 2])
-    }
-
-    // MARK: CASE U-10f: Create missing rows from the payload (R-M3-4a-42(a) / R-M3-4a-56)
-
-    // Throwing rowNotFound retries the batch forever. Checking allURLRules(), which filters
-    // soft deletions, can insert a second row with the same syncId; uniqueness applies
-    // only to id, so the database cannot prevent this.
-    func testUpdateForAnUnknownIdentityCreatesTheRowFromThePayload() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-        let created = Date(timeIntervalSince1970: 0.300)
-
-        let values = landing("R9", spaceId: Self.spaceOne, host: "r9.example", pathPrefix: "/docs",
-                             ask: true, sortOrder: 1, createdDate: created)
-        try await store.applyURLRuleSyncBatchThrowing([.update(values)])
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after.count, 6)
-        let rows = after.values.filter { $0.syncId == "R9" }
-        XCTAssertEqual(rows.count, 1)
-        let row = try XCTUnwrap(rows.first)
-        XCTAssertEqual(row.host, "r9.example")
-        XCTAssertEqual(row.pathPrefix, "/docs")
-        XCTAssertTrue(row.askBeforeRouting)
-        XCTAssertEqual(row.spaceId, Self.spaceOne)
-        XCTAssertEqual(row.createdDate, created)
-        XCTAssertNil(row.deletedDate)
-        XCTAssertFalse(row.pendingLocalEdit)
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1, 2, 3])
-    }
-
-    // The restored row was excluded from siblings(inSpaceId:)'s live rows. Its payload
-    // index can collide with a live row (R-M3-4a-3 / RR-B9), so restoration counts as
-    // entering the bucket. Deliberately restore to an occupied index.
-    func testUpdateHittingASoftDeletedRowRevivesItInPlaceWithoutASecondRow() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds + [
-            RuleSeed(id: "s1-9", spaceId: Self.spaceOne, host: "s1-9.example", sortOrder: 9, syncId: "R-s1-9",
-                     deletedDate: Self.t1, mergePartnerSyncId: "R-s1-0"),
-        ], in: store)
-        let before = try allRows(in: store)
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: before), [0, 1, 2], "index 1 is taken before the revive")
-
-        let values = landing("R-s1-9", spaceId: Self.spaceOne, host: "revived.example", sortOrder: 1)
-        try await store.applyURLRuleSyncBatchThrowing([.update(values)])
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after.count, 6, "no second row for R-s1-9")
-        XCTAssertEqual(after.values.filter { $0.syncId == "R-s1-9" }.count, 1)
-        let revived = try XCTUnwrap(after["s1-9"])
-        XCTAssertNil(revived.deletedDate)
-        XCTAssertNil(revived.mergePartnerSyncId)
-        XCTAssertEqual(revived.host, "revived.example")
-        XCTAssertFalse(revived.pendingLocalEdit)
-        // A complete permutation with no duplicates: pre-apply (sortOrder, id) puts s1-1(1)
-        // before s1-9(1), displacing s1-2 to index 3.
-        XCTAssertEqual(bucketOrder(Self.spaceOne, in: after), [0, 1, 2, 3])
-        XCTAssertEqual(["s1-0", "s1-1", "s1-9", "s1-2"].compactMap { after[$0]?.sortOrder }, [0, 1, 2, 3])
-        XCTAssertEqual(after["s2-0"], before["s2-0"], "the other bucket is not written")
-        XCTAssertEqual(after["s2-1"], before["s2-1"])
-    }
-
-    // MARK: CASE U-16: Final dense sortOrder includes unidentified and parked rows (R-M3-4a-3 / §8.3)
-
-    // Normalizing only this round's sync participants leaves excluded siblings' stale
-    // indexes colliding with newly written indexes.
-    func testTrailingDensificationRenumbersEveryLiveRowInTheBucket() async throws {
-        let store = try makeStore()
-        try await seed([
-            RuleSeed(id: "p0", spaceId: Self.spaceOne, host: "p0.example", sortOrder: 0, syncId: "R-p0"),
-            RuleSeed(id: "p1", spaceId: Self.spaceOne, host: "p1.example", sortOrder: 3, syncId: "R-p1"),
-            // Never published to the account.
-            RuleSeed(id: "u2", spaceId: Self.spaceOne, host: "u2.example", sortOrder: 3, syncId: nil),
-            // The cursor is parked: the row exists, but sync does not touch it this round.
-            RuleSeed(id: "p3", spaceId: Self.spaceOne, host: "p3.example", sortOrder: 7, syncId: "R-p3"),
-            RuleSeed(id: "p4", spaceId: Self.spaceOne, host: "p4.example", sortOrder: 9, syncId: "R-p4"),
-            RuleSeed(id: "s2-0", spaceId: Self.spaceTwo, host: "s2-0.example", sortOrder: 4, syncId: "R-s2-0"),
-        ], in: store)
-
-        try await store.applyURLRuleSyncBatchThrowing(
-            [.reorder(syncId: "R-p0", spaceId: Self.spaceOne, sortOrder: 0)]
-        )
-
-        let after = try allRows(in: store)
-        let bucket = ["p0", "p1", "u2", "p3", "p4"].compactMap { after[$0] }
-        XCTAssertEqual(bucket.count, 5)
-        XCTAssertEqual(bucket.map(\.sortOrder), [0, 1, 2, 3, 4],
-                       "a full permutation in the pre-landing (sortOrder, id) order")
-        XCTAssertEqual(after["s2-0"]?.sortOrder, 4, "an untouched bucket keeps its values")
-    }
-
-    // MARK: CASE U-26: Apply both remote timestamps without minting now (R-M3-4a-20 / R-M3-4a-48)
-
-    // Stamping application with now makes the follower newer than the account. If cursor
-    // corruption triggers full-type replay, the fabricated freshness wins against the
-    // author's real edit. The second section catches writing only one of the two stamps.
-    func testLandingWritesBothRemoteStampsAndNeverNow() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-
-        let values = landing("R7", spaceId: Self.spaceOne, host: "r7.example", sortOrder: 3,
-                             createdDate: Date(timeIntervalSince1970: 0.300),
-                             contentUpdatedDate: Date(timeIntervalSince1970: 0.500),
-                             targetUpdatedDate: Date(timeIntervalSince1970: 0.700))
-        try await store.applyURLRuleSyncBatchThrowing([.create(values)])
-
-        let created = try XCTUnwrap(try allRows(in: store).values.first { $0.syncId == "R7" })
-        XCTAssertEqual(milliseconds(created.createdDate), 300)
-        XCTAssertEqual(milliseconds(created.contentUpdatedDate), 500)
-        XCTAssertEqual(milliseconds(created.targetUpdatedDate), 700)
-        let wallClock = Date()
-        XCTAssertLessThan(created.createdDate, wallClock.addingTimeInterval(-86_400))
-        XCTAssertLessThan(try XCTUnwrap(created.contentUpdatedDate), wallClock.addingTimeInterval(-86_400))
-        XCTAssertLessThan(try XCTUnwrap(created.targetUpdatedDate), wallClock.addingTimeInterval(-86_400))
-
-        // Second section: content-only update, content stamp 900 and target stamp still 700.
-        let contentOnly = landing("R7", spaceId: Self.spaceOne, host: "r7-edited.example", sortOrder: 3,
-                                  createdDate: Date(timeIntervalSince1970: 0.300),
-                                  contentUpdatedDate: Date(timeIntervalSince1970: 0.900),
-                                  targetUpdatedDate: Date(timeIntervalSince1970: 0.700))
-        try await store.applyURLRuleSyncBatchThrowing([.update(contentOnly)])
-
-        let updated = try XCTUnwrap(try allRows(in: store).values.first { $0.syncId == "R7" })
-        XCTAssertEqual(updated.id, created.id)
-        XCTAssertEqual(updated.host, "r7-edited.example")
-        XCTAssertEqual(milliseconds(updated.contentUpdatedDate), 900)
-        XCTAssertEqual(milliseconds(updated.targetUpdatedDate), 700, "target stamp untouched")
-        XCTAssertEqual(milliseconds(updated.createdDate), 300)
-    }
-
-    // MARK: CASE U-24: Post-apply refresh reads committed rows (R-M3-4a-34 / R-M3-4a-49)
-
-    // performBackgroundWrite returns before commit, so an immediate refetch sees stale
-    // values. Read first to register rows in the main context, as SpaceManager.cachedURLRules
-    // does, then assert the new values are visible immediately after await returns.
-    func testReadRightAfterLandingSeesTheCommittedTable() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds + [
-            RuleSeed(id: "s1-9", spaceId: Self.spaceOne, host: "s1-9.example", sortOrder: 9, syncId: "R-s1-9",
-                     deletedDate: Self.t1),
-        ], in: store)
-        let registered = store.getAllURLRules()
-        XCTAssertEqual(registered.first { $0.id == "s1-0" }?.host, "s1-0.example")
-
-        let values = landing("R-s1-0", spaceId: Self.spaceOne, host: "new.example", sortOrder: 0)
-        try await store.applyURLRuleSyncBatchThrowing([.update(values)])
-        let rules = store.getAllURLRules()
-
-        XCTAssertEqual(rules.first { $0.id == "s1-0" }?.host, "new.example")
-        XCTAssertFalse(rules.contains { $0.id == "s1-9" }, "soft-deleted rows stay filtered")
-    }
-
-    // MARK: CASE U-24b: Editor writes also refresh from committed rows
-
-    func testReadRightAfterAnEditorWriteSeesTheCommittedTable() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-        _ = store.getAllURLRules()
-
-        try await store.applyURLRuleEditsThrowing(
-            upserts: [LocalStore.URLRuleDraft(id: "s1-0", syncId: "R-s1-0",
-                                              content: LocalStore.URLRuleDraft.ContentUnit(host: "new.example"),
-                                              spaceId: nil, sortOrder: nil)],
-            deletedIds: []
-        )
-        let rules = store.getAllURLRules()
-        XCTAssertEqual(rules.first { $0.id == "s1-0" }?.host, "new.example")
-    }
-
-    // MARK: CASE U-24c: All three agent writes share the same commit guarantee (add, edit host, delete)
-
-    func testAgentWriteFacesShareTheCommittedFloorAndSoftDeleteStaysVisibleToSync() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-        _ = store.getAllURLRules()
-
-        try await store.applyURLRuleEditsThrowing(
-            upserts: [LocalStore.URLRuleDraft(id: "new-1", host: "added.example", spaceId: Self.spaceOne)],
-            deletedIds: []
-        )
-        XCTAssertTrue(store.getAllURLRules().contains { $0.id == "new-1" })
-
-        try await store.applyURLRuleEditsThrowing(
-            upserts: [LocalStore.URLRuleDraft(id: "new-1", content: LocalStore.URLRuleDraft.ContentUnit(host: "changed.example"),
-                                              spaceId: nil, sortOrder: nil)],
-            deletedIds: []
-        )
-        XCTAssertEqual(store.getAllURLRules().first { $0.id == "new-1" }?.host, "changed.example")
-
-        try await store.applyURLRuleEditsThrowing(upserts: [], deletedIds: ["new-1"])
-        XCTAssertFalse(store.getAllURLRules().contains { $0.id == "new-1" }, "soft-deleted ⇒ filtered")
-        let unfiltered = try allRows(in: store)
-        XCTAssertNotNil(unfiltered["new-1"]?.deletedDate, "still in the unfiltered domain")
-        let access = AccountPhiURLRuleAccess(store: store)
-        XCTAssertNotNil(try access.allURLRulesIncludingDeleted().first { $0.id == "new-1" }?.deletedDate)
-        XCTAssertFalse(try access.allURLRules().contains { $0.id == "new-1" })
-    }
-
-    // MARK: CASE U-24d: Space collection changes also refresh, real-store half (R-M3-4a-50 row 6)
-
-    func testUserIntentCascadeHidesTheSpacesRulesFromTheDefaultRead() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds, in: store)
-        _ = store.getAllURLRules()
-
-        try await store.deleteSpaceCascadeThrowing(spaceId: Self.spaceTwo, origin: .userIntent)
-        let rules = store.getAllURLRules()
-
-        XCTAssertFalse(rules.contains { $0.spaceId == Self.spaceTwo })
-        XCTAssertEqual(rules.count, 3)
-        let unfiltered = try allRows(in: store)
-        XCTAssertEqual(unfiltered.values.filter { $0.spaceId == Self.spaceTwo && $0.deletedDate != nil }.count, 2)
-    }
-
-    // MARK: AccountPhiURLRuleAccess: Both reads, cache readers, liveOwners, and post-apply rereads
-
-    func testAccountAccessReadsFilterSoftDeletedRowsAndApplyRebuildsTheSnapshot() async throws {
-        let store = try makeStore()
-        try await seed(Self.twoBucketSeeds + [
-            RuleSeed(id: "s1-9", spaceId: Self.spaceOne, host: "s1-9.example", sortOrder: 9, syncId: "R-s1-9",
-                     deletedDate: Self.t1),
-        ], in: store)
-        let access = AccountPhiURLRuleAccess(store: store)
-
-        let live = try access.allURLRules()
-        XCTAssertEqual(live.map(\.id), ["s1-0", "s1-1", "s1-2", "s2-0", "s2-1"], "(spaceId, sortOrder, id)")
-        let all = try access.allURLRulesIncludingDeleted()
-        XCTAssertEqual(all.count, 6)
-        XCTAssertNotNil(all.first { $0.id == "s1-9" }?.deletedDate)
-        XCTAssertEqual(access.siblings(inSpaceId: Self.spaceOne).map(\.id), ["s1-0", "s1-1", "s1-2"])
-        XCTAssertTrue(access.isKnownLocalURLRule("R-s1-0"))
-        XCTAssertFalse(access.isKnownLocalURLRule("R-s1-9"), "soft-deleted rows are not known")
-        XCTAssertFalse(access.isKnownLocalURLRule("s1-0"), "the predicate is on syncId, not id")
-        let owners = try access.liveOwners(["R-s1-0", "R-s1-9", "R-none"])
-        XCTAssertEqual(owners.claimed, ["R-s1-0"])
-        XCTAssertTrue(owners.owners.isEmpty)
-
-        let values = landing("R-s1-0", spaceId: Self.spaceOne, host: "new.example", sortOrder: 0)
-        try await access.apply(URLRuleApplyBatch(unordered: [.update(values)],
-                                                 currentSpaceIds: ["R-s1-0": Self.spaceOne]))
-        XCTAssertEqual(access.siblings(inSpaceId: Self.spaceOne).first?.host, "new.example",
-                       "apply rebuilds the page snapshot")
-    }
-
-    // MARK: CASE U-8p: Store signal coalesces, omits initial emission, and includes soft deletion (§6.5 / R-M3-4a-51)
-
-    // Without coalescing, 30 applied rows queue 30 push rounds; seeding the current value
-    // adds a round on every subscription. A snapshot built from filtered rows suppresses
-    // soft deletion, the sole carrier of local delete intent. Delete the last bucket row
-    // so only deletedDate changes.
-    func testURLRuleChangesPublisherCollapsesBurstsDoesNotSeedAndEmitsForSoftDeletes() async throws {
-        let store = try makeStore()
-        var received = 0
-        let cancellable = store.urlRuleChangesPublisher(debounceWindow: Self.shortDebounceWindow)
-            .sink { _ in received += 1 }
-        defer { cancellable.cancel() }
-
-        waitPastDebounceWindow(Self.shortDebounceWindow)
-        let afterQuietPeriod = received
-        XCTAssertEqual(afterQuietPeriod, 0, "Subscription does not emit the current value")
-
-        for index in 0..<30 {
-            try await store.applyURLRuleEditsThrowing(
-                upserts: [LocalStore.URLRuleDraft(id: "burst-\(index)", host: "burst-\(index).example",
-                                                  spaceId: Self.spaceOne)],
-                deletedIds: []
-            )
-        }
-        waitPastDebounceWindow(Self.shortDebounceWindow)
-        let afterBurst = received
-        XCTAssertEqual(afterBurst, 1, "Thirty writes collapse into one debounced emission")
-
-        try await store.applyURLRuleEditsThrowing(upserts: [], deletedIds: ["burst-29"])
-        waitPastDebounceWindow(Self.shortDebounceWindow)
-        let afterSoftDelete = received
-        XCTAssertEqual(afterSoftDelete, 2, "a soft delete is a change the diff must see")
-    }
-
-    // MARK: - Task 8 fixtures
-
-    private static let shortDebounceWindow: TimeInterval = 0.2
-
-    /// Application payload; all three timestamps default to t0 unless a case supplies explicit values.
-    private func landing(_ syncId: String, spaceId: String, host: String, pathPrefix: String? = nil,
-                         ask: Bool = false, sortOrder: Int,
-                         createdDate: Date = LocalStoreURLRuleThrowingTests.t0,
-                         contentUpdatedDate: Date = LocalStoreURLRuleThrowingTests.t0,
-                         targetUpdatedDate: Date = LocalStoreURLRuleThrowingTests.t0) -> URLRuleLandingValues {
-        URLRuleLandingValues(syncId: syncId, spaceId: spaceId, host: host, pathPrefix: pathPrefix,
-                             askBeforeRouting: ask, sortOrder: sortOrder, createdDate: createdDate,
-                             contentUpdatedDate: contentUpdatedDate, targetUpdatedDate: targetUpdatedDate)
-    }
-
-    private func milliseconds(_ date: Date?) -> Int? {
-        date.map { Int(($0.timeIntervalSince1970 * 1_000).rounded()) }
-    }
-
-    // MARK: - 8b-1: CASE M-32 (a re-key syncId collision rolls back the whole batch)
-
-    // The bookmark claim guard (nil syncId or equal new value) rejects every rule re-key,
-    // which necessarily replaces a nonnil identity. Omitting collision checks lets two
-    // rows share an account identity (only id is unique), leaving an identity unclaimed
-    // and tombstoned by the next diff. Part (a) requires idempotent acceptance of equality;
-    // otherwise CASE M-13 replay throws.
-    private static let rekeySeeds: [RuleSeed] = [
-        RuleSeed(id: "i1", spaceId: spaceOne, host: "a.example", sortOrder: 0, syncId: "local-a",
-                 contentUpdatedDate: t0, targetUpdatedDate: t0),
-        RuleSeed(id: "i2", spaceId: spaceOne, host: "b.example", sortOrder: 1, syncId: "remote-b",
-                 contentUpdatedDate: t0, targetUpdatedDate: t0),
-        RuleSeed(id: "i3", spaceId: spaceTwo, host: "c.example", sortOrder: 0, syncId: "R3",
-                 contentUpdatedDate: t0, targetUpdatedDate: t0),
-    ]
-
-    /// Update another identity in the same batch so rollback has actual work to undo.
-    private var unrelatedUpdate: URLRuleSyncOp {
-        .update(landing("R3", spaceId: Self.spaceTwo, host: "changed.example", sortOrder: 0,
-                        contentUpdatedDate: Self.t1))
-    }
-
-    func testRekeyOntoAnotherRowsSyncIdThrowsRowAlreadyMappedAndRollsBackTheBatch() async throws {
-        let store = try makeStore()
-        try await seed(Self.rekeySeeds, in: store)
-        let before = try allRows(in: store)
-
-        await assertThrows(.rowAlreadyMapped) {
-            try await store.applyURLRuleSyncBatchThrowing(
-                [.rekey(localId: "i1", to: "remote-b", values: nil), self.unrelatedUpdate])
-        }
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after, before, "The store remains unchanged")
-        XCTAssertEqual(after["i1"]?.syncId, "local-a")
-        XCTAssertEqual(after["i2"]?.syncId, "remote-b")
-        XCTAssertEqual(after["i3"]?.host, "c.example", "The update is also rolled back")
-    }
-
-    /// (a) Idempotence: to equals the current value, so no throw and no row write.
-    func testRekeyOntoTheRowsOwnSyncIdIsAnIdempotentNoOp() async throws {
-        let store = try makeStore()
-        try await seed(Self.rekeySeeds, in: store)
-        let before = try allRows(in: store)
-
-        try await store.applyURLRuleSyncBatchThrowing([.rekey(localId: "i1", to: "local-a", values: nil)])
-
-        XCTAssertEqual(try allRows(in: store), before, "No row writes")
-    }
-
-    /// (b) Missing localId throws rowNotFound and rolls back the entire batch.
-    func testRekeyOfAnUnknownLocalIdThrowsRowNotFoundAndRollsBackTheBatch() async throws {
-        let store = try makeStore()
-        try await seed(Self.rekeySeeds, in: store)
-        let before = try allRows(in: store)
-
-        await assertThrows(.rowNotFound) {
-            try await store.applyURLRuleSyncBatchThrowing(
-                [.rekey(localId: "nope", to: "acc-1", values: nil), self.unrelatedUpdate])
-        }
-
-        XCTAssertEqual(try allRows(in: store), before)
-    }
-
-    /// (c) A soft-deleted row cannot be claimed: rowNotFound and full rollback.
-    func testRekeyOfASoftDeletedRowThrowsRowNotFoundAndRollsBackTheBatch() async throws {
-        let store = try makeStore()
-        var seeds = Self.rekeySeeds
-        seeds[0].deletedDate = Self.t1
-        try await seed(seeds, in: store)
-        let before = try allRows(in: store)
-
-        await assertThrows(.rowNotFound) {
-            try await store.applyURLRuleSyncBatchThrowing(
-                [.rekey(localId: "i1", to: "acc-1", values: nil), self.unrelatedUpdate])
-        }
-
-        let after = try allRows(in: store)
-        XCTAssertEqual(after, before)
-        XCTAssertEqual(after["i1"]?.syncId, "local-a")
-        XCTAssertNotNil(after["i1"]?.deletedDate)
-    }
-
-    /// Positive case: re-key writes only syncId, preserving stamps, flags, and
-    /// mergePartnerSyncId. With values, the merged fields apply under the new identity
-    /// in the same write block, still leaving pendingLocalEdit untouched.
-    func testRekeyWritesOnlyTheSyncIdAndLandsTheMergedValuesUnderTheNewIdentity() async throws {
-        let store = try makeStore()
-        var seeds = Self.rekeySeeds
-        seeds[0].pendingLocalEdit = true
-        seeds[0].mergePartnerSyncId = "w"
-        try await seed(seeds, in: store)
-
-        try await store.applyURLRuleSyncBatchThrowing([.rekey(localId: "i1", to: "acc-1", values: nil)])
-        let rekeyed = try row("i1", in: store)
-        XCTAssertEqual(rekeyed.syncId, "acc-1")
-        XCTAssertEqual(rekeyed.host, "a.example")
-        XCTAssertEqual(rekeyed.contentUpdatedDate, Self.t0, "The timestamp is unchanged")
-        XCTAssertTrue(rekeyed.pendingLocalEdit, "The flag is not cleared")
-        XCTAssertEqual(rekeyed.mergePartnerSyncId, "w", "This column remains unchanged")
-
-        try await store.applyURLRuleSyncBatchThrowing([
-            .rekey(localId: "i1", to: "acc-2",
-                   values: landing("acc-2", spaceId: Self.spaceOne, host: "merged.example",
-                                   sortOrder: 0, contentUpdatedDate: Self.t1)),
-        ])
-        let landed = try row("i1", in: store)
-        XCTAssertEqual(landed.syncId, "acc-2")
-        XCTAssertEqual(landed.host, "merged.example", "Merged values address the same row through its new identity")
-        XCTAssertEqual(landed.contentUpdatedDate, Self.t1)
-        XCTAssertTrue(landed.pendingLocalEdit)
-        XCTAssertEqual(landed.mergePartnerSyncId, "w")
-        XCTAssertEqual(try allRows(in: store).count, 3, "No duplicate row is inserted")
-    }
-
-    /// Wait the debounce window plus main-queue delivery allowance, as in LocalStoreBookmarkThrowingTests.
-    private func waitPastDebounceWindow(_ window: TimeInterval) {
-        RunLoop.main.run(until: Date().addingTimeInterval(window + 0.6))
-    }
 
     // MARK: - Task 5 fixtures
 

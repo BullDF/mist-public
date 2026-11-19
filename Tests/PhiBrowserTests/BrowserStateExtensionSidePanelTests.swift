@@ -16,25 +16,8 @@ import XCTest
 final class BrowserStateExtensionSidePanelTests: XCTestCase {
 
     private var tempDirectories: [URL] = []
-    private var originalPhiAIEnabled: Any?
-
-    override func setUpWithError() throws {
-        // The AI Chat expand path is gated on the AI preference; pin it on
-        // and restore the user's value afterwards.
-        let key = PhiPreferences.AISettings.phiAIEnabled.rawValue
-        originalPhiAIEnabled = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.set(true, forKey: key)
-    }
 
     override func tearDownWithError() throws {
-        let key = PhiPreferences.AISettings.phiAIEnabled.rawValue
-        if let originalPhiAIEnabled {
-            UserDefaults.standard.set(originalPhiAIEnabled, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
-        originalPhiAIEnabled = nil
-
         let fileManager = FileManager.default
         for directory in tempDirectories {
             try? fileManager.removeItem(at: directory)
@@ -161,60 +144,14 @@ final class BrowserStateExtensionSidePanelTests: XCTestCase {
         let tabs = seed(state: state, guids: [100, 200, 300])
         tabs[0].aiChatCollapsed = false
         tabs[2].aiChatCollapsed = false
-        state.aiChatCollapsed = false
 
         state.updateExtensionSidePanel(
             makePanel(wrapper: ExtensionSidePanelTestWebContentWrapper()))
 
         XCTAssertTrue(tabs.allSatisfy { $0.aiChatCollapsed })
-        XCTAssertTrue(state.aiChatCollapsed)
     }
 
     // MARK: - Mutex: AI Chat expand closes the panel first
-
-    func testAIChatExpandClosesPanelBeforeExpanding() throws {
-        let state = try makeBrowserState()
-        let tabs = seed(state: state, guids: [100])
-        state.focuseTab(tabs[0])
-        state.updateExtensionSidePanel(
-            makePanel(wrapper: ExtensionSidePanelTestWebContentWrapper()))
-        XCTAssertTrue(tabs[0].aiChatCollapsed)
-
-        var chatWasStillCollapsedAtCloseRequest = false
-        var closeRequests = 0
-        state.extensionSidePanelCloseRequestOverrideForTesting = { [weak state, weak tab = tabs[0]] in
-            closeRequests += 1
-            chatWasStillCollapsedAtCloseRequest = tab?.aiChatCollapsed ?? false
-            // Simulate Chromium's synchronous close push back over the bridge.
-            state?.updateExtensionSidePanel(nil)
-        }
-
-        state.toggleAIChat(false)
-
-        XCTAssertEqual(closeRequests, 1)
-        XCTAssertTrue(chatWasStillCollapsedAtCloseRequest)
-        XCTAssertNil(state.extensionSidePanel)
-        XCTAssertFalse(tabs[0].aiChatCollapsed)
-    }
-
-    func testMirroredExpandViaSetAIChatCollapsedClosesPanel() throws {
-        let state = try makeBrowserState()
-        let tabs = seed(state: state, guids: [100])
-        state.updateExtensionSidePanel(
-            makePanel(wrapper: ExtensionSidePanelTestWebContentWrapper()))
-
-        var closeRequests = 0
-        state.extensionSidePanelCloseRequestOverrideForTesting = { [weak state] in
-            closeRequests += 1
-            state?.updateExtensionSidePanel(nil)
-        }
-
-        state.setAIChatCollapsed(for: tabs[0], collapsed: false)
-
-        XCTAssertEqual(closeRequests, 1)
-        XCTAssertNil(state.extensionSidePanel)
-        XCTAssertFalse(tabs[0].aiChatCollapsed)
-    }
 
     func testAIChatCollapseLeavesPanelOpen() throws {
         let state = try makeBrowserState()
@@ -488,7 +425,10 @@ final class WebContentPanelSeparationStyleTests: XCTestCase {
         XCTAssertEqual(pageCard.layer?.borderWidth, 0, file: file, line: line)
 
         state.updateExtensionSidePanel(makePanel())
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        let separated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            pageCard.layer?.borderWidth == 1
+        }, object: nil)
+        wait(for: [separated], timeout: 3)
         controller.view.layoutSubtreeIfNeeded()
 
         XCTAssertEqual(pageCard.layer?.borderWidth, 1, file: file, line: line)
@@ -500,7 +440,10 @@ final class WebContentPanelSeparationStyleTests: XCTestCase {
                        file: file, line: line)
 
         state.updateExtensionSidePanel(nil)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            pageCard.layer?.borderWidth == 0
+        }, object: nil)
+        wait(for: [restored], timeout: 3)
         controller.view.layoutSubtreeIfNeeded()
 
         XCTAssertEqual(pageCard.layer?.borderWidth, 0, file: file, line: line)

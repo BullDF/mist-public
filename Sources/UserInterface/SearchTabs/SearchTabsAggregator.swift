@@ -12,13 +12,19 @@ enum SearchTabsAggregator {
         windowId: Int,
         chromium: SearchTabsChromiumSnapshot,
         native: SearchTabsNativeSnapshot,
+        apps: [SearchTabsAppSource] = [],
+        history: [BrowsingHistoryEntry] = [],
+        appRoute: MistAppRoute? = nil,
         generatedAt: Date = Date(),
         splitRelation: (Int) -> SearchTabsSplitRelation? = { _ in nil }
     ) -> SearchTabsSnapshot {
         let normalizedQuery = SearchTabsQueryMatcher.normalizedQuery(query)
         let isEmptyQuery = normalizedQuery.isEmpty
+        // Drifter chats never show, open, pinned, bookmarked or closed; Drifter's home does.
+        // History holds only http(s) pages, so it has none.
+        let isChat = { (url: String?) in appRoute?.resolve(url)?.chatId != nil }
 
-        let openItems = chromium.openTabs.compactMap { tab in
+        let openItems = chromium.openTabs.filter { !isChat($0.url) }.compactMap { tab in
             makeOpenItem(
                 tab: tab,
                 normalizedQuery: normalizedQuery,
@@ -26,11 +32,26 @@ enum SearchTabsAggregator {
             )
         }
         let nativeItems = makeNativeItems(native: native, normalizedQuery: normalizedQuery)
-        let closedItems = chromium.closedTabs.compactMap { tab in
+            .filter { !isChat($0.primary.url) && !isChat($0.secondary?.url) }
+        let closedItems = chromium.closedTabs.filter { !isChat($0.url) }.compactMap { tab in
             makeClosedItem(tab: tab, normalizedQuery: normalizedQuery)
         }
 
-        let items = (openItems + nativeItems + closedItems)
+        let existingItems = openItems + nativeItems + closedItems
+        let existingURLs = Set(existingItems.flatMap { [$0.primary.url, $0.secondary?.url].compactMap { $0 } })
+        let historyItems = isEmptyQuery ? [] : makeHistoryItems(
+            history: history,
+            normalizedQuery: normalizedQuery,
+            excludingURLs: existingURLs
+        )
+        let appItems = MistAppMatcher.matches(query, in: apps.map { ($0.id, $0.keywords) }).enumerated().map { index, id in
+            SearchTabsItem(id: "app:\(id.rawValue)", source: .native, kind: .app, displayMode: .single,
+                primary: SearchTabsPane(title: id.name, url: nil, faviconData: nil, faviconURL: nil, localGuid: nil, chromiumTabId: nil, windowId: nil),
+                secondary: nil, splitRelation: nil,
+                state: SearchTabsItemState(isOpen: false, isActive: false, isHostWindow: false, isPinnedInChromium: false, isSplit: false, lastSeen: nil, lastActiveElapsedMs: nil, lastActiveElapsedText: nil),
+                ranking: SearchTabsRankingMetadata(matchScore: 0, matchedFields: [], providerOrder: index), action: .openApp(id), secondaryAction: nil)
+        }
+        let items = (appItems + existingItems + historyItems)
             .filter { item in shouldInclude(item: item, isEmptyQuery: isEmptyQuery) }
             .sorted(by: sort)
 
@@ -211,12 +232,62 @@ enum SearchTabsAggregator {
         )
     }
 
+    private static func makeHistoryItems(
+        history: [BrowsingHistoryEntry],
+        normalizedQuery: String,
+        excludingURLs: Set<String>
+    ) -> [SearchTabsItem] {
+        let matches = BrowsingHistoryProvider.rank(
+            history, query: normalizedQuery, excludingURLs: excludingURLs, limit: 20
+        )
+
+        return matches.enumerated().map { index, result in
+            let entry = result.entry
+            return SearchTabsItem(
+                id: "history:\(entry.url)",
+                source: .native,
+                kind: .history,
+                displayMode: .single,
+                primary: SearchTabsPane(
+                    title: entry.title,
+                    url: entry.url,
+                    faviconData: nil,
+                    faviconURL: nil,
+                    localGuid: nil,
+                    chromiumTabId: nil,
+                    windowId: nil
+                ),
+                secondary: nil,
+                splitRelation: nil,
+                state: SearchTabsItemState(
+                    isOpen: false,
+                    isActive: false,
+                    isHostWindow: false,
+                    isPinnedInChromium: false,
+                    isSplit: false,
+                    lastSeen: entry.lastVisit,
+                    lastActiveElapsedMs: nil,
+                    lastActiveElapsedText: nil
+                ),
+                ranking: SearchTabsRankingMetadata(
+                    matchScore: result.match.score,
+                    matchedFields: result.match.matchedFields,
+                    providerOrder: index
+                ),
+                action: .openHistoryURL(url: entry.url),
+                secondaryAction: nil
+            )
+        }
+    }
+
     private static func shouldInclude(item: SearchTabsItem, isEmptyQuery: Bool) -> Bool {
         guard isEmptyQuery else {
             return item.kind != .bookmarkRoot
         }
 
         switch item.kind {
+        case .app:
+            return false
         case .openedtab:
             return true
         case .closedtab:
@@ -227,10 +298,14 @@ enum SearchTabsAggregator {
             return false
         case .bookmarkRoot:
             return false
+        case .history:
+            return false
         }
     }
 
     private static func sort(_ lhs: SearchTabsItem, _ rhs: SearchTabsItem) -> Bool {
+        if lhs.kind == .app && rhs.kind == .app { return lhs.ranking.providerOrder < rhs.ranking.providerOrder }
+        if lhs.kind == .app || rhs.kind == .app { return lhs.kind == .app }
         if lhs.kind == .openedtab && rhs.kind == .openedtab {
             return sortOpened(lhs, rhs)
         }
@@ -242,6 +317,10 @@ enum SearchTabsAggregator {
         let rhsPriority = kindPriority(rhs)
         if lhsPriority != rhsPriority {
             return lhsPriority < rhsPriority
+        }
+
+        if lhs.kind == .history && rhs.kind == .history {
+            return lhs.ranking.providerOrder < rhs.ranking.providerOrder
         }
 
         if lhs.ranking.matchScore != rhs.ranking.matchScore {
@@ -302,6 +381,8 @@ enum SearchTabsAggregator {
 
     private static func kindPriority(_ item: SearchTabsItem) -> Int {
         switch item.kind {
+        case .app:
+            return 0
         case .openedtab:
             return 0
         case .pin:
@@ -312,6 +393,8 @@ enum SearchTabsAggregator {
             return 4
         case .closedtab:
             return 5
+        case .history:
+            return 6
         }
     }
 

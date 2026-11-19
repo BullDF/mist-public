@@ -6,6 +6,7 @@
 import Foundation
 import Combine
 
+@MainActor
 protocol ContextMenuRepresentable {
     func makeContextMenu(on menu: NSMenu)
 }
@@ -22,12 +23,8 @@ protocol SidebarItem: AnyObject {
     var id: AnyHashable { get }
     var title: String { get }
     var url: String? { get }
-    var iconName: String? { get }
-    var faviconUrl: String? { get }
     var isExpandable: Bool { get }
-    var hasChildren: Bool { get }
     var childrenItems: [SidebarItem] { get }
-    var depth: Int { get }
     var itemType: SidebarItemType { get }
     var isActive: Bool { get }
     var isSelectable: Bool { get }
@@ -36,6 +33,7 @@ protocol SidebarItem: AnyObject {
 }
 
 enum SidebarItemType {
+    case agentHeader
     case tab
     case bookmark
     case bookmarkFolder
@@ -57,7 +55,7 @@ enum SidebarItemType {
 /// item carrying both panes. Stable across rebuilds via the underlying
 /// `SplitGroup.id` so the outline-view diff keeps the row in place when
 /// either pane's title / favicon / focus changes.
-final class SplitPairSidebarItem: SidebarItem, ContextMenuRepresentable {
+final class SplitPairSidebarItem: SidebarItem {
     let groupId: String
     // Mutable so a cell observing the strip can swap left/right in place
     // after Chromium's reverse — the item's `id` is keyed on `groupId`
@@ -77,12 +75,8 @@ final class SplitPairSidebarItem: SidebarItem, ContextMenuRepresentable {
     var id: AnyHashable { "split:\(groupId)" }
     var title: String { "\(leftTab.title) | \(rightTab.title)" }
     var url: String? { leftTab.url }
-    var iconName: String? { nil }
-    var faviconUrl: String? { leftTab.faviconUrl }
     var isExpandable: Bool { false }
-    var hasChildren: Bool { false }
     var childrenItems: [SidebarItem] { [] }
-    var depth: Int { 0 }
     var itemType: SidebarItemType { .splitPair }
     var isActive: Bool { leftTab.isActive || rightTab.isActive }
     var isSelectable: Bool { true }
@@ -113,17 +107,15 @@ final class SplitPairSidebarItem: SidebarItem, ContextMenuRepresentable {
     }
 }
 
+extension SplitPairSidebarItem: ContextMenuRepresentable {}
+
 // Helper classes for UI elements
 class SeparatorItem: SidebarItem {
     let id: AnyHashable = UUID()
     var title: String = ""
     var url: String? = nil
-    var iconName: String? = nil
-    var faviconUrl: String? = nil
     var isExpandable: Bool = false
-    var hasChildren: Bool = false
     var childrenItems: [SidebarItem] = []
-    var depth: Int = 0
     var itemType: SidebarItemType = .separator
     var isActive: Bool = false
     
@@ -141,12 +133,8 @@ class NewTabButtonItem: SidebarItem {
     let id: AnyHashable = "new-tab-button"
     var title: String = NSLocalizedString("sidebar.tabList.newTabButton", value: "New Tab", comment: "Sidebar tab list - Button title to create a new browser tab")
     var url: String? = nil
-    var iconName: String? = "plus"
-    var faviconUrl: String? = nil
     var isExpandable: Bool = false
-    var hasChildren: Bool = false
     var childrenItems: [SidebarItem] = []
-    var depth: Int = 0
     var itemType: SidebarItemType = .newTabButton
     var isActive: Bool = false
     var isSelectable: Bool { false }
@@ -158,7 +146,6 @@ class NewTabButtonItem: SidebarItem {
 
 // Notification names
 extension Notification.Name {
-    static let moveTabToBookmarks = Notification.Name("moveTabToBookmarks")
     /// Notification posted when a bookmark enters inline edit mode. `object` is the bookmark.
     static let bookmarkStartEditing = Notification.Name("bookmarkStartEditing")
     /// Notification posted when a sidebar folder requests its icon picker. `object` is the bookmark.
@@ -185,6 +172,8 @@ extension NSPasteboard.PasteboardType {
     /// when the user drags a `TabGroupSidebarItem`'s header — the
     /// payload identifies the entire contiguous group block.
     static let tabGroup = NSPasteboard.PasteboardType("com.phibrowser.tabGroup")
+    /// A Drifter chat row's `guid`, which only reorders the chats in the sidebar's Drifter section.
+    static let agentChatTab = NSPasteboard.PasteboardType("com.bulldf.mist.agentChatTab")
 }
 
 extension NSPasteboard {

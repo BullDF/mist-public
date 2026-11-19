@@ -118,69 +118,6 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
 
     // MARK: - moveGroupBlock
 
-    /// `[N1, A1, A2, N2, N3]` with group A at indices 1..2.
-    /// `moveGroupBlock("A", to: 5)` moves the block to the strip's tail.
-    /// The toIndex is interpreted in PRE-move coords (NSOutlineView
-    /// convention), and is adjusted by `-blockSize` when the block moves
-    /// forward, mirroring `moveNormalTabLocally`'s `-1` adjustment.
-    func testMoveGroupBlock_movesGroupAsContiguousBlock_preservingMemberOrder() throws {
-        let state = try makeBrowserState()
-        seed(state: state, tabs: [
-            (guid: 100, url: "https://n1.example", token: nil),
-            (guid: 200, url: "https://a1.example", token: "A"),
-            (guid: 201, url: "https://a2.example", token: "A"),
-            (guid: 101, url: "https://n2.example", token: nil),
-            (guid: 102, url: "https://n3.example", token: nil),
-        ])
-
-        state.moveGroupBlock(token: "A", to: 5)
-
-        XCTAssertEqual(state.normalTabs.map { $0.guid },
-                       [100, 101, 102, 200, 201])
-    }
-
-    func testMoveGroupBlock_toStart_preservesMemberOrder() throws {
-        let state = try makeBrowserState()
-        seed(state: state, tabs: [
-            (guid: 100, url: "https://n1.example", token: nil),
-            (guid: 101, url: "https://n2.example", token: nil),
-            (guid: 200, url: "https://a1.example", token: "A"),
-            (guid: 201, url: "https://a2.example", token: "A"),
-            (guid: 102, url: "https://n3.example", token: nil),
-        ])
-
-        state.moveGroupBlock(token: "A", to: 0)
-
-        XCTAssertEqual(state.normalTabs.map { $0.guid },
-                       [200, 201, 100, 101, 102])
-    }
-
-    func testMoveGroupBlock_blockAlreadyAtTarget_isNoOp() throws {
-        let state = try makeBrowserState()
-        seed(state: state, tabs: [
-            (guid: 200, url: "https://a1.example", token: "A"),
-            (guid: 201, url: "https://a2.example", token: "A"),
-            (guid: 100, url: "https://n1.example", token: nil),
-        ])
-
-        let before = state.normalTabs.map { $0.guid }
-        state.moveGroupBlock(token: "A", to: 0)
-        XCTAssertEqual(state.normalTabs.map { $0.guid }, before)
-    }
-
-    func testMoveGroupBlock_unknownToken_isNoOp() throws {
-        let state = try makeBrowserState()
-        seed(state: state, tabs: [
-            (guid: 100, url: "https://n1.example", token: nil),
-            (guid: 200, url: "https://a1.example", token: "A"),
-            (guid: 101, url: "https://n2.example", token: nil),
-        ])
-
-        let before = state.normalTabs.map { $0.guid }
-        state.moveGroupBlock(token: "DOES_NOT_EXIST", to: 0)
-        XCTAssertEqual(state.normalTabs.map { $0.guid }, before)
-    }
-
     // MARK: - optimistic group membership
 
     func testApplyOptimisticGroupMembership_batchSplitJoinAtGroupFrontPreservesInsertion() throws {
@@ -244,7 +181,7 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         )
     }
 
-    func testGroupRelativeOrderSync_noVisibleGroupMemberDoesNotUseExternalAnchor() throws {
+    func testGroupRelativeOrderSync_bookmarkMemberRemainsVisibleAndAnchorsJoin() throws {
         let defaults = UserDefaults.standard
         let layoutKey = PhiPreferences.GeneralSettings.layoutModeKey
         let originalLayout = defaults.string(forKey: layoutKey)
@@ -290,13 +227,14 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         state.applyOptimisticGroupMembership(tabId: joining.guid,
                                              newToken: "A")
 
-        XCTAssertEqual(state.normalTabs.map(\.guid), [joining.guid, external.guid])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [hiddenMember.guid, joining.guid, external.guid])
         XCTAssertEqual(joining.groupToken, "A")
-        XCTAssertNil(
+        XCTAssertEqual(
             state.normalTabRelativeOrderSyncMove(
                 tabId: joining.guid,
                 withinGroupToken: "A"
-            )
+            ),
+            BrowserState.NormalTabRelativeOrderMove(tabId: joining.guid, anchor: .after(hiddenMember.guid))
         )
     }
 
@@ -348,7 +286,7 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         )
     }
 
-    func testGroupRelativeOrderSync_tailJoinAnchorsToMemberAcrossHiddenBookmarkTab() throws {
+    func testGroupRelativeOrderSync_tailJoinKeepsFormerBookmarkTabVisible() throws {
         let defaults = UserDefaults.standard
         let layoutKey = PhiPreferences.GeneralSettings.layoutModeKey
         let originalLayout = defaults.string(forKey: layoutKey)
@@ -405,7 +343,7 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         XCTAssertEqual(state.tabs.sorted { $0.index < $1.index }.map(\.guid),
                        [200, 201, 900, 100, 101])
         XCTAssertEqual(state.normalTabs.map(\.guid),
-                       [200, 201, 100, 101])
+                       [200, 201, 100, 900, 101])
         XCTAssertEqual(
             state.normalTabRelativeOrderSyncMove(
                 tabId: joining.guid,
@@ -420,7 +358,7 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
 
     // MARK: - convertGroupToBookmarks
 
-    func testConvertGroupToBookmarks_createsFolderAndRewiresOpenTabsToChildBookmarks() throws {
+    func testConvertGroupToBookmarks_createsFolderAndPreservesOpenGroup() throws {
         let state = try makeBrowserState()
         let tabs = seed(state: state, tabs: [
             (guid: 100, url: "https://n1.example", token: nil),
@@ -430,6 +368,7 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         ])
         let a1 = tabs[1]
         let a2 = tabs[2]
+        let expectedFolderTitle = state.groups["A"]?.displayTitle
         state.localStore.createBookmark(url: "https://existing.example",
                                         title: "Existing",
                                         profileId: state.profileId,
@@ -438,21 +377,19 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
 
         state.convertGroupToBookmarks(token: "A", parentFolder: nil, at: 0)
 
-        XCTAssertNil(a1.groupToken)
-        XCTAssertNil(a2.groupToken)
-        XCTAssertNil(state.groups["A"])
+        XCTAssertEqual(a1.groupToken, "A")
+        XCTAssertEqual(a2.groupToken, "A")
+        XCTAssertNotNil(state.groups["A"])
         XCTAssertTrue(state.tabs.contains { $0.guid == 200 })
         XCTAssertTrue(state.tabs.contains { $0.guid == 201 })
-        guard let a1BookmarkGuid = a1.guidInLocalDB,
-              let a2BookmarkGuid = a2.guidInLocalDB else {
-            XCTFail("Expected open tabs to be associated with new bookmark records")
-            return
-        }
+        XCTAssertNil(a1.guidInLocalDB)
+        XCTAssertNil(a2.guidInLocalDB)
+        XCTAssertEqual(state.normalTabs.map(\.guid), [100, 200, 201, 101])
 
         waitForBackgroundWrite()
         let rootItems = state.localStore.fetchBookmarks(parentId: nil as String?,
                                                         profileId: state.profileId)
-        XCTAssertEqual(rootItems.first?.title, "Blue · 2 tabs")
+        XCTAssertEqual(rootItems.first?.title, expectedFolderTitle)
         XCTAssertEqual(rootItems.last?.title, "Existing")
 
         guard let folder = rootItems.first else {
@@ -461,14 +398,12 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         }
         let children = state.localStore.fetchBookmarks(parentId: folder.guid,
                                                        profileId: state.profileId)
-        XCTAssertEqual(children.map(\.guid), [a1BookmarkGuid, a2BookmarkGuid])
+        XCTAssertEqual(children.count, 2)
         XCTAssertEqual(children.map { $0.url.absoluteString },
-                       ["https://a1.example/", "https://a2.example/"])
+                       ["https://a1.example", "https://a2.example"])
     }
 
-    /// Members hit `moveNormalTab(toBookmark:index:)` in normalTabs order
-    /// with monotonically increasing `index`, so the persisted bookmarks
-    /// keep the pre-dissolution member order.
+    /// The saved folder keeps the open group's member order.
     func testConvertGroupToBookmarks_preservesMemberOrderInBookmarks() throws {
         let state = try makeBrowserState()
         seed(state: state, tabs: [
@@ -480,7 +415,9 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         state.convertGroupToBookmarks(token: "A", parentFolder: nil, at: 0)
 
         waitForBackgroundWrite()
-        let stored = state.localStore.fetchBookmarks(parentId: nil as String?,
+        let folder = try XCTUnwrap(state.localStore.fetchBookmarks(parentId: nil as String?,
+                                                                   profileId: state.profileId).first)
+        let stored = state.localStore.fetchBookmarks(parentId: folder.guid,
                                                      profileId: state.profileId)
         // Sort by the persisted sibling index since fetchBookmarks isn't
         // contractually ordered.

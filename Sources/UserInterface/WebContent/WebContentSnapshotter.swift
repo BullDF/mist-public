@@ -16,6 +16,14 @@ import Cocoa
 /// `.bestResolution`. Best-effort: returns nil on near-edge clipping, blank
 /// capture, or missing window — callers degrade gracefully.
 enum WebContentSnapshotter {
+    // macOS 15 marks this public API unavailable at compile time, but it still
+    // provides the synchronous, permission-free own-window capture this helper
+    // needs. Resolve it at runtime; callers already handle a missing capture.
+    private static let windowImage: (@convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?).self)
+    }()
+
     /// Captures the on-screen pixels of `view`'s region from the window server.
     /// - Parameter resolution: `.nominalResolution` (drag) or `.bestResolution`.
     /// - Returns: the captured image, or nil if capture failed / looked clipped / blank.
@@ -41,12 +49,12 @@ enum WebContentSnapshotter {
 
         // Capture only the specific window to avoid capturing overlapping windows.
         let windowID = CGWindowID(window.windowNumber)
-        guard let cgImage = CGWindowListCreateImage(
+        guard let cgImage = windowImage?(
             cgRect,
-            .optionIncludingWindow,
+            CGWindowListOption.optionIncludingWindow.rawValue,
             windowID,
-            [.boundsIgnoreFraming, resolution]
-        ) else { return nil }
+            CGWindowImageOption([.boundsIgnoreFraming, resolution]).rawValue
+        )?.takeRetainedValue() else { return nil }
 
         // When source window is near/off screen edges, WindowServer may return a clipped region.
         // Using a clipped snapshot looks visually broken (one side cut off), so fallback instead.

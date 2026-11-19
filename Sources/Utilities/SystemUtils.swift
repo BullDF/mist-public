@@ -16,10 +16,6 @@ struct SystemUtils {
         return current.patchVersion >= patch
     }
 
-    static var osVersionString: String {
-        "\(osVersion.majorVersion).\(osVersion.minorVersion).\(osVersion.patchVersion)"
-    }
-
     static var isMacOS26OrLater: Bool { isRunningOnOrLater(major: 26) }
 
     static var appVersion: String {
@@ -30,31 +26,4 @@ struct SystemUtils {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
     }
 
-    static var appVersionWithBuild: String {
-        "\(appVersion) (\(buildNumber))"
-    }
-
-    static var modelIdentifier: String {
-        var size: size_t = 0
-        sysctlbyname("hw.model", nil, &size, nil, 0)
-        var model = [CChar](repeating: 0, count: size)
-        sysctlbyname("hw.model", &model, &size, nil, 0)
-        return String(cString: model)
-    }
-
-    static var isAppleSilicon: Bool {
-        #if arch(arm64)
-        return true
-        #else
-        return false
-        #endif
-    }
-
-    static var physicalMemoryGB: Double {
-        Double(ProcessInfo.processInfo.physicalMemory) / (1024 * 1024 * 1024)
-    }
-
-    static var processorCount: Int {
-        ProcessInfo.processInfo.processorCount
-    }
 }

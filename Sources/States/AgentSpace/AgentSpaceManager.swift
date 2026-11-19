@@ -6,7 +6,6 @@
 import AppKit
 import Combine
 import Foundation
-import PostHog
 import SwiftUI
 
 /// Ownership of an agent Space's window at any moment: the agent is driving it,
@@ -14,15 +13,6 @@ import SwiftUI
 enum AgentTaskOwnership {
     case agent
     case user
-}
-
-/// Where an agent task is driven from. `.phiAgent` tasks are orchestrated by
-/// the phi-agent backend (Kensington extension origin) and participate in its
-/// HTTP ownership handshake; `.cdp` tasks are driven by an external CDP client
-/// (e.g. the Claude Code skill) and must never block on phi-agent HTTP.
-enum AgentTaskOrigin {
-    case phiAgent
-    case cdp
 }
 
 /// Lifecycle state of an agent task, surfaced as a badge on the Space pip.
@@ -37,15 +27,12 @@ enum AgentTaskStatus: Equatable {
 }
 
 /// Runtime record for one agent task. Durable task state lives with the task's
-/// driver (phi-agent, or the CDP client); the only persisted artifact on the
-/// Swift side is the Space row, which is an ordinary user Space.
+/// CDP driver; the only persisted artifact on the Swift side is the Space row,
+/// which is an ordinary user Space.
 struct AgentTask {
     let taskId: String
     let spaceId: String
-    let profileId: String
-    let origin: AgentTaskOrigin
-    /// Owning logical external-agent session. Required for `.cdp` tasks and
-    /// nil for the in-app `.phiAgent` backend. This is authorization state;
+    /// Owning logical external-agent session. This is authorization state;
     /// `agentName` below is presentation only. Mutable for exactly one flow:
     /// a restarted agent re-adopting its own task once the original owning
     /// process is gone (see `createAgentSpace`).
@@ -82,7 +69,7 @@ struct AgentTask {
     /// The code agent driving this Space, as resolved from the CDP
     /// connection's authenticated identity (the signing identifier or process
     /// name — e.g. "Claude Code", "Codex", or the terminal that launched it).
-    /// Empty for phi-agent tasks and when the identity couldn't be resolved.
+    /// Empty when the identity couldn't be resolved.
     /// Surfaced as a badge on the control pill and the transcript filter.
     var agentName: String = ""
 }
@@ -109,36 +96,12 @@ struct AgentDriverBadge {
     /// canvas — matches the neighbors.
     static let assetInkRatio: CGFloat = 42.0 / 54.0
 
-    /// The browser's own mark, worn by the built-in agent. The other entries
-    /// here badge an OUTSIDE product driving Phi; this one is Phi driving
-    /// itself, so it shows the product's own glyph rather than a third-party
-    /// brand or a generic terminal. Normalized to `assetInkRatio` like the
-    /// rest, so it sits at the same optical size beside them.
-    static let phiBrandAssetName = "agent-phi"
-
-    static func make(agentName: String, origin: AgentTaskOrigin) -> AgentDriverBadge {
-        if origin == .phiAgent {
-            return AgentDriverBadge(assetName: phiBrandAssetName,
-                                    symbol: "sparkles", label: "Phi")
+    static func make(agentName: String) -> AgentDriverBadge {
+        let drifter = MistAppID.drifter.name
+        if agentName == drifter {
+            return AgentDriverBadge(assetName: nil, symbol: "globe", label: drifter)
         }
         let lower = agentName.lowercased()
-        // The same agent reached by NAME rather than by origin. `origin` is
-        // `.phiAgent` only where the app already knows — a task it opened
-        // itself, or a drive the verified first-party pass decided. A drive
-        // the browser reports on its own arrives named after whatever the
-        // ancestry walk resolved, which for this component is its script:
-        // "phi-agent.bundle". Left to fall through, `friendlyName` keeps only
-        // the text after the last dot and the pill reads "bundle".
-        //
-        // This is a LABEL, not a permission: nothing here decides access, and
-        // Phi-signed code that fails the first-party checks is refused before
-        // it can drive anything (see AgentIdentity.unresolvedOwnCode). The
-        // consent prompt, which is where trust is actually placed, keeps
-        // showing the real command and signature.
-        if Self.namesPhiAgent(lower) {
-            return AgentDriverBadge(assetName: phiBrandAssetName,
-                                    symbol: "sparkles", label: "Phi")
-        }
         if lower.contains("claude") {
             return AgentDriverBadge(assetName: "agent-claude",
                                     symbol: "chevron.left.forwardslash.chevron.right",
@@ -204,33 +167,6 @@ struct AgentDriverBadge {
             label: friendly.isEmpty ? "Code agent" : friendly)
     }
 
-    /// Whether a resolved driver name is the browser's own agent: the product
-    /// name itself, or the phi-agent component as a whole dot-separated
-    /// segment — "phi-agent", and "phi-agent.bundle" as the ancestry walk
-    /// derives it from the script. Compared by SEGMENT rather than by
-    /// substring, so a name that merely contains the text ("not-phi-agentx")
-    /// is not mistaken for it, and so the sibling "pi-agent" — a different
-    /// product, and an outside agent here — keeps its own badge below.
-    private static func namesPhiAgent(_ lowercasedName: String) -> Bool {
-        if lowercasedName == AgentPeerIdentity.firstPartyDisplayName.lowercased() {
-            return true
-        }
-        return lowercasedName.split(separator: ".")
-            .contains(Substring(AgentPeerIdentity.phiAgentComponentName))
-    }
-
-    /// Telemetry-safe agent label: the canonical product name when the
-    /// identity matches a known agent brand, else "other" ("unknown" when
-    /// empty). Never the raw identity string — for unsigned scripts that is
-    /// derived from a local file path (see AgentPeerIdentity.deriveAgentName)
-    /// and must not reach analytics.
-    static func telemetryName(_ agentName: String) -> String {
-        guard !agentName.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return "unknown"
-        }
-        let badge = make(agentName: agentName, origin: .cdp)
-        return badge.assetName != nil ? badge.label : "other"
-    }
 
     /// Reduces a signing identifier / bundle id to a readable label —
     /// "com.apple.Terminal" → "Terminal", "com.googlecode.iterm2" → "iterm2".
@@ -293,9 +229,7 @@ struct PendingUserMessage {
 /// App-scoped owner of agent-task state. Window lifecycle stays in
 /// `SpaceWindowSlot`; the Space list stays in `SpaceManager`. This module only
 /// owns the mapping from an agent Space to its live task and drives the
-/// ownership handshake across the three channels (Chromium agent-mode flag,
-/// extension broadcast, phi-agent HTTP — the last one for `.phiAgent` tasks
-/// only).
+/// ownership handshake through Chromium's agent-mode flag and driver events.
 @MainActor
 final class AgentSpaceManager: ObservableObject {
     static let shared = AgentSpaceManager()
@@ -306,16 +240,16 @@ final class AgentSpaceManager: ObservableObject {
     /// relaunch. Kept here so the two sites can never drift.
     /// Display-name prefix; the full name is the prefix plus the Space's ordinal
     /// (R1, R2, …). Also part of the signature the orphan sweep matches on.
-    static let spaceNamePrefix = "R"
+    nonisolated static let spaceNamePrefix = "R"
     // Robot emoji (🤖) from the emoji catalog — see Resources/Emoji/emoji-catalog.json.
-    static let spaceIconName = "emoji:1F916"
-    static let spaceColorHex = "#8E8E93"
+    nonisolated static let spaceIconName = "emoji:1F916"
+    nonisolated static let spaceColorHex = "#8E8E93"
     /// Persistent agent Spaces wear the agent icon in this color and are
     /// NAMED by their taskId (no R-ordinal), so they never match the
     /// ephemeral signature: the orphan sweep spares them across relaunches,
     /// the ephemeral-Space UI filters don't hide them, and the name doubles
     /// as the durable taskId → Space mapping for re-binding.
-    static let persistentSpaceColorHex = "#5856D6"
+    nonisolated static let persistentSpaceColorHex = "#5856D6"
 
     /// An agent Space's display name for its ordinal — "R1", "R2", …
     static func agentSpaceName(_ number: Int) -> String { "\(spaceNamePrefix)\(number)" }
@@ -363,7 +297,7 @@ final class AgentSpaceManager: ObservableObject {
     private var spaceIdByTaskId: [String: String] = [:]
 
     /// Shadow windows this manager opened, keyed by taskId. Space-less
-    /// siblings of `tasksBySpaceId`: same taskId namespace, same origin/
+    /// siblings of `tasksBySpaceId`: same taskId namespace, same
     /// principal authorization, same keep-alive clock — but no Space, no pip
     /// and no transcript, because the window is invisible (see
     /// AgentSpaceManager+Shadow.swift). Kept here rather than in a manager of
@@ -408,11 +342,8 @@ final class AgentSpaceManager: ObservableObject {
         // The operating mask's in-page recolor differs between light and dark
         // appearance, so any theme source flipping must restyle masked pages.
         // All three notifications funnel into the same per-window re-resolve.
-        // The developer "unstyled page" switch adds or strips the recolor on
-        // pages already masked, through the same re-resolve.
         for name: Notification.Name in
-            [.themeDidChange, .appearanceDidChange, .spaceThemeDidChange,
-             .agentUnstyledOperatingPageDidChange] {
+            [.themeDidChange, .appearanceDidChange, .spaceThemeDidChange] {
             NotificationCenter.default.addObserver(
                 forName: name, object: nil, queue: .main
             ) { [weak self] _ in
@@ -458,13 +389,12 @@ final class AgentSpaceManager: ObservableObject {
     }
 
     /// Closes agent Spaces whose driver has gone silent past the deadline.
-    /// Only `.cdp` tasks — phi-agent tasks have their own backend lifecycle —
-    /// and only while the AGENT holds control: a Space handed to the user
+    /// Only while the AGENT holds control: a Space handed to the user
     /// (login, captcha) must wait for them however long they take.
     private func sweepExpiredTasks() {
         let now = Date()
         let expired = tasksBySpaceId.values.filter {
-            $0.origin == .cdp && $0.ownership == .agent && !$0.persistent
+            $0.ownership == .agent && !$0.persistent
                 && $0.keepAliveDeadline < now
         }
         for task in expired {
@@ -523,96 +453,37 @@ final class AgentSpaceManager: ObservableObject {
     /// surviving relaunches. When a Space for this taskId already exists on
     /// disk, the task re-binds to it instead of creating a duplicate (the
     /// profile argument is then ignored: the Space keeps its bound profile).
-    /// Outcome of resolving a create request's requested profile against the
-    /// user's per-profile agent-Space permission (Settings ▸ Developer ▸ Agent
-    /// permissions). `.allowed` carries the concrete profile to create in.
     enum AgentCreateProfileResolution {
         case allowed(PhiBrowserProfile)
-        case blocked        // resolved to a profile the user disallows for agents
-        case noMatch        // the requested profile name/id doesn't exist
-        case needsTemporary // a default request, but the user left no usable
-                            // profile (all disallowed, or none exist) — create one
+        case noMatch
     }
 
-    /// Resolves a create request's profile the same way `createAgentSpace`
-    /// does, then applies the permission: an explicit request for a disallowed
-    /// profile is `.blocked`; an empty request picks the first profile the user
-    /// still allows (so the agent's default never lands on a blocked profile),
-    /// or `.blocked` when every profile is disallowed.
     @MainActor
     func resolveAgentCreateProfile(profileName: String) -> AgentCreateProfileResolution {
         ProfileManager.shared.refresh()
         let profiles = ProfileManager.shared.profiles
-        if profileName.isEmpty {
-            if let allowed = profiles.first(where: {
-                PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed($0.profileId)
-            }) {
-                return .allowed(allowed)
-            }
-            // Nothing the agent may use — neither refuse nor fail; a dedicated
-            // agent profile is created on demand (ensureAgentFallbackProfile).
-            return .needsTemporary
-        }
-        let byId = profiles.first(where: { $0.profileId == profileName })
-        let byName = profiles.first(where: { $0.displayName == profileName })
-        guard let profile = byId ?? byName else {
-            return .noMatch
-        }
-        if PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed(profile.profileId) {
-            return .allowed(profile)
-        }
-        return .blocked
-    }
-
-    /// Resolves the agent's fallback profile for a `.needsTemporary` create,
-    /// yielding its profileId. Reuses the existing fallback (matched by its
-    /// reserved name or recorded id, so it isn't recreated each time),
-    /// otherwise creates it under the reserved name. Deliberately not gated by
-    /// the per-profile permission: this profile exists precisely because the
-    /// user left the agent none it could otherwise use.
-    @MainActor
-    func ensureAgentFallbackProfile(completion: @escaping (String?) -> Void) {
-        ProfileManager.shared.refresh()
-        let reservedName = PhiPreferences.AgentSpaces.agentFallbackProfileName
-        if let existing = ProfileManager.shared.profiles.first(where: {
-            PhiPreferences.AgentSpaces.isAgentFallbackProfile(
-                profileId: $0.profileId, displayName: $0.displayName)
-        }) {
-            PhiPreferences.AgentSpaces.agentFallbackProfileId = existing.profileId
-            completion(existing.profileId)
-            return
-        }
-        ProfileManager.shared.createProfile(displayName: reservedName) { newId in
-            if let newId {
-                PhiPreferences.AgentSpaces.agentFallbackProfileId = newId
-            }
-            completion(newId)
-        }
+        let profile = profileName.isEmpty ? profiles.first :
+            (profiles.first { $0.profileId == profileName } ?? profiles.first { $0.displayName == profileName })
+        guard let profile else { return .noMatch }
+        return .allowed(profile)
     }
 
     func createAgentSpace(
         taskId: String,
         profileName: String,
-        origin: AgentTaskOrigin = .phiAgent,
         persistent: Bool = false,
         agentName: String = "",
         driverPrincipalId: String? = nil,
         completion: @escaping (_ spaceId: String?, _ windowId: Int?) -> Void
     ) {
-        if origin == .cdp {
-            guard let driverPrincipalId, !driverPrincipalId.isEmpty else {
-                AppLogWarn("[AgentSpace] createAgentSpace: CDP task has no driver principal")
-                completion(nil, nil)
-                return
-            }
+        guard driverPrincipalId?.isEmpty == false else {
+            AppLogWarn("[AgentSpace] createAgentSpace: CDP task has no driver principal")
+            completion(nil, nil)
+            return
         }
         if let existingSpaceId = spaceIdByTaskId[taskId] {
-            guard var existing = tasksBySpaceId[existingSpaceId],
-                  existing.origin == origin else {
-                // A different driver owns this taskId. Reveal nothing about its
-                // Space — the same "as if it doesn't exist" boundary the control
-                // handlers draw — and fail the create instead of sharing ids.
-                AppLogWarn("[AgentSpace] createAgentSpace: taskId \(taskId) belongs to another origin")
+            guard var existing = tasksBySpaceId[existingSpaceId] else {
+                AppLogWarn("[AgentSpace] createAgentSpace: taskId \(taskId) has no task record")
                 completion(nil, nil)
                 return
             }
@@ -622,13 +493,12 @@ final class AgentSpaceManager: ObservableObject {
                 // own task only once the original owning process is provably
                 // gone — a LIVE owner keeps its task isolated, and the deny
                 // stays indistinguishable from "no such task".
-                guard origin == .cdp,
-                      let taskPrincipal = existing.driverPrincipalId,
+                guard let taskPrincipal = existing.driverPrincipalId,
                       let callerPrincipal = driverPrincipalId,
                       AgentDriverSessionRegistry.shared.canAdopt(
                         taskPrincipalId: taskPrincipal,
                         callerPrincipalId: callerPrincipal) else {
-                    AppLogWarn("[AgentSpace] createAgentSpace: taskId \(taskId) belongs to another origin")
+                    AppLogWarn("[AgentSpace] createAgentSpace: taskId \(taskId) belongs to another driver")
                     completion(nil, nil)
                     return
                 }
@@ -658,16 +528,8 @@ final class AgentSpaceManager: ObservableObject {
                Self.isPersistentAgentSpaceModel(iconName: $0.iconName, colorHex: $0.colorHex)
                    && $0.name == taskId
            }) {
-            // Re-binding resumes the agent in the survivor's own profile,
-            // bypassing the requested one — so honor the permission here too: a
-            // profile the user has since disallowed can't be re-entered.
-            guard PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed(survivor.profileId) else {
-                AppLogWarn("[AgentSpace] createAgentSpace: rebind refused, profile disallowed for agents")
-                completion(nil, nil)
-                return
-            }
             rebindPersistentSpace(taskId: taskId, spaceId: survivor.spaceId,
-                                  profileId: survivor.profileId, origin: origin,
+                                  profileId: survivor.profileId,
                                   agentName: agentName,
                                   driverPrincipalId: driverPrincipalId,
                                   completion: completion)
@@ -715,8 +577,6 @@ final class AgentSpaceManager: ObservableObject {
         tasksBySpaceId[spaceId] = AgentTask(
             taskId: taskId,
             spaceId: spaceId,
-            profileId: profile.profileId,
-            origin: origin,
             driverPrincipalId: driverPrincipalId,
             number: number,
             windowId: 0,
@@ -725,7 +585,7 @@ final class AgentSpaceManager: ObservableObject {
             statusCaption: "",
             cursor: nil,
             hasUnseenError: false,
-            keepAliveDeadline: (origin == .cdp && !persistent)
+            keepAliveDeadline: !persistent
                 ? Date().addingTimeInterval(Self.defaultKeepAliveTTL)
                 : .distantFuture,
             persistent: persistent,
@@ -734,11 +594,6 @@ final class AgentSpaceManager: ObservableObject {
         spaceIdByTaskId[taskId] = spaceId
         ensureKeepAliveSweep()
         beginTranscript(taskId: taskId, spaceName: Self.agentSpaceName(number))
-        PostHogSDK.shared.capture("agent_task_started", properties: [
-            "origin": origin == .cdp ? "cdp" : "phi_agent",
-            "persistent": persistent,
-            "agent_name": AgentDriverBadge.telemetryName(agentName),
-        ])
 
         // Everything below runs against a slot; a failure at any point unwinds
         // the task recorded above with the same cleanup.
@@ -762,7 +617,6 @@ final class AgentSpaceManager: ObservableObject {
                     task.windowId = windowId
                     task.status = .running
                     self.tasksBySpaceId[spaceId] = task
-                    FirstTimeActionTracker.capture(.agentTask)
                 }
                 completion(spaceId, windowId)
                 // The task is running with a live window now — autoview may surface
@@ -835,7 +689,6 @@ final class AgentSpaceManager: ObservableObject {
         taskId: String,
         spaceId: String,
         profileId: String,
-        origin: AgentTaskOrigin,
         agentName: String = "",
         driverPrincipalId: String? = nil,
         completion: @escaping (_ spaceId: String?, _ windowId: Int?) -> Void
@@ -844,8 +697,6 @@ final class AgentSpaceManager: ObservableObject {
             tasksBySpaceId[spaceId] = AgentTask(
                 taskId: taskId,
                 spaceId: spaceId,
-                profileId: profileId,
-                origin: origin,
                 driverPrincipalId: driverPrincipalId,
                 number: nextAgentNumber(),
                 windowId: windowId,
@@ -861,14 +712,6 @@ final class AgentSpaceManager: ObservableObject {
             spaceIdByTaskId[taskId] = spaceId
             ensureKeepAliveSweep()
             beginTranscript(taskId: taskId, spaceName: taskId)
-            PostHogSDK.shared.capture("agent_task_started", properties: [
-                "origin": origin == .cdp ? "cdp" : "phi_agent",
-                "persistent": true,
-                "agent_name": AgentDriverBadge.telemetryName(agentName),
-            ])
-            if status == .running {
-                FirstTimeActionTracker.capture(.agentTask)
-            }
         }
 
         for slot in SpaceManager.shared.slots {
@@ -918,7 +761,6 @@ final class AgentSpaceManager: ObservableObject {
                 task.windowId = windowId
                 task.status = .running
                 self.tasksBySpaceId[spaceId] = task
-                FirstTimeActionTracker.capture(.agentTask)
             }
             completion(spaceId, windowId)
             self.autoViewReevaluate(delay: 0.8)
@@ -933,10 +775,6 @@ final class AgentSpaceManager: ObservableObject {
         guard var task = tasksBySpaceId[spaceId] else { return }
         task.hasUnseenError = false
         tasksBySpaceId[spaceId] = task
-        guard task.origin == .phiAgent else { return }
-        // Presence is informational; fire-and-forget.
-        let taskId = task.taskId
-        Task { try? await APIClient.shared.setAgentSpacePresence(taskId: taskId, userPresent: true) }
     }
 
     /// The user switched away from the agent Space's window. Ordering the
@@ -957,10 +795,7 @@ final class AgentSpaceManager: ObservableObject {
         }
     }
 
-    /// The user takes control (interrupt). Order: synchronous Chromium flag →
-    /// extension broadcast → phi-agent HTTP (`.phiAgent` tasks only). Local
-    /// state stays `.user` even if the HTTP call fails (local enforcement
-    /// already holds).
+    /// The user takes control and the driver receives the ownership change.
     func takeControl(spaceId: String, initiatedByAgent: Bool = false) {
         guard var task = tasksBySpaceId[spaceId] else { return }
         task.ownership = .user
@@ -977,17 +812,11 @@ final class AgentSpaceManager: ObservableObject {
         ChromiumLauncher.sharedInstance().bridge?
             .setAgentMode(false, windowId: Int64(task.windowId))
         broadcastOwnership(taskId: task.taskId, owner: "user")
-        guard task.origin == .phiAgent else { return }
-        let taskId = task.taskId
-        Task {
-            try? await APIClient.shared.handoffAgentSpace(taskId: taskId, reason: "user_interrupt")
-        }
     }
 
     /// The agent asked to give control to the user (e.g. login or captcha).
     /// Same state transition as a user interrupt; the caller (the agent) is
-    /// the one requesting it, so no phi-agent notification fires here for
-    /// `.cdp` tasks either way. `message` — what the agent needs the user to do
+    /// the one requesting it. `message` — what the agent needs the user to do
     /// — is surfaced in a prompt with a shortcut to switch into the Space.
     func interruptByAgentRequest(taskId: String, message: String? = nil) -> Bool {
         guard let spaceId = spaceIdByTaskId[taskId] else { return false }
@@ -1082,63 +911,34 @@ final class AgentSpaceManager: ObservableObject {
         handoffPromptSpaceId = nil
     }
 
-    /// The user hands control back to the agent. For `.phiAgent` tasks the
-    /// backend must accept before the agent resumes, so the HTTP call goes
-    /// first. `.cdp` tasks flip locally and synchronously — the CDP client
-    /// observes the ownership broadcast and resumes on its own.
+    /// Hands control back locally; the CDP client observes the ownership broadcast.
     func handBack(spaceId: String) {
         guard let task = tasksBySpaceId[spaceId] else { return }
         let taskId = task.taskId
         let windowId = task.windowId
 
-        if task.origin == .cdp {
-            var t = task
-            t.ownership = .agent
-            tasksBySpaceId[spaceId] = t
-            appendTranscript(taskId: taskId, kind: .status,
-                             text: "You handed control back to the agent",
-                             detail: terminalNudgeHint(for: t))
-            refreshOperatingMask(forSpaceId: spaceId,
-                                 activeTabId: currentActiveTabId(forSpaceId: spaceId))
-            ChromiumLauncher.sharedInstance().bridge?
-                .setAgentMode(true, windowId: Int64(windowId))
-            broadcastOwnership(taskId: taskId, owner: "agent")
-            // The clock was paused while the user held control; restart it with
-            // the between-rounds grace — the driving session may take a while
-            // to notice the hand-back and run its next round.
-            touchKeepAlive(taskId: taskId, ttlSeconds: Self.interRoundKeepAliveTTL)
-            // The agent no longer needs the user — retire a lingering prompt.
-            dismissHandoffPrompt(forSpaceId: spaceId)
-            return
-        }
-
-        Task { [weak self] in
-            do {
-                try await APIClient.shared.setAgentSpacePresence(
-                    taskId: taskId, userPresent: false, handback: true)
-            } catch {
-                AppLogWarn("[AgentSpace] handBack: phi-agent rejected, not resuming agent")
-                return
-            }
-            await MainActor.run {
-                guard let self, var t = self.tasksBySpaceId[spaceId] else { return }
-                t.ownership = .agent
-                self.tasksBySpaceId[spaceId] = t
-                self.appendTranscript(taskId: taskId, kind: .status,
-                                      text: "You handed control back to the agent")
-                self.refreshOperatingMask(forSpaceId: spaceId,
-                                          activeTabId: self.currentActiveTabId(forSpaceId: spaceId))
-                ChromiumLauncher.sharedInstance().bridge?
-                    .setAgentMode(true, windowId: Int64(windowId))
-                self.broadcastOwnership(taskId: taskId, owner: "agent")
-                self.dismissHandoffPrompt(forSpaceId: spaceId)
-            }
-        }
+        var t = task
+        t.ownership = .agent
+        tasksBySpaceId[spaceId] = t
+        appendTranscript(taskId: taskId, kind: .status,
+                         text: "You handed control back to the agent",
+                         detail: terminalNudgeHint(for: t))
+        refreshOperatingMask(forSpaceId: spaceId,
+                             activeTabId: currentActiveTabId(forSpaceId: spaceId))
+        ChromiumLauncher.sharedInstance().bridge?
+            .setAgentMode(true, windowId: Int64(windowId))
+        broadcastOwnership(taskId: taskId, owner: "agent")
+        // The clock was paused while the user held control; restart it with
+        // the between-rounds grace — the driving session may take a while
+        // to notice the hand-back and run its next round.
+        touchKeepAlive(taskId: taskId, ttlSeconds: Self.interRoundKeepAliveTTL)
+        // The agent no longer needs the user — retire a lingering prompt.
+        dismissHandoffPrompt(forSpaceId: spaceId)
     }
 
     /// The agent resumes control after the user explicitly confirmed (the CDP
     /// client's takeover, mirroring ego's semantics — policy enforcement lives
-    /// in the client). Flips locally; no phi-agent involvement.
+    /// in the client). Flips locally.
     func resumeAgentControl(taskId: String) -> Bool {
         guard let spaceId = spaceIdByTaskId[taskId],
               var task = tasksBySpaceId[spaceId] else { return false }
@@ -1245,20 +1045,17 @@ final class AgentSpaceManager: ObservableObject {
         ExtensionMessaging.shared.broadcastToTaskDriver(
             type: "agentSpace.userMessage",
             payload: payload,
-            origin: task.origin,
             driverPrincipalId: task.driverPrincipalId)
     }
 
     /// The between-rounds delivery warning, scoped to Codex: nothing is ever
     /// typed into its terminal, so queued console input and hand-backs are
     /// only noticed at the session's next turn — the user has to nudge it
-    /// themselves. Nil for every other driver: phi-agent's backend resumes
-    /// the agent itself, OpenClaw uses its gateway CLI, Pi uses its installed
-    /// in-process extension, and Hermes typically waits in waitForUserMessage.
+    /// themselves. Nil for every other driver: OpenClaw uses its gateway CLI,
+    /// Pi uses its installed in-process extension, and Hermes typically waits
+    /// in waitForUserMessage.
     private func terminalNudgeHint(for task: AgentTask) -> String? {
-        guard task.origin == .cdp,
-              AgentDriverBadge.make(agentName: task.agentName,
-                                    origin: task.origin).label == "Codex"
+        guard AgentDriverBadge.make(agentName: task.agentName).label == "Codex"
         else { return nil }
         return "Codex only sees this at its next turn — go to its terminal and type \"continue\" to wake it now."
     }
@@ -1344,7 +1141,7 @@ final class AgentSpaceManager: ObservableObject {
                                  text: running ? "round started" : "round ended")
             }
             task.status = running ? .running : .idle
-            if running && task.origin == .cdp && !task.persistent {
+            if running && !task.persistent {
                 // A round is starting to drive: reset the deadline to the short
                 // driving window. Plain heartbeats only ever extend the deadline
                 // (`touchKeepAlive` maxes), so without this the between-rounds
@@ -1400,12 +1197,6 @@ final class AgentSpaceManager: ObservableObject {
         AppLogInfo("[AgentSpace] task \(taskId) completed success=\(success)"
             + " persistent=\(task.persistent)"
             + (message.map { " message=\($0)" } ?? ""))
-        PostHogSDK.shared.capture("agent_task_completed", properties: [
-            "origin": task.origin == .cdp ? "cdp" : "phi_agent",
-            "persistent": task.persistent,
-            "agent_name": AgentDriverBadge.telemetryName(task.agentName),
-            "success": success,
-        ])
         if let masked = task.maskedTabId {
             AgentAnimationManager.shared.setActive(false, for: masked)
         }
@@ -1484,9 +1275,7 @@ final class AgentSpaceManager: ObservableObject {
     /// window, and every page in an agent window belongs to the agent anyway.
     private func refreshOperatingPageTheme(for task: AgentTask) {
         guard task.windowId != 0 else { return }
-        // A developer inspecting the page wants it exactly as it renders.
-        guard task.maskedTabId != nil,
-              !PhiPreferences.AgentSpaces.unstyledOperatingPageEnabled else {
+        guard task.maskedTabId != nil else {
             AgentPageTheme.shared.clear(windowId: task.windowId)
             return
         }
@@ -1501,8 +1290,7 @@ final class AgentSpaceManager: ObservableObject {
 
     /// Re-issues the in-page recolor for every task currently wearing the
     /// mask. The injected sheet carries a different palette per appearance, so
-    /// a theme or appearance flip must restyle live targets, and the developer
-    /// unstyled-page switch applies or strips it; the native wash (layer 1)
+    /// a theme or appearance flip must restyle live targets; the native wash (layer 1)
     /// refreshes through each window's own theme pipeline.
     private func refreshMaskedPageThemes() {
         for task in tasksBySpaceId.values where task.maskedTabId != nil {
@@ -1524,14 +1312,6 @@ final class AgentSpaceManager: ObservableObject {
         return tasksBySpaceId[spaceId]?.ownership
     }
 
-    /// Which driver owns this task. Used to scope inbound control messages to
-    /// their own origin so a CDP client can't drive a phi-agent Space (or vice
-    /// versa) just by naming its taskId.
-    func origin(forTaskId taskId: String) -> AgentTaskOrigin? {
-        guard let spaceId = spaceIdByTaskId[taskId] else { return nil }
-        return tasksBySpaceId[spaceId]?.origin
-    }
-
     private func broadcastOwnership(taskId: String, owner: String) {
         // taskId is caller-chosen (an LLM-authored task name can contain quotes)
         // — serialize, never interpolate into JSON.
@@ -1546,7 +1326,6 @@ final class AgentSpaceManager: ObservableObject {
         ExtensionMessaging.shared.broadcastToTaskDriver(
             type: "agentSpace.ownershipChanged",
             payload: payload,
-            origin: task.origin,
             driverPrincipalId: task.driverPrincipalId)
     }
 }

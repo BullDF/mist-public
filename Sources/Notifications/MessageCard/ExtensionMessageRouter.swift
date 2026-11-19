@@ -4,7 +4,6 @@
 // found in the LICENSE file.
 
 import Foundation
-import PostHog
 
 struct ExtensionMessageContext {
     let type: String
@@ -44,54 +43,15 @@ final class ExtensionMessageRouter {
     private var handlers: [String: ExtensionMessageHandler] = [:]
     private var configured = false
 
-    /// Registers a management type that operates the USER's browsing data
-    /// (Spaces, profiles, URL rules, pinned tabs, bookmarks). The Developer
-    /// settings "Agent permissions" toggle gates them as one unit. Tab-layout
-    /// types register plainly: only their spaceId path is user-space, gated
-    /// inside `AgentSpaceRouter.withLayoutWindow` so the agent-window path
-    /// keeps working with the toggle off.
-    private func registerUserSpaceManaged(type: String,
-                                          handler: @escaping ExtensionMessageHandler) {
-        register(type: type) { context in
-            if let denied = AgentSpaceRouter.userSpaceOperationsRefusal() {
-                return denied
-            }
-            if !Self.untrackedUserSpaceCommands.contains(context.type) {
-                PostHogSDK.shared.capture("agent_user_space_command", properties: [
-                    "command": context.type,
-                    "agent_name": AgentDriverBadge.telemetryName(context.agentName),
-                ])
-            }
-            return handler(context)
-        }
-    }
-
-    /// Managed types that read state or probe liveness rather than change
-    /// anything. They are not counted as `agent_user_space_command`: the
-    /// metric is meant to say "an agent touched the user's browsing data",
-    /// and these ride machine loops — the browser-use-sonic CDP connection
-    /// heartbeats with `agentSpace.spaces.list` every 30s for as long as the
-    /// browser is up, and the shadow-window keep-alive pings every 45s — so
-    /// they were 98.7% of a 2.2M-event week with no user action behind them.
-    /// `credentials.get` / `credentials.getTotp` stay tracked: reading a
-    /// secret is consequential even though it mutates nothing.
-    static let untrackedUserSpaceCommands: Set<String> = [
-        "agentSpace.bookmarks.list",
-        "agentSpace.pinnedTabs.list",
-        "agentSpace.shadow.list",
-        "agentSpace.shadow.ping",
-        "agentSpace.spaces.list",
-        "agentSpace.spaces.listTabs",
-        "agentSpace.urlRules.list",
-        "credentials.status",
-    ]
-
     func register(type: String, handler: @escaping ExtensionMessageHandler) {
         handlers[type] = handler
     }
 
     func handle(type: String, payload: String, requestId: String, senderId: String = "",
                 agentName: String = "", driverPrincipalId: String? = nil) -> String? {
+        guard !type.hasPrefix("agentSpace.") || senderId == "cdp" else {
+            return #"{"error":"forbidden"}"#
+        }
         configureIfNeeded()
         let context = ExtensionMessageContext(
             type: type, payload: payload, requestId: requestId, senderId: senderId,
@@ -99,7 +59,10 @@ final class ExtensionMessageRouter {
         if let handler = handlers[type] {
             return handler(context)
         }
-        return CommonMessageRouter.shared.handle(context)
+        if context.type == "getWindowTheme" {
+            WindowThemeMessageRouter.shared.handleGetWindowTheme(context)
+        }
+        return nil
     }
 
     private func configureIfNeeded() {
@@ -134,33 +97,6 @@ final class ExtensionMessageRouter {
             return nil
         }
 
-        register(type: SiteMemoryMessageRouter.queryType) { context in
-            SiteMemoryMessageRouter.handle(context)
-            return nil
-        }
-
-        register(type: "getServiceExports") { context in
-            Task {
-                do {
-                    let exports = try await SentinelIPCClient.shared.getComponentExports()
-                    await ExtensionMessaging.shared.sendResponse(exports.exportsJSON, requestId: context.requestId)
-                } catch {
-                    await ExtensionMessaging.shared.sendError(error.localizedDescription, requestId: context.requestId)
-                }
-            }
-            return nil
-        }
-
-        for type in ServiceBrokerExtensionProtocol.messageTypes {
-            register(type: type) { context in
-                Task {
-                    let reply = await ServiceBrokerExtensionProtocol.shared.handle(context)
-                    await ExtensionMessaging.shared.sendResponse(reply, requestId: context.requestId)
-                }
-                return nil
-            }
-        }
-
         // Both reader types ack synchronously — the extension's reports are
         // fire-and-forget, and a nil return would leave its sendMessageToApp
         // promise pending until the bridge's 30s timeout rejects it.
@@ -182,119 +118,6 @@ final class ExtensionMessageRouter {
         register(type: "reader.extractResult") { context in
             ReaderExtensionBridge.handleExtractResult(context)
             return "{}"
-        }
-
-        register(type: "sidecar.chat.profiles") { context in
-            MainActor.assumeIsolated {
-                guard context.senderId == SidecarAIOutputStateStore.extensionId,
-                      ApplicationState.shared.isAuthenticated,
-                      PhiPreferences.AISettings.phiAIEnabled.loadValue(),
-                      ChromiumLauncher.sharedInstance().bridge != nil else {
-                    return "{\"error\":\"unavailable\"}"
-                }
-                let manager = ProfileManager.shared
-                guard manager.refresh() else { return "{\"error\":\"unavailable\"}" }
-                let profiles = manager.userAssignableProfiles.map {
-                    ["profileId": $0.profileId, "displayName": $0.displayName]
-                }
-                guard !profiles.isEmpty,
-                      let data = try? JSONSerialization.data(withJSONObject: ["profiles": profiles]),
-                      let reply = String(data: data, encoding: .utf8) else {
-                    return "{\"error\":\"unavailable\"}"
-                }
-                return reply
-            }
-        }
-
-        for type in TravelBackMessageHandler.messageTypes {
-            register(type: type) { context in
-                Task { @MainActor in
-                    let reply = await TravelBackMessageHandler.handle(context)
-                    ExtensionMessaging.shared.sendResponse(reply, requestId: context.requestId)
-                }
-                return nil
-            }
-        }
-
-        register(type: "sidecar.aiOutputState") { context in
-            MainActor.assumeIsolated {
-                SidecarAIOutputStateStore.shared.handle(context)
-            }
-            return "{}"
-        }
-
-        // Save for Later's site-action auto-save (SaveForLaterService): the
-        // extension pulls the armed state on boot and reports trigger
-        // activations; the service re-checks arming on every trigger.
-        register(type: "saveForLater.getArmed") { context in
-            return SaveForLaterService.handleGetArmed(context)
-        }
-        register(type: "saveForLater.trigger") { context in
-            SaveForLaterService.handleTrigger(context)
-            return "{}"
-        }
-        // The Save for Later library page's folder access; replies are async
-        // (file IO) via ExtensionMessaging.
-        // An older Mirage still asks the app to do the highlight; answer
-        // with a visible message rather than dropping it (see
-        // handleLegacyHighlight).
-        register(type: "saveForLater.highlight") { context in
-            SaveForLaterService.handleLegacyHighlight(context)
-            return "{}"
-        }
-        register(type: "saveForLater.delete") { context in
-            SaveForLaterService.handleLibraryDelete(context)
-            return nil
-        }
-        register(type: "saveForLater.reveal") { context in
-            SaveForLaterService.handleLibraryReveal(context)
-            return "{}"
-        }
-        // The capture RPC's report leg and the file broker's chunked write
-        // path (Mirage streams MHTML archives through it).
-        register(type: "saveForLater.fs.writeBegin") { context in
-            SaveForLaterService.handleFSWriteBegin(context)
-            return nil
-        }
-        register(type: "saveForLater.fs.writeChunk") { context in
-            SaveForLaterService.handleFSWriteChunk(context)
-            return nil
-        }
-        register(type: "saveForLater.fs.writeEnd") { context in
-            SaveForLaterService.handleFSWriteEnd(context)
-            return nil
-        }
-        register(type: "saveForLater.fs.list") { context in
-            SaveForLaterService.handleFSList(context)
-            return nil
-        }
-        register(type: "saveForLater.fs.read") { context in
-            SaveForLaterService.handleFSRead(context)
-            return nil
-        }
-        register(type: "saveForLater.fs.writeText") { context in
-            SaveForLaterService.handleFSWriteText(context)
-            return nil
-        }
-        register(type: "saveForLater.fs.rename") { context in
-            SaveForLaterService.handleFSRename(context)
-            return nil
-        }
-        // Mirage runs the save itself and reports back; the app keeps the
-        // toast (window chrome) and the authenticated video-gist call.
-        register(type: "saveForLater.saveResult") { context in
-            return SaveForLaterService.handleSaveResult(context)
-        }
-        register(type: "saveForLater.toast") { context in
-            SaveForLaterService.handleToast(context)
-            return "{}"
-        }
-        register(type: "saveForLater.videoGist") { context in
-            SaveForLaterService.handleVideoGist(context)
-            return nil
-        }
-        register(type: "saveForLater.videoArticles") { context in
-            return SaveForLaterService.handleVideoArticles(context)
         }
 
         register(type: "agentSpace.create") { context in
@@ -366,20 +189,20 @@ final class ExtensionMessageRouter {
         // control" consent as operating the user's Spaces — a user who has not
         // granted agents reach beyond their own visible Spaces must not get
         // invisible ones.
-        registerUserSpaceManaged(type: "agentSpace.shadow.create") { context in
+        register(type: "agentSpace.shadow.create") { context in
             AgentSpaceRouter.handleShadowCreate(context: context)
             return nil  // async reply via ExtensionMessaging
         }
-        registerUserSpaceManaged(type: "agentSpace.shadow.list") { context in
+        register(type: "agentSpace.shadow.list") { context in
             return AgentSpaceRouter.handleShadowList(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.shadow.openTab") { context in
+        register(type: "agentSpace.shadow.openTab") { context in
             return AgentSpaceRouter.handleShadowOpenTab(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.shadow.ping") { context in
+        register(type: "agentSpace.shadow.ping") { context in
             return AgentSpaceRouter.handleShadowPing(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.shadow.close") { context in
+        register(type: "agentSpace.shadow.close") { context in
             return AgentSpaceRouter.handleShadowClose(context: context)
         }
 
@@ -387,50 +210,93 @@ final class ExtensionMessageRouter {
         // features operated over the same tunnel — Spaces, profiles, URL
         // rules, tab groups, split view, pinned tabs, bookmarks. User-data
         // types register through the "Agent permissions" gate.
-        registerUserSpaceManaged(type: "agentSpace.spaces.list") { context in
+        register(type: "agentSpace.spaces.list") { context in
             return AgentSpaceRouter.handleSpacesList(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.spaces.create") { context in
+        register(type: "agentSpace.spaces.create") { context in
             return AgentSpaceRouter.handleSpacesCreate(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.spaces.update") { context in
+        register(type: "agentSpace.spaces.update") { context in
             return AgentSpaceRouter.handleSpacesUpdate(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.spaces.delete") { context in
+        register(type: "agentSpace.spaces.delete") { context in
             return AgentSpaceRouter.handleSpacesDelete(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.spaces.listTabs") { context in
+        register(type: "agentSpace.spaces.listTabs") { context in
             return AgentSpaceRouter.handleSpacesListTabs(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.spaces.openTab") { context in
+        register(type: "agentSpace.spaces.openTab") { context in
             return AgentSpaceRouter.handleSpacesOpenTab(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.spaces.activate") { context in
+        register(type: "agentSpace.spaces.wakeTab") { context in
+            return AgentSpaceRouter.handleSpacesWakeTab(context: context)
+        }
+        register(type: "agentSpace.spaces.workingTab") { context in
+            AgentSpaceRouter.handleSpacesWorkingTab(context: context)
+        }
+        register(type: "agentSpace.spaces.scrolled") { context in
+            AgentSpaceRouter.handleSpacesScrolled(context: context)
+        }
+        register(type: "agentSpace.spaces.screenshot") { context in
+            AgentSpaceRouter.handleSpacesScreenshot(context: context)
+        }
+        register(type: "agentSpace.mail.accounts") { AgentSpaceRouter.handleMailAccounts(context: $0) }
+        register(type: "agentSpace.mail.list") { AgentSpaceRouter.handleMailList(context: $0) }
+        register(type: "agentSpace.mail.search") { AgentSpaceRouter.handleMailSearch(context: $0) }
+        register(type: "agentSpace.mail.read") { AgentSpaceRouter.handleMailRead(context: $0) }
+        register(type: "agentSpace.mail.draft") { AgentSpaceRouter.handleMailDraft(context: $0) }
+        register(type: "agentSpace.mail.send") { AgentSpaceRouter.handleMailSend(context: $0) }
+        register(type: "agentSpace.mail.update") { AgentSpaceRouter.handleMailUpdate(context: $0) }
+        register(type: "agentSpace.slack.tools") { AgentSpaceRouter.handleSlackTools(context: $0) }
+        register(type: "agentSpace.slack.call") { AgentSpaceRouter.handleSlackCall(context: $0) }
+        register(type: "agentSpace.tasks.start") { AgentSpaceRouter.handleTasksStart(context: $0) }
+        register(type: "agentSpace.tasks.stop") { AgentSpaceRouter.handleTasksStop(context: $0) }
+        register(type: "agentSpace.agents.list") { context in
+            AgentSpaceRouter.handleAgentsList(context: context)
+        }
+        register(type: "agentSpace.agents.finish") { AgentSpaceRouter.handleAgentsFinish(context: $0) }
+        register(type: "agentSpace.agents.handOff") { AgentSpaceRouter.handleAgentsHandOff(context: $0) }
+        register(type: "agentSpace.agents.message") { context in
+            AgentSpaceRouter.handleAgentsMessage(context: context)
+        }
+        register(type: "agentSpace.agents.spawn") { context in
+            AgentSpaceRouter.handleAgentsSpawn(context: context)
+        }
+        register(type: "agentSpace.agents.read") { context in
+            AgentSpaceRouter.handleAgentsRead(context: context)
+        }
+        register(type: "agentSpace.agents.stop") { context in
+            AgentSpaceRouter.handleAgentsStop(context: context)
+        }
+        register(type: "agentSpace.agents.close") { context in
+            AgentSpaceRouter.handleAgentsClose(context: context)
+        }
+        register(type: "agentSpace.spaces.activate") { context in
             return AgentSpaceRouter.handleSpacesActivate(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.spaces.focus") { context in
+        register(type: "agentSpace.spaces.focus") { context in
             return AgentSpaceRouter.handleSpacesFocus(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.profiles.create") { context in
+        register(type: "agentSpace.profiles.create") { context in
             AgentSpaceRouter.handleProfilesCreate(context: context)
             return nil  // async reply via ExtensionMessaging
         }
-        registerUserSpaceManaged(type: "agentSpace.profiles.rename") { context in
+        register(type: "agentSpace.profiles.rename") { context in
             AgentSpaceRouter.handleProfilesRename(context: context)
             return nil  // async reply via ExtensionMessaging
         }
-        registerUserSpaceManaged(type: "agentSpace.urlRules.list") { context in
+        register(type: "agentSpace.urlRules.list") { context in
             return AgentSpaceRouter.handleUrlRulesList(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.urlRules.add") { context in
+        register(type: "agentSpace.urlRules.add") { context in
             AgentSpaceRouter.handleUrlRulesAdd(context: context)
             return nil  // async reply via ExtensionMessaging
         }
-        registerUserSpaceManaged(type: "agentSpace.urlRules.update") { context in
+        register(type: "agentSpace.urlRules.update") { context in
             AgentSpaceRouter.handleUrlRulesUpdate(context: context)
             return nil  // async reply via ExtensionMessaging
         }
-        registerUserSpaceManaged(type: "agentSpace.urlRules.delete") { context in
+        register(type: "agentSpace.urlRules.delete") { context in
             AgentSpaceRouter.handleUrlRulesDelete(context: context)
             return nil  // async reply via ExtensionMessaging
         }
@@ -476,6 +342,7 @@ final class ExtensionMessageRouter {
         register(type: "agentSpace.downloads.list") { context in
             return AgentSpaceRouter.handleDownloadsList(context: context)
         }
+        register(type: "agentSpace.history.search") { AgentSpaceRouter.handleHistorySearch(context: $0) }
         register(type: "agentSpace.downloads.get") { context in
             return AgentSpaceRouter.handleDownloadsGet(context: context)
         }
@@ -491,62 +358,37 @@ final class ExtensionMessageRouter {
         register(type: "agentSpace.downloads.remove") { context in
             return AgentSpaceRouter.handleDownloadsRemove(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.pinnedTabs.list") { context in
+        register(type: "agentSpace.pinnedTabs.list") { context in
             return AgentSpaceRouter.handlePinnedTabsList(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.pinnedTabs.add") { context in
+        register(type: "agentSpace.pinnedTabs.add") { context in
             return AgentSpaceRouter.handlePinnedTabsAdd(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.pinnedTabs.update") { context in
+        register(type: "agentSpace.pinnedTabs.update") { context in
             return AgentSpaceRouter.handlePinnedTabsUpdate(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.pinnedTabs.remove") { context in
+        register(type: "agentSpace.pinnedTabs.remove") { context in
             return AgentSpaceRouter.handlePinnedTabsRemove(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.bookmarks.list") { context in
+        register(type: "agentSpace.bookmarks.list") { context in
             return AgentSpaceRouter.handleBookmarksList(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.bookmarks.add") { context in
+        register(type: "agentSpace.bookmarks.add") { context in
             return AgentSpaceRouter.handleBookmarksAdd(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.bookmarks.addFolder") { context in
+        register(type: "agentSpace.bookmarks.addFolder") { context in
             return AgentSpaceRouter.handleBookmarksAddFolder(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.bookmarks.update") { context in
+        register(type: "agentSpace.bookmarks.update") { context in
             return AgentSpaceRouter.handleBookmarksUpdate(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.bookmarks.move") { context in
+        register(type: "agentSpace.bookmarks.move") { context in
             return AgentSpaceRouter.handleBookmarksMove(context: context)
         }
-        registerUserSpaceManaged(type: "agentSpace.bookmarks.remove") { context in
+        register(type: "agentSpace.bookmarks.remove") { context in
             return AgentSpaceRouter.handleBookmarksRemove(context: context)
         }
 
-        // Credential surface (AgentSpaceRouter+Credentials.swift): an agent can
-        // check provider readiness and, after an explicit user approval, fetch a
-        // credential or TOTP. User data, so gated by the "Agent permissions"
-        // switch and, inside the handlers, by the Bitwarden enable toggle; each
-        // secret-returning call replies asynchronously after the approval
-        // prompt and provider lookup resolve.
-        registerUserSpaceManaged(type: "credentials.status") { context in
-            return AgentSpaceRouter.handleCredentialsStatus(context: context)
-        }
-        registerUserSpaceManaged(type: "credentials.get") { context in
-            return AgentSpaceRouter.handleCredentialsGet(context: context)
-        }
-        registerUserSpaceManaged(type: "credentials.getTotp") { context in
-            return AgentSpaceRouter.handleCredentialsGetTotp(context: context)
-        }
-        registerUserSpaceManaged(type: "credentials.autofill") { context in
-            return AgentSpaceRouter.handleCredentialsAutofill(context: context)
-        }
-
-        register(type: "farringdon.organizeDidFinish") { _ in
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .farringdonOrganizeDidFinish, object: nil)
-            }
-            return #"{"ok":true}"#
-        }
     }
 
     // MARK: - Chunked messages

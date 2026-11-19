@@ -39,7 +39,6 @@ enum SidebarGroupDropIntent: Equatable {
     case rejected(reason: RejectReason)
 
     enum RejectReason: Equatable {
-        case crossWindowRefused
         case crossWindowGroupJoinUnsupported
         case sameSlot
     }
@@ -65,9 +64,7 @@ struct SidebarGroupDropContext {
     /// Frame (in outline coords) of whichever row corresponds to
     /// `proposedItem`. `nil` when there is no such row (root drop).
     let rowFrameForProposedItem: CGRect?
-    let pasteboardKind: PasteboardKind
     let isCrossWindow: Bool
-    let crossWindowAccepted: Bool
     let draggingTab: Tab?
     /// 0-based idx of the proposed Tab inside its group (only when
     /// `proposedItem` is a Tab with `groupToken != nil`).

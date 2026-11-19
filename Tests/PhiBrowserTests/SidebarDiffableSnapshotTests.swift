@@ -53,6 +53,7 @@ private final class TabSectionChangeRecorder: TabSectionDelegate {
     func focusingTabChanged(_ tab: Tab?) {}
 }
 
+@MainActor
 final class SidebarDiffableSnapshotTests: XCTestCase {
     func testSidebarSnapshotUsesStableItemIDs() {
         let child = SnapshotSidebarItem(id: "child")

@@ -8,16 +8,9 @@ import Foundation
 /// The shadow-window slice of the `agentSpace.*` message surface: opening and
 /// driving invisible background windows (see AgentSpaceManager+Shadow.swift).
 ///
-/// Every route here registers through `registerUserSpaceManaged`, so the whole
-/// feature is behind Settings ▸ Developer ▸ Agent control ("let agents operate
-/// your Spaces"). That gate, not a shadow-specific one, is deliberate: an
-/// agent Space announces itself with a pip the user can watch and take over,
-/// a shadow window announces nothing. A user who has not granted agents reach
-/// beyond their own visible Spaces must not get invisible ones.
-///
 /// Conventions match the rest of the router: messages arrive on the main
 /// thread (main-actor state via `MainActor.assumeIsolated`), replies are JSON
-/// with the `ok`/`error` shape, and task-scoped routes are origin- and
+/// with the `ok`/`error` shape, and task-scoped routes are
 /// principal-guarded so drivers cannot reach each other's windows.
 extension AgentSpaceRouter {
     /// `agentSpace.shadow.create` — async: open the window, then reply with its
@@ -25,19 +18,16 @@ extension AgentSpaceRouter {
     /// success, not a conflict, so a driver's next round reattaches.
     static func handleShadowCreate(context: ExtensionMessageContext) {
         let requestId = context.requestId
-        let taskOrigin = origin(for: context)
         MainActor.assumeIsolated {
             guard let obj = json(context.payload),
                   let taskId = obj["taskId"] as? String, !taskId.isEmpty else {
                 ExtensionMessaging.shared.sendError("invalid_payload", requestId: requestId)
                 return
             }
-            if taskOrigin == .cdp {
-                guard let principalId = context.driverPrincipalId, !principalId.isEmpty else {
-                    ExtensionMessaging.shared.sendError(
-                        "missing_driver_principal", requestId: requestId)
-                    return
-                }
+            guard let principalId = context.driverPrincipalId, !principalId.isEmpty else {
+                ExtensionMessaging.shared.sendError(
+                    "missing_driver_principal", requestId: requestId)
+                return
             }
             let requestedProfile =
                 (obj["profileId"] as? String) ?? (obj["profileName"] as? String) ?? ""
@@ -61,47 +51,29 @@ extension AgentSpaceRouter {
                     taskId: taskId,
                     profileId: profileId,
                     incognito: incognito,
-                    origin: taskOrigin,
                     driverPrincipalId: context.driverPrincipalId,
                     completion: { windowId, error in
                         MainActor.assumeIsolated { reply(windowId, error) }
                     })
             }
 
-            // Same profile resolution and per-profile permission as
-            // `agentSpace.create`: a profile the user blocked for agent Spaces
-            // is blocked here too.
             switch AgentSpaceManager.shared.resolveAgentCreateProfile(profileName: requestedProfile) {
             case .allowed(let profile):
                 proceed(profile.profileId)
-            case .blocked:
-                ExtensionMessaging.shared.sendResponse(
-                    failure("profile_not_agent_allowed"), requestId: requestId)
             case .noMatch:
                 ExtensionMessaging.shared.sendResponse(
                     failure("unknown_profile"), requestId: requestId)
-            case .needsTemporary:
-                AgentSpaceManager.shared.ensureAgentFallbackProfile { profileId in
-                    MainActor.assumeIsolated {
-                        guard let profileId else {
-                            ExtensionMessaging.shared.sendResponse(
-                                failure("create_failed"), requestId: requestId)
-                            return
-                        }
-                        proceed(profileId)
-                    }
-                }
+
             }
         }
     }
 
     /// `agentSpace.shadow.list` — the caller's own shadow windows. Scoped to
-    /// the caller's origin and principal, so it doubles as the discovery path
+    /// the caller's principal, so it doubles as the discovery path
     /// for a driver that restarted and lost its taskId → windowId mapping.
     static func handleShadowList(context: ExtensionMessageContext) -> String? {
         MainActor.assumeIsolated {
             let shadows = AgentSpaceManager.shared.shadowWindows(
-                forOrigin: origin(for: context),
                 principalId: context.driverPrincipalId)
             let rows: [[String: Any]] = shadows.map {
                 ["taskId": $0.taskId,
@@ -164,7 +136,7 @@ extension AgentSpaceRouter {
         }
     }
 
-    /// The shadow counterpart of `callerMayControl`: same origin + principal
+    /// The shadow counterpart of `callerMayControl`: same principal
     /// boundary, same keep-alive-as-a-side-effect, over the shadow registry.
     /// Unknown and cross-driver taskIds are indistinguishable to the caller.
     @MainActor
@@ -173,9 +145,7 @@ extension AgentSpaceRouter {
     ) -> Bool {
         guard let shadow = AgentSpaceManager.shared.shadowWindow(forTaskId: taskId),
               AgentTaskAccessPolicy.allows(
-                taskOrigin: shadow.origin,
                 taskPrincipalId: shadow.driverPrincipalId,
-                callerOrigin: origin(for: context),
                 callerPrincipalId: context.driverPrincipalId) else {
             return false
         }

@@ -10,9 +10,11 @@ import Kingfisher
 // MARK: - OmniBox Suggestion Types
 
 enum OmniBoxSuggestionType: String, CaseIterable {
+    case app = "app"
     case url = "url"
     case search = "search"
     case searchSuggest = "searchSuggest"
+    case answer = "answer"
     case bookmark = "bookmark"
     case history = "history"
     case topSite = "topSite"
@@ -24,39 +26,9 @@ enum OmniBoxSuggestionType: String, CaseIterable {
 
 // MARK: - OmniBox Suggestion Model
 
-struct OmniBoxKeywordSearchEngine: Equatable {
-    let keyword: String
-    let name: String
-
-    // Match the keywords seeded by Chromium, never the user-editable display name.
-    var brandColor: NSColor? {
-        switch keyword.lowercased() {
-        case "x.com", "twitter.com", "wikipedia.org": return NSColor(hex: 0x000000)
-        case "spotify.com": return NSColor(hex: 0x1DB954)
-        case "reddit.com": return NSColor(hex: 0xFF4500)
-        case "youtube.com": return NSColor(hex: 0xFF0000)
-        case "github.com": return NSColor(hex: 0x24292F)
-        case "gmail.com": return NSColor(hex: 0xEA4335)
-        case "docs.google.com", "calendar.google.com": return NSColor(hex: 0x4285F4)
-        case "drive.google.com": return NSColor(hex: 0x34A853)
-        default: return nil
-        }
-    }
-
-    var accentColor: ThemedColor {
-        brandColor.map { ThemedColor($0) } ?? .themeColor
-    }
-
-    init?(dictionary: [String: String]) {
-        guard let keyword = dictionary["keyword"], !keyword.isEmpty,
-              let name = dictionary["name"], !name.isEmpty else { return nil }
-        self.keyword = keyword
-        self.name = name
-    }
-}
-
 struct OmniBoxSuggestion: Equatable {
     let type: OmniBoxSuggestionType
+    let matchType: String
     let title: String
     let subtitle: String?
     let url: String
@@ -67,14 +39,12 @@ struct OmniBoxSuggestion: Equatable {
     let canDelete: Bool
     let fillIntoEdit: String
     let swapContentsAndDescription: Bool
-    let hasTabMatch: Bool
+    var hasTabMatch: Bool
     let index: Int
     var inlineCompletionString: String?
     var allowedToBeDefault: Bool = true
-    // Keyword-search metadata from a Chromium autocomplete match.
-    var keywordSearchEngine: OmniBoxKeywordSearchEngine?
-    var keywordSearchQuery: String?
-    var keywordSearchFaviconURL: URL?
+    var answer: SearchAnswer? = nil
+    var app: MistAppID? = nil
 
     init(
         type: OmniBoxSuggestionType,
@@ -89,9 +59,11 @@ struct OmniBoxSuggestion: Equatable {
         stringToFill: String,
         swapContentsAndDescription: Bool,
         canDelete: Bool = false,
-        hasTabMatch: Bool = false
+        hasTabMatch: Bool = false,
+        matchType: String = ""
     ) {
         self.type = type
+        self.matchType = matchType
         self.title = title.replaceChromeSchemeWithPhi()
         self.subtitle = subtitle
         self.url = url
@@ -104,25 +76,6 @@ struct OmniBoxSuggestion: Equatable {
         self.fillIntoEdit = stringToFill.replaceChromeSchemeWithPhi()
         self.swapContentsAndDescription = swapContentsAndDescription
         self.hasTabMatch = hasTabMatch
-    }
-    
-    func defaultIconName() -> String {
-        switch type {
-        case .url:
-            return "globe"
-        case .search, .searchSuggest, .searchEngine:
-            return "magnifyingglass"
-        case .bookmark:
-            return "star.fill"
-        case .history:
-            return "clock"
-        case .topSite:
-            return "star"
-        case .extension:
-            return "puzzlepiece"
-        default:
-            return "globe"
-        }
     }
     
     init(chromiumDic: [String: Any]) {
@@ -156,47 +109,27 @@ struct OmniBoxSuggestion: Equatable {
         default:
             omniTpye = .url
         }
-        let engine = type == "search-other-engine"
-            ? OmniBoxKeywordSearchEngine(dictionary: [
-                "keyword": chromiumDic["keywordSearchKeyword"] as? String ?? "",
-                "name": chromiumDic["keywordSearchName"] as? String ?? ""
-            ]) ?? (destinationUrl.isEmpty ? nil : OmniBoxKeywordSearchEngine(dictionary: [
-                "keyword": fillString.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? "",
-                "name": description
-            ])) : nil
-        let selectionEngine = destinationUrl.isEmpty ? engine : nil
-        let title = selectionEngine.map {
-            String(format: NSLocalizedString("addressBar.keywordSearch.suggestionTitle", value: "Search %@", comment: "Address bar - Suggestion that selects the named search engine"), $0.name)
-        } ?? contents
         self.init(type: omniTpye,
-                  title: title,
-                  subtitle: selectionEngine?.keyword ?? description,
+                  title: contents,
+                  subtitle: description,
                   url: destinationUrl,
-                  iconName: omniTpye == .searchEngine ? "magnifyingglass" : nil,
+                  iconName: nil,
                   iconURL: iconUrl,
                   index: index ?? -1,
                   relevanceScore: relevance,
                   isStarred: omniTpye == .bookmark,
                   stringToFill: fillString,
                   swapContentsAndDescription: swap,
-                  canDelete: selectionEngine == nil && deletable,
-                  hasTabMatch: tabMatch)
+                  canDelete: deletable,
+                  hasTabMatch: tabMatch,
+                  matchType: type)
         self.inlineCompletionString = inlineCompletion
-        self.allowedToBeDefault = selectionEngine == nil && allowdToBeDefault
-        self.keywordSearchEngine = engine
-        self.keywordSearchQuery = engine != nil && !destinationUrl.isEmpty ? contents : nil
-        if omniTpye == .searchEngine,
-           let source = chromiumDic["keywordSearchFaviconURL"] as? String,
-           let faviconURL = URL(string: source),
-           let host = faviconURL.host, !host.isEmpty,
-           faviconURL.scheme == "https" || faviconURL.scheme == "http" {
-            self.keywordSearchFaviconURL = faviconURL
-        }
+        self.allowedToBeDefault = allowdToBeDefault
         
     }
     
     var isEmpty: Bool { title.isEmpty && (subtitle?.isEmpty ?? true) }
-    var isSupportedType: Bool { type != .pedal /*&& type != .searchEngine*/ }
+    var isSupportedType: Bool { type != .pedal && type != .searchEngine }
 
     var faviconPageURL: URL? {
         type == .history ? URL(string: url) : nil
@@ -329,11 +262,6 @@ class OmniBoxState: ObservableObject {
             .store(in: &cancellables)
     }
     
-    func selectSuggestion(at index: Int) {
-        guard index >= 0 && index < suggestions.count else { return }
-        selectedIndex = index
-    }
-    
     func selectNextSuggestion() {
         if selectedIndex < suggestions.count - 1 {
             selectedIndex += 1
@@ -371,22 +299,9 @@ class OmniBoxState: ObservableObject {
 // MARK: - OmniBox Configuration
 
 struct OmniBoxConfiguration {
-    let maxSuggestions: Int
-    let debounceInterval: DispatchQueue.SchedulerTimeType.Stride
     let minInputLength: Int
-    let showBookmarks: Bool
-    let showHistory: Bool
-    let showTopSites: Bool
-    let placeholder: String
-    
     static let `default` = OmniBoxConfiguration(
-        maxSuggestions: 8,
-        debounceInterval: .seconds(0.1),
-        minInputLength: 1,
-        showBookmarks: true,
-        showHistory: true,
-        showTopSites: true,
-        placeholder: NSLocalizedString("addressBar.configuration.defaultPlaceholder", value: "Search or Enter URL", comment: "Address bar - Default placeholder supplied by its configuration")
+        minInputLength: 1
     )
 }
 
@@ -400,15 +315,12 @@ struct OmniSuggestionIconProvier {
     @MainActor
     static func updateImage(for iconImageView: NSImageView, with suggestion: OmniBoxSuggestion, defaultImage: NSImage? = nil) {
         iconImageView.kf.cancelDownloadTask()
-        if suggestion.type == .searchEngine {
-            iconImageView.contentTintColor = nil
-            iconImageView.kf.setImage(
-                with: suggestion.keywordSearchFaviconURL,
-                placeholder: defaultIcon(for: .searchEngine),
-                options: [.transition(.fade(0.2)), .cacheOriginalImage]
-            )
+        if let id = suggestion.app, let icon = MistApps.app(id)?.icon(nil) {
+            let image = NSImage(named: icon.asset)?.copy() as? NSImage
+            image?.isTemplate = icon.isTemplate
+            iconImageView.imageScaling = .scaleProportionallyDown
+            iconImageView.image = image
         } else if let url = suggestion.faviconPageURL {
-            iconImageView.contentTintColor = nil
             iconImageView.setFavicon(for: url)
         } else if let iconName = suggestion.iconName {
             iconImageView.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
@@ -433,7 +345,7 @@ struct OmniSuggestionIconProvier {
             switch type {
             case .url:
                 return "globe"
-            case .search, .searchSuggest, .searchEngine:
+            case .search, .searchSuggest:
                 return "magnifyingglass"
             case .bookmark:
                 return "star.fill"
@@ -452,23 +364,6 @@ struct OmniSuggestionIconProvier {
 }
 
 extension String {
-    var hasSchemePrefix: Bool {
-        let lowercased = lowercased()
-        return lowercased.hasPrefix("http://") ||
-        lowercased.hasPrefix("https://") ||
-        lowercased.hasPrefix("ftp://") ||
-        lowercased.hasPrefix("file://") ||
-        lowercased.hasPrefix("chrome://") ||
-        lowercased.hasPrefix("phi://")
-    }
-    
-    func urlScheme() -> String? {
-        guard let range = self.range(of: "://") else {
-            return nil
-        }
-        return String(self[..<range.lowerBound])
-    }
-    
     func trimmingScheme() -> String {
         guard let range = self.range(of: "://") else {
             return self

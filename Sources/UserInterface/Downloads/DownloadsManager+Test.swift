@@ -9,15 +9,11 @@
 import Foundation
 import Combine
 
-#if DEBUG
-
 // MARK: - Test Downloads Manager
 
 /// A mock DownloadsManager for testing and previewing the Downloads UI
 class TestDownloadsManager: DownloadsManager {
     private var progressTimers: [String: Timer] = [:]
-    private var cancellables = Set<AnyCancellable>()
-    
     override init(browserState: BrowserState? = nil) {
         super.init(browserState: nil)
         loadMockData()
@@ -439,5 +435,3 @@ struct DownloadsTestView_Previews: PreviewProvider {
             .previewDisplayName("Interactive Test View")
     }
 }
-
-#endif

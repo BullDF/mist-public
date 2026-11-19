@@ -38,7 +38,6 @@ struct TimeMachineRestoreCoordinator {
     typealias PackageDownloader = (URL, String, URL) async throws -> URL
     typealias ProcessRunner = (URL, [String]) throws -> Void
     typealias ProgressHandler = (TimeMachineRestorePreparationProgress) -> Void
-    typealias RestorePreparationTraceReporter = (TimeMachineRestorePreparationTrace) -> Void
 
     static let packageFilename = "package.zip"
     static let extractedPackageDirectoryName = "Package"
@@ -60,7 +59,6 @@ struct TimeMachineRestoreCoordinator {
     private let fileCloner: TimeMachineFileCloner
     private let journalStore: TimeMachineRestoreJournalStore
     private let progressHandler: ProgressHandler?
-    private let restorePreparationTraceReporter: RestorePreparationTraceReporter
     private let fileManager: FileManager
 
     init(
@@ -89,7 +87,6 @@ struct TimeMachineRestoreCoordinator {
         fileCloner: TimeMachineFileCloner = TimeMachineFileCloner(),
         journalStore: TimeMachineRestoreJournalStore? = nil,
         progressHandler: ProgressHandler? = nil,
-        restorePreparationTraceReporter: @escaping RestorePreparationTraceReporter = SentryService.captureTimeMachineRestorePreparationTrace,
         fileManager: FileManager = .default
     ) {
         self.paths = paths
@@ -113,7 +110,6 @@ struct TimeMachineRestoreCoordinator {
         self.fileCloner = fileCloner
         self.journalStore = journalStore ?? TimeMachineRestoreJournalStore(paths: paths)
         self.progressHandler = progressHandler
-        self.restorePreparationTraceReporter = restorePreparationTraceReporter
         self.fileManager = fileManager
     }
 
@@ -126,10 +122,8 @@ struct TimeMachineRestoreCoordinator {
         let extractedPackageURL = operationURL.appendingPathComponent(Self.extractedPackageDirectoryName, isDirectory: true)
         let planURL = operationURL.appendingPathComponent(Self.installPlanFilename, isDirectory: false)
         var wroteJournal = false
-        var lastStage = TimeMachineRestorePreparationStage.preparing
 
         func report(_ stage: TimeMachineRestorePreparationStage, fractionCompleted: Double?) {
-            lastStage = stage
             reportProgress(stage: stage, fractionCompleted: fractionCompleted)
         }
 
@@ -188,29 +182,9 @@ struct TimeMachineRestoreCoordinator {
             try helperLauncher(helperURL, Self.helperArguments(planURL: planURL))
             AppLogInfo("[TimeMachine] Installer helper launched for operation \(operationID.uuidString).")
             report(.readyToQuit, fractionCompleted: 1)
-            reportRestorePreparationTrace(
-                result: .succeeded,
-                operationID: operationID,
-                backup: backup,
-                duration: elapsedDuration(since: startedAt),
-                lastStage: lastStage,
-                packageURL: packageURL,
-                operationURL: operationURL,
-                error: nil
-            )
             return plan
         } catch {
             let duration = elapsedDuration(since: startedAt)
-            reportRestorePreparationTrace(
-                result: .failed,
-                operationID: operationID,
-                backup: backup,
-                duration: duration,
-                lastStage: lastStage,
-                packageURL: packageURL,
-                operationURL: operationURL,
-                error: error
-            )
             AppLogError(
                 "[TimeMachine] Failed to prepare restore operation \(operationID.uuidString) " +
                 "after \(formatDuration(duration)): \(error.localizedDescription)"
@@ -420,37 +394,6 @@ struct TimeMachineRestoreCoordinator {
             TimeMachineRestorePreparationProgress(
                 stage: stage,
                 fractionCompleted: fractionCompleted
-            )
-        )
-    }
-
-    private func reportRestorePreparationTrace(
-        result: TimeMachineRestorePreparationTrace.Result,
-        operationID: UUID,
-        backup: TimeMachineBackupRecord,
-        duration: TimeInterval,
-        lastStage: TimeMachineRestorePreparationStage,
-        packageURL: URL,
-        operationURL: URL,
-        error: Error?
-    ) {
-        let packageSizeBytes = TimeMachineFileMetrics.sizeBytes(at: packageURL, fileManager: fileManager)
-        let operationSizeBytes = TimeMachineFileMetrics.sizeBytes(at: operationURL, fileManager: fileManager)
-        restorePreparationTraceReporter(
-            TimeMachineRestorePreparationTrace(
-                result: result,
-                operationID: operationID,
-                backupID: backup.id,
-                bundleIdentifier: paths.bundleIdentifier,
-                rollbackVersion: backup.rollbackVersion,
-                rollbackBuild: backup.rollbackBuild,
-                includeChromiumData: backup.includeChromiumData,
-                duration: duration,
-                lastStage: lastStage,
-                packageSizeBytes: packageSizeBytes,
-                operationSizeBytes: operationSizeBytes,
-                errorDescription: error?.localizedDescription,
-                errorType: error.map { String(describing: type(of: $0)) }
             )
         )
     }

@@ -94,9 +94,6 @@ enum PhiPreferences: String {
 extension PhiPreferences {
     enum GeneralSettings: String, CaseIterable {
         case openNewTabPageOnCmdT
-        case openExternalLinksInKiosk
-        case openKioskOnCommandOptionClick
-        case openKioskWithGlobalShortcut
         case navigationAtTop  // Whether to show navigation and address bar in content header (Layout 2)
         case traditionalLayout  // Traditional layout, show tabs and (maybe) bookmark bar at  top (Layout 3)
         case alwaysShowBookmarkBar // In traditional layout, always show bookmark bar below address bar
@@ -106,7 +103,6 @@ extension PhiPreferences {
         case sidebarMediaPlayerEnabled // Show controls for background page media
         case showOpenTabIndicators // Show dots on inactive open pinned tabs and bookmarks
         case showUnloadedTabIndicators // Show dashed outlines and smaller icons for unloaded or discarded tabs
-        case shortHighlightLinksEnabled // Use the sharing service for Copy Link to Highlight
         case spacesFeatureEnabled // Master gate for Spaces + profile management UI; defaults on, no user-facing toggle
         case suppressCloseIncognitoSpaceWarning // "Do not ask again" on the close-Incognito-Space confirmation
         case peekViewEnabled // Master gate for Peek View: the context-menu item and the automatic cross-site diversion
@@ -116,12 +112,6 @@ extension PhiPreferences {
             switch self {
             case .openNewTabPageOnCmdT:
                 return true
-            case .openExternalLinksInKiosk:
-                return false
-            case .openKioskOnCommandOptionClick:
-                return true
-            case .openKioskWithGlobalShortcut:
-                return false
             case .navigationAtTop:
                 return true
             case .traditionalLayout:
@@ -139,8 +129,6 @@ extension PhiPreferences {
             case .showOpenTabIndicators:
                 return false
             case .showUnloadedTabIndicators:
-                return true
-            case .shortHighlightLinksEnabled:
                 return true
             case .spacesFeatureEnabled:
                 return true
@@ -244,191 +232,14 @@ extension PhiPreferences {
         /// Balanced) layouts.
         static let verticalSwitchSpaceAnimationDuration: TimeInterval = 0.1
 
-        /// Which window's traffic-light buttons the horizontal-layout
-        /// cross-Space slide suppresses. `source` (the ship default) fades
-        /// the leaving window's buttons before its snapshot is captured so
-        /// the sliding snapshot carries none; `target` keeps them in the
-        /// snapshot and instead hides the destination window's live buttons
-        /// until the slide finishes; `both` combines the two.
-        enum SwitchSpaceTrafficLightHiding: String, CaseIterable {
-            case source
-            case target
-            case both
-
-            var hidesSource: Bool { self != .target }
-            var hidesTarget: Bool { self != .source }
-        }
-
-        /// The horizontal cross-Space slide always hides the *source* window's
-        /// traffic lights before snapshotting it, so the sliding snapshot
-        /// carries none.
-        static func loadSwitchSpaceTrafficLightHiding() -> SwitchSpaceTrafficLightHiding {
-            .source
-        }
     }
     
-    enum AISettings: String, CaseIterable {
-        case phiAIEnabled, enableConnectors, enableConnectorContext , enableChatWithTabs, enableBrowserMemories, launchSentinelOnLogin, enableProactiveSuggestionsOnNTP
-        #if DEBUG || NIGHTLY_BUILD
-        case useLiveModeInSidecar
-        #endif
-
-        var defaultValue: Bool {
-            switch self {
-            case .phiAIEnabled:
-                return PhiBuildCapabilities.supportsAI
-            case .enableConnectors:
-                return true
-            case .enableConnectorContext:
-                return true
-            case .enableChatWithTabs:
-                return true
-            case .enableBrowserMemories:
-                return true
-            case .launchSentinelOnLogin:
-                return true
-            case .enableProactiveSuggestionsOnNTP:
-                return true
-            #if DEBUG || NIGHTLY_BUILD
-            case .useLiveModeInSidecar:
-                return true
-            #endif
-            }
-        }
-
-        func loadValue() -> Bool {
-            if self == .phiAIEnabled && !PhiBuildCapabilities.supportsAI {
-                return false
-            }
-            return UserDefaults.standard.bool(forKey: rawValue, default: defaultValue)
-        }
-
-        static func buildConfig() -> String {
-            var result = [String: Any]()
-            allCases
-                .filter { $0 != .enableBrowserMemories}
-                .forEach {
-                result[$0.rawValue] = $0.loadValue()
-            }
-            let data = try? JSONSerialization.data(withJSONObject: result, options: [])
-            return String(data: data ?? Data(), encoding: .utf8) ?? "{}"
-        }
-    }
     
     // MARK: - Agent Spaces
 
     enum AgentSpaces {
-        private static let autoCloseKey = "PhiAgentSpaceAutoCloseOnSuccess"
-        private static let developerModeKey = "PhiDeveloperModeEnabled"
         private static let cdpAgentAccessKey = "PhiCDPAgentAccessEnabled"
-        private static let rememberedAgentGrantsKey = "PhiCDPRememberedAgentGrants"
-        private static let allAgentsGrantKey = "PhiCDPAllAgentsGranted"
-        private static let agentIdentityLabelsKey = "PhiCDPAgentIdentityLabels"
-        private static let agentDenialsKey = "PhiCDPAgentDenials"
         private static let autoViewKey = "PhiAgentSpaceAutoView"
-        private static let userSpaceOperationsKey = "PhiAgentUserSpaceOperationsEnabled"
-        private static let disallowedAgentProfilesKey = "PhiAgentDisallowedProfileIds"
-        private static let agentFallbackProfileKey = "PhiAgentFallbackProfileId"
-        private static let unstyledOperatingPageKey = "PhiAgentUnstyledOperatingPage"
-
-        /// Master gate for the developer surfaces — the Developer settings tab
-        /// and the features configured there. Driven by the "Developer mode"
-        /// toggle in Settings ▸ General. Turning it OFF is a kill-switch, not
-        /// just UI hiding: agent CDP access and the agent password manager are
-        /// disabled with it, AND every standing agent permission is revoked —
-        /// the allowed-agent list and all credential approvals, persisted ones
-        /// included (see `AppController.setDeveloperModeEnabled`). Turning it
-        /// back ON re-enables nothing and restores no permission: each feature
-        /// is re-enabled individually in the Developer tab, and every agent
-        /// asks for consent again from scratch. Defaults off,
-        /// with a backfill: while the toggle was never touched, a user who
-        /// already enabled agent CDP access or the agent password manager
-        /// (pre-default-off users, or Bitwarden picked during onboarding) has
-        /// opted into the developer surfaces, so `true` is adopted and
-        /// persisted on first read — the features they enabled must not
-        /// vanish behind a hidden tab.
-        static var developerModeEnabled: Bool {
-            get {
-                guard UserDefaults.standard.object(forKey: developerModeKey) == nil else {
-                    return UserDefaults.standard.bool(forKey: developerModeKey)
-                }
-                let alreadyOptedIn = cdpAgentAccessEnabled
-                    || PasswordManagerSettings.bitwardenEnabled.loadValue()
-                guard alreadyOptedIn else { return false }
-                UserDefaults.standard.set(true, forKey: developerModeKey)
-                return true
-            }
-            set { UserDefaults.standard.set(newValue, forKey: developerModeKey) }
-        }
-
-        /// Settings ▸ Developer ▸ Agent control: whether agent tooling may
-        /// operate the user's own browsing data and windows over the
-        /// management surface — Spaces, profiles, URL rules, pinned tabs,
-        /// bookmarks, and the tab layout of user windows. When off, agents can
-        /// only work inside their own agent Spaces. Read live by the message
-        /// router, so changes apply without a relaunch. Default on.
-        static var userSpaceOperationsEnabled: Bool {
-            get { UserDefaults.standard.bool(forKey: userSpaceOperationsKey, default: true) }
-            set { UserDefaults.standard.set(newValue, forKey: userSpaceOperationsKey) }
-        }
-
-        /// Settings ▸ Developer ▸ Agent control: profiles the agent may NOT
-        /// create agent Spaces in, by profileId. Stored as a blocklist so the
-        /// default (empty) preserves "any profile allowed"; the UI presents it
-        /// as a per-profile "allow" toggle. Keyed by profileId (stable across
-        /// renames). Enforced at `agentSpace.create`.
-        static var disallowedAgentProfileIds: Set<String> {
-            get { Set(UserDefaults.standard.stringArray(forKey: disallowedAgentProfilesKey) ?? []) }
-            set {
-                if newValue.isEmpty {
-                    UserDefaults.standard.removeObject(forKey: disallowedAgentProfilesKey)
-                } else {
-                    UserDefaults.standard.set(Array(newValue), forKey: disallowedAgentProfilesKey)
-                }
-            }
-        }
-
-        /// Whether the agent may create agent Spaces bound to `profileId`.
-        static func isProfileAgentSpaceAllowed(_ profileId: String) -> Bool {
-            !disallowedAgentProfileIds.contains(profileId)
-        }
-
-        /// Reserved display name of the agent's fallback profile. Deliberately
-        /// one a user would not normally pick, so identifying the profile by
-        /// name never hides a user's own profile.
-        static let agentFallbackProfileName = "Phi Agent (reserved)"
-
-        /// Profile the app auto-created as the agent's fallback (see
-        /// `AgentSpaceManager.ensureAgentFallbackProfile`), recorded so it can
-        /// still be identified after a rename — that profile belongs to the
-        /// agent. nil when no fallback has been created.
-        static var agentFallbackProfileId: String? {
-            get { UserDefaults.standard.string(forKey: agentFallbackProfileKey) }
-            set {
-                if let newValue, !newValue.isEmpty {
-                    UserDefaults.standard.set(newValue, forKey: agentFallbackProfileKey)
-                } else {
-                    UserDefaults.standard.removeObject(forKey: agentFallbackProfileKey)
-                }
-            }
-        }
-
-        /// THE single source of truth for "is this the agent's fallback
-        /// profile" — by reserved name or recorded id. Everything that lists
-        /// profiles for the user to choose from filters on this so the agent
-        /// profile never appears in a user picker.
-        static func isAgentFallbackProfile(profileId: String, displayName: String) -> Bool {
-            displayName == agentFallbackProfileName
-                || (!profileId.isEmpty && profileId == agentFallbackProfileId)
-        }
-
-        /// When `true`, a successfully completed agent Space that the user never
-        /// visited is closed automatically instead of lingering with a badge.
-        /// Default `false`.
-        static var autoCloseOnSuccess: Bool {
-            get { UserDefaults.standard.bool(forKey: autoCloseKey) }
-            set { UserDefaults.standard.set(newValue, forKey: autoCloseKey) }
-        }
 
         /// View ▸ Agent Autoview: when `true`, the focused window follows the
         /// operating agent — a running agent Space is surfaced (watch mode)
@@ -440,105 +251,10 @@ extension PhiPreferences {
             set { UserDefaults.standard.set(newValue, forKey: autoViewKey) }
         }
 
-        /// Settings ▸ Developer ▸ Agent control: shows a page the agent is
-        /// operating exactly as it renders, for web developers inspecting it.
-        /// While on, the operating mask stays the input barrier but draws
-        /// nothing, the in-page recolor (`AgentPageTheme`) is not injected,
-        /// and the control pill starts minimised. Read live; a change posts
-        /// `.agentUnstyledOperatingPageDidChange`. Default `false`.
-        static var unstyledOperatingPageEnabled: Bool {
-            get { UserDefaults.standard.bool(forKey: unstyledOperatingPageKey) }
-            set {
-                UserDefaults.standard.set(newValue, forKey: unstyledOperatingPageKey)
-                NotificationCenter.default.post(
-                    name: .agentUnstyledOperatingPageDidChange, object: nil)
-            }
-        }
-
-        /// Settings ▸ Developer ▸ Remote debugging: master switch for agent CDP
-        /// access over the app-owned Unix-domain socket (see
-        /// `AgentCDPListener`). Read live — flipping it off severs every live
-        /// agent connection immediately, no relaunch, and shows or hides the
-        /// View ▸ Agent Autoview / Agent Transcript menu items. Default off:
-        /// while on, an approved agent process can drive the browser. The
-        /// socket listens either way, so an agent that connects while this is
-        /// off reaches the consent prompt, which offers to turn it on — that
-        /// prompt is the only thing outside Settings that may set it.
+        /// External agent access over the private socket; disabling disconnects live agents.
         static var cdpAgentAccessEnabled: Bool {
             get { UserDefaults.standard.bool(forKey: cdpAgentAccessKey) }
             set { UserDefaults.standard.set(newValue, forKey: cdpAgentAccessKey) }
-        }
-
-        /// Agent code-signing identities the user chose to remember (Allow &
-        /// Remember in the CDP consent prompt), so a returning agent connects
-        /// without re-prompting. Each entry is an `AgentIdentity.key`
-        /// ("teamId:signingId", or "unsigned:path" for an unsigned peer).
-        /// Empty by default; removing an entry here is how the Settings list
-        /// revokes a remembered agent.
-        static var rememberedAgentGrants: Set<String> {
-            get { Set(UserDefaults.standard.stringArray(forKey: rememberedAgentGrantsKey) ?? []) }
-            set {
-                if newValue.isEmpty {
-                    UserDefaults.standard.removeObject(forKey: rememberedAgentGrantsKey)
-                } else {
-                    UserDefaults.standard.set(Array(newValue), forKey: rememberedAgentGrantsKey)
-                }
-            }
-        }
-
-        /// The user-facing name each agent key was last seen with, keyed by
-        /// `AgentIdentity.key` ("Grok Bot" for DCNK4UB866:com.anysphere.sand).
-        /// A grant or denial remembers only the key, which for a modern app
-        /// build is an opaque signing id; this is how the Settings lists name
-        /// it after relaunch. See `AgentIdentityLabels`.
-        static var agentIdentityLabels: [String: String] {
-            get { UserDefaults.standard.dictionary(forKey: agentIdentityLabelsKey) as? [String: String] ?? [:] }
-            set {
-                if newValue.isEmpty {
-                    UserDefaults.standard.removeObject(forKey: agentIdentityLabelsKey)
-                } else {
-                    UserDefaults.standard.set(newValue, forKey: agentIdentityLabelsKey)
-                }
-            }
-        }
-
-        /// Blanket grant from the consent prompt's "Apply to all agents" allow
-        /// switch, taken with "Always Allow": every agent connects without a
-        /// prompt, including ones never seen before. The widest permission the
-        /// app can hold, so it is written only from that prompt, never on by
-        /// default, and outranked by every standing refusal (see
-        /// `AgentCDPListener.evaluate`). "Allow Once" widened the same way is
-        /// session-scoped and lives in the listener instead, dropped whenever
-        /// live access is revoked. Turning it off is the "All agents" row in
-        /// the Settings "Allowed agents" list, or the developer-mode
-        /// kill-switch, which forgets it with everything else.
-        static var allAgentsGranted: Bool {
-            get { UserDefaults.standard.bool(forKey: allAgentsGrantKey) }
-            set { UserDefaults.standard.set(newValue, forKey: allAgentsGrantKey) }
-        }
-
-        /// Standing refusals from the consent prompt's deny options — "Don't
-        /// ask for 30 min" and "Never ask again", each optionally widened to
-        /// all agents. A covered peer is turned away without a prompt (see
-        /// `AgentCDPListener.evaluate`). Timed entries are persisted, not
-        /// session-scoped: see `AgentDenial` for why a denial must not be
-        /// forgotten at relaunch the way a grant is. Empty by default; the
-        /// Settings "Blocked agents" list and re-enabling the CDP switch are
-        /// the two ways back.
-        static var agentDenials: [AgentDenial] {
-            get {
-                guard let data = UserDefaults.standard.data(forKey: agentDenialsKey),
-                      let decoded = try? JSONDecoder().decode([AgentDenial].self, from: data)
-                else { return [] }
-                return decoded
-            }
-            set {
-                guard !newValue.isEmpty, let data = try? JSONEncoder().encode(newValue) else {
-                    UserDefaults.standard.removeObject(forKey: agentDenialsKey)
-                    return
-                }
-                UserDefaults.standard.set(data, forKey: agentDenialsKey)
-            }
         }
 
     }
@@ -616,22 +332,6 @@ extension PhiPreferences {
             set { UserDefaults.standard.set(newValue, forKey: Self.highlightsLinksKey) }
         }
 
-        /// Writes every axis at once.
-        ///
-        /// The reader changes one at a time, but a reset changes all of them,
-        /// and one entry point is what stops a new axis being added to the
-        /// style and then quietly not surviving a relaunch.
-        static func persist(_ style: ReaderStyle) {
-            fontSize = style.fontSize
-            width = style.width
-            theme = style.theme
-            typeface = style.typeface
-            lineHeight = style.lineHeight
-            letterSpacing = style.letterSpacing
-            showsImages = style.showsImages
-            highlightsLinks = style.highlightsLinks
-        }
-
         /// A stored value that no longer names a case — an older or newer
         /// build wrote it — falls back to the default rather than failing.
         private static func read<T: RawRepresentable>(_ key: String) -> T?
@@ -642,83 +342,6 @@ extension PhiPreferences {
 
         private static func readFlag(_ key: String) -> Bool? {
             UserDefaults.standard.object(forKey: key) as? Bool
-        }
-    }
-
-    // MARK: - Folio
-
-    enum SaveForLater {
-        private static let globalFolderKey = "PhiSaveForLaterFolder"
-        private static let profileFolderOverridesKey = "PhiSaveForLaterProfileFolders"
-        private static let autoSaveOnSiteActionsKey = "PhiSaveForLaterAutoSaveOnSiteActions"
-
-        /// The user's opt-in for site-action auto-save (liking/bookmarking on
-        /// supported sites triggers a save). Default off: auto-writing files
-        /// to disk on a like is delightful when asked for and alarming when
-        /// not. Effective only while the `save-for-later-auto-trigger`
-        /// feature flag is on — see `SaveForLaterService.autoTriggerArmed`.
-        static var autoSaveOnSiteActions: Bool {
-            get { UserDefaults.standard.bool(forKey: autoSaveOnSiteActionsKey) }
-            set { UserDefaults.standard.set(newValue, forKey: autoSaveOnSiteActionsKey) }
-        }
-
-        /// The out-of-the-box destination. Created on first save, not at
-        /// launch, so an untouched feature leaves no folder behind.
-        static var defaultFolderPath: String {
-            let documents = FileManager.default.urls(
-                for: .documentDirectory, in: .userDomainMask).first
-                ?? URL(fileURLWithPath: NSHomeDirectory())
-                    .appendingPathComponent("Documents", isDirectory: true)
-            return documents.appendingPathComponent("PhiFolio", isDirectory: true).path
-        }
-
-        /// The app-wide destination folder. The app is not sandboxed, so a
-        /// plain path is enough. Empty storage reads as the default.
-        static var globalFolderPath: String {
-            get {
-                let stored = UserDefaults.standard.string(forKey: globalFolderKey) ?? ""
-                return stored.isEmpty ? defaultFolderPath : stored
-            }
-            set {
-                if newValue.isEmpty || newValue == defaultFolderPath {
-                    UserDefaults.standard.removeObject(forKey: globalFolderKey)
-                } else {
-                    UserDefaults.standard.set(newValue, forKey: globalFolderKey)
-                }
-            }
-        }
-
-        /// Per-profile destination overrides, keyed by profileId. A profile
-        /// without an entry follows the global folder. Stored Swift-side:
-        /// unlike the download location this is a client concept, not a
-        /// Chromium pref.
-        static func folderOverride(forProfile profileId: String) -> String? {
-            guard !profileId.isEmpty else { return nil }
-            let overrides = UserDefaults.standard
-                .dictionary(forKey: profileFolderOverridesKey) as? [String: String]
-            guard let path = overrides?[profileId], !path.isEmpty else { return nil }
-            return path
-        }
-
-        static func setFolderOverride(_ path: String?, forProfile profileId: String) {
-            guard !profileId.isEmpty else { return }
-            var overrides = (UserDefaults.standard
-                .dictionary(forKey: profileFolderOverridesKey) as? [String: String]) ?? [:]
-            if let path, !path.isEmpty {
-                overrides[profileId] = path
-            } else {
-                overrides.removeValue(forKey: profileId)
-            }
-            if overrides.isEmpty {
-                UserDefaults.standard.removeObject(forKey: profileFolderOverridesKey)
-            } else {
-                UserDefaults.standard.set(overrides, forKey: profileFolderOverridesKey)
-            }
-        }
-
-        /// The folder a save from this profile writes into.
-        static func effectiveFolderPath(forProfile profileId: String) -> String {
-            folderOverride(forProfile: profileId) ?? globalFolderPath
         }
     }
 
@@ -749,34 +372,16 @@ extension PhiPreferences {
             }
         }
         
-        /// Registers default preference values.
-        static func registerDefaults() {
-            var defaults = [String: Any]()
-            for setting in allCases {
-                defaults[setting.rawValue] = setting.defaultValue
-            }
-            UserDefaults.standard.register(defaults: defaults)
-        }
     }
 
     // MARK: - Password Manager Settings
 
-    /// Records the user's OOBE password-manager choice so newly created
-    /// profiles can mirror it. `true` when the user picked iCloud Passwords
-    /// during onboarding; new profiles then auto-install the iCloud extension.
     enum PasswordManagerSettings: String, CaseIterable {
         case autoInstallICloudPasswords
-        /// `true` when the user enabled Bitwarden (onboarding or the Phi & AI
-        /// settings card). Drives the master toggle and, like
-        /// `autoInstallICloudPasswords`, is the OOBE choice that newly created
-        /// profiles mirror to auto-install the Bitwarden extension.
-        case bitwardenEnabled
 
         var defaultValue: Bool {
             switch self {
             case .autoInstallICloudPasswords:
-                return false
-            case .bitwardenEnabled:
                 return false
             }
         }
@@ -795,31 +400,4 @@ extension PhiPreferences {
             UserDefaults.standard.set(value, forKey: rawValue)
         }
     }
-}
-
-/// Applies the settings boundary required by Guest Mode. Kept with the
-/// preference definitions so launch and login lifecycle code do not depend on
-/// either settings view.
-enum GuestModePreferences {
-    static let aiEnabledKey = PhiPreferences.AISettings.phiAIEnabled.rawValue
-
-    @discardableResult
-    static func disableAI(
-        defaults: UserDefaults = .standard
-    ) -> Bool {
-        let didChange = defaults.bool(
-            forKey: aiEnabledKey,
-            default: PhiPreferences.AISettings.phiAIEnabled.defaultValue
-        )
-
-        defaults.set(false, forKey: aiEnabledKey)
-        return didChange
-    }
-}
-
-extension Notification.Name {
-    /// Posted when `PhiPreferences.AgentSpaces.unstyledOperatingPageEnabled`
-    /// flips, so masks and pills already on screen follow it.
-    static let agentUnstyledOperatingPageDidChange =
-        Notification.Name("agentUnstyledOperatingPageDidChange")
 }

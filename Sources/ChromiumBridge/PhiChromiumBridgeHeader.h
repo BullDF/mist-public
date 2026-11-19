@@ -362,11 +362,6 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                tabId:(int64_t)tabId
             tokenHex:(NSString *)tokenHex;
 
-// bookmark service
-- (void)bookmarksLoaded:(int64_t)windowId;
-- (void)bookmarksChanged:(NSArray <id<BookmarkWrapper>> *)newNodes windowId:(int64_t)windowId;
-- (void)bookmarkInfoChangedWithWindowId:(int64_t)windowId bookmarkId:(int64_t)id title:(NSString * _Nullable)title url:(NSString * _Nullable)url facicon:(NSString * _Nullable)favicon_url;
-
 // extension service
 - (void)extensionsLoaded:(NSArray<NSDictionary *> *)extensions;
 - (void)extensionTriggered:(NSString *)extensionId;
@@ -426,6 +421,13 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// Whether a backup import is in progress; preinstalled apps reads it to defer
 /// extension preinstall. Called synchronously — must not block.
 - (BOOL)isBackupImporting;
+/// Whether a window whose tab strip is (or starts out) empty should be
+/// refilled with a new tab. Mirrors the "New tab behavior" setting (Mac is the
+/// source of truth): YES for New Tab Page — the last-tab-close refill tab and
+/// the new-window seed tab are created as before; NO for Omnibox — the window
+/// enters placeholder mode instead and the Mac client opens the omnibox over
+/// it. Called synchronously on the UI thread — must not block.
+- (BOOL)shouldAutoCreateTabInEmptyWindow;
 /// Whether newly created profiles should auto-install the iCloud Passwords
 /// extension (the OOBE password-manager choice; the Mac preference is the
 /// source of truth). Read by the Chromium-side preinstall flow. Called
@@ -492,25 +494,29 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 // splitId is a SplitTabId serialized via base::Token::ToString()
 // ==========================================================================
 
-/// Called when a split is created. primaryTabId is at position 0, secondaryTabId at position 1.
+/// Called when a split is created. `tabIds` holds the panes' tab ids in slot
+/// order (two to four; slot 0 is left in a vertical split, top in a
+/// horizontal one) and `fractions` each pane's share of the split axis in the
+/// same order, summing to 1.
 - (void)splitCreated:(NSString *)splitId
-        primaryTabId:(int64_t)primaryTabId
-      secondaryTabId:(int64_t)secondaryTabId
+              tabIds:(NSArray<NSNumber *> *)tabIds
               layout:(NSString *)layout   // @"vertical" | @"horizontal"
-               ratio:(double)ratio        // 0.0–1.0, proportion of primary pane
+           fractions:(NSArray<NSNumber *> *)fractions
             windowId:(int64_t)windowId;
 
-/// Called when a split's layout or ratio changes.
+/// Called when a split's layout or pane shares change.
 - (void)splitVisualsChanged:(NSString *)splitId
                      layout:(NSString *)layout
-                      ratio:(double)ratio
+                  fractions:(NSArray<NSNumber *> *)fractions
                    windowId:(int64_t)windowId;
 
-/// Called when one or both sides of a split change (e.g. after reverseTabsInSplit).
+/// Called when the split's panes change: a reorder (reverseTabsInSplit,
+/// moveTabInSplit) or a pane joining or leaving a split that stays up
+/// (addTabToSplit, removeTabFromSplit, closing one pane of three or four).
+/// `tabIds` is the full new membership in slot order.
 - (void)splitContentsChanged:(NSString *)splitId
-               primaryTabId:(int64_t)primaryTabId
-             secondaryTabId:(int64_t)secondaryTabId
-                   windowId:(int64_t)windowId;
+                      tabIds:(NSArray<NSNumber *> *)tabIds
+                    windowId:(int64_t)windowId;
 
 /// Called when a split is disbanded.
 - (void)splitRemoved:(NSString *)splitId windowId:(int64_t)windowId;
@@ -546,6 +552,21 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 
 @optional
 
+/// A companion app's page action was chosen in the web-content right-click
+/// menu (the list `setPageActionContextMenu:` pushed). The Mac client sends
+/// `pageActions.invoked` to the channel `channelId` that registered
+/// `actionId`, and to no other. `info` keys:
+///   @"tabId"         (NSNumber *, int64) — the tab the menu was opened in.
+///   @"windowId"      (NSNumber *, int64) — its window, 0 when it has none.
+///   @"url"           (NSString *)        — the page's URL.
+///   @"title"         (NSString *)        — the tab's title.
+///   @"selectionText" (NSString *)        — the selected text; may be empty.
+///   @"linkUrl"       (NSString *)        — the link right-clicked; may be empty.
+///   @"isIncognito"   (NSNumber *, BOOL)  — an off-the-record profile.
+- (void)pageActionInvoked:(NSString *)actionId
+                channelId:(NSString *)channelId
+                     info:(NSDictionary<NSString *, id> *)info;
+
 /// Hosted-window mode: Chromium asked to show or activate a hosted browser
 /// window — a routed navigation landing in another Space's window, a page
 /// calling window.focus(), chrome.windows.update({focused: true}), a tab
@@ -577,6 +598,14 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// and the short-link request; the original highlight URL is copied instead.
 /// Changes apply to the next copy. Clients omitting this selector default to YES.
 - (BOOL)isShortHighlightLinkEnabled;
+
+/// Whether picture-in-picture windows (manual and automatic, video and
+/// document) can also appear on other apps' fullscreen desktops. The Mac
+/// preference is the source of truth. Queried synchronously on the browser UI
+/// thread each time a picture-in-picture window is about to show, so a change
+/// applies to the next one shown. Must not block. Clients omitting this
+/// selector get the behaviour from before the switch existed (NO).
+- (BOOL)isPictureInPictureOnFullscreenDesktopsEnabled;
 
 /// Presents a native toast synchronously on the browser UI (main) thread.
 /// `message` is already localized and formatted. `tabId` identifies the source
@@ -629,6 +658,13 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 // Hide/dismiss the crash page (renderer recovered).
 - (void)hideCrashPage:(int64_t)tabId windowId:(int64_t)windowId;
 // Optional metadata-rich variants for richer native tab orchestration.
+/// Two-phase removal: synchronous lifetime work, then one actual model delta.
+- (void)tabWillDetach:(int64_t)tabId windowId:(int64_t)windowId;
+/// Dictionary payload containing removals, indices and the optional final active tab.
+- (void)tabsRemovedSnapshot:(NSDictionary *)snapshot windowId:(int64_t)windowId;
+/// Native duplicates, split changes and final order/selection in one owned payload.
+- (void)tabsInsertedSnapshot:(NSDictionary *)snapshot windowId:(int64_t)windowId;
+
 - (void)tabWillBeRemove:(int64_t)tabId
                windowId:(int64_t)windowId
                  context:(NSDictionary<NSString *, id> *)context;
@@ -719,7 +755,7 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 ///     PRECEDING entry (first entry has none).
 ///   splitEvents — NSArray<NSDictionary*> of this window's split events in
 ///     fire order ("type": created|visualsChanged|contentsChanged|removed,
-///     plus splitId/primaryTabId/secondaryTabId/layout/ratio as applicable);
+///     plus splitId/tabIds/layout/fractions as applicable);
 ///     apply after the tabs.
 ///   activeTabId — NSNumber (int64), the window's final active tab; absent
 ///     when the window has none. Apply last.
@@ -973,6 +1009,7 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 // profile has no resolved sync key. Keys: @"uuid" (NSString, account-global
 // profile UUID), @"passphrase" (NSString, 64-char lowercase hex).
 - (nullable NSDictionary<NSString *, id> *)getPhiProfileSyncInfo:(NSString *)profileId;
+
 /// Content blocking of `profileId` published a new rule generation or changed
 /// status (active / building / degraded / disabled). Re-read the settings
 /// with -getContentBlockingSettings:completion:. UI thread.
@@ -996,6 +1033,20 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// then draws nothing until the client drops it.
 - (void)contentSurfaceCreated:(int64_t)windowId
                   hostingView:(NSView *)hostingView;
+
+/// The Phi Chat app opened `urlStrings`: a link in a chat answer
+/// (phinomenonPrivate.openExternalUrl), a new-tab link, a navigation leaving
+/// the chat page, or a context-menu search / "Go to". They are external links
+/// (chromium ADR 0019): open them the way links from other applications are
+/// opened, behind browser access, after the session restore when every window
+/// is closed, under the Kiosk setting and the Space URL rules, and give them
+/// back through application:openURLs:. They come from no other application,
+/// and page content chooses them, so they are never a deeplink or a sign-in
+/// callback. Return YES once the client has taken them: Chromium then drops
+/// them. NO, or a client without this method, has Chromium open them itself as
+/// before. Main thread only. Callers must guard with respondsToSelector:
+/// (skew).
+- (BOOL)openPhiChatLinks:(NSArray<NSString *> *)urlStrings;
 
 @end
 
@@ -1085,6 +1136,25 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (void)moveTabsToNewWindowWithWindowId:(int64_t)windowId
                                  tabIds:(NSArray<NSNumber *> *)tabIds;
 
+/// Native multi-tab commands. Unknown IDs are ignored; split partners are included.
+- (void)closeTabsWithWindowId:(int64_t)windowId
+                       tabIds:(NSArray<NSNumber *> *)tabIds;
+- (void)duplicateTabsWithWindowId:(int64_t)windowId
+                           tabIds:(NSArray<NSNumber *> *)tabIds;
+
+/// Restores pages as unloaded background tabs in one batch, delivered as a
+/// single tabsInsertedSnapshot. `order` is the desired order: each entry is
+/// either @{@"tabId"} for a live anchor tab or @{@"key", @"url", @"title"}
+/// for a page to restore. `groups` entries hold @"keys" plus @"tokenHex" to
+/// rejoin a live group, or @"title", @"color" and @"collapsed" to create one.
+/// `splits` entries hold @"keys" (two to four, in pane order), @"layout"
+/// and @"fractions". Returns the new tab id for each restored key.
+- (NSDictionary<NSString *, NSNumber *> *)
+    restoreTabsWithWindowId:(int64_t)windowId
+                      order:(NSArray<NSDictionary *> *)order
+                     groups:(NSArray<NSDictionary *> *)groups
+                     splits:(NSArray<NSDictionary *> *)splits;
+
 /// Keeps the AI Chat panel record of the page tab `tabId` for undo close
 /// (chromium ADR 0017). Chromium never reads it: it writes it into the tab's
 /// recently-closed entry and hands it back as `aiChatPanelRecord` in the
@@ -1146,6 +1216,23 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 ///                                            exclude the current Space from the
 ///                                            submenu in the right-clicked window.
 - (void)setOpenLinkSpaceMenu:(NSArray<NSDictionary<NSString *, id> *> *)spaces;
+
+/// Push the companion apps' page actions shown in the web-content right-click
+/// menu (`menu` `context` or `both`). Replaces the whole list atomically; send
+/// on every registration change. A click comes back as
+/// `pageActionInvoked:channelId:info:`.
+///
+/// `actions` is an array of dictionaries; keys per entry:
+///   @"channelId"     (NSString *)              — the registering channel.
+///   @"actionId"      (NSString *)              — the action's id.
+///   @"title"         (NSString *)              — the row's title.
+///   @"contexts"      (NSArray<NSString *> *)   — any of @"page", @"selection",
+///                                                @"link".
+///   @"documentUrlPatterns" (NSArray<NSString *> *) — `chrome.contextMenus`
+///                                                match patterns; empty or
+///                                                absent means every page.
+///   @"incognito"     (NSNumber *, BOOL)        — shown off the record too.
+- (void)setPageActionContextMenu:(NSArray<NSDictionary<NSString *, id> *> *)actions;
 
 /// Open `url` as a new foreground tab in `windowId`, bypassing Space URL
 /// routing for that one navigation. Used by the "ask every time" flow after
@@ -1407,6 +1494,30 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// shouldEnablePhiExtensions returns NO during policy checks.
 - (void)disablePhiExtensions:(BOOL)clearData;
 
+/// Opens Phi Chat on the sidecar route `path` (such as @"/settings/private-ai"),
+/// by the rules of phinomenonPrivate.openPhiChat({ path }): a chat window on
+/// that route already is brought to the front as it is; otherwise the most
+/// recently active one is brought to the front and taken to the route, without
+/// a reload when it shows the chat page; a window opens only when none is,
+/// installing Phi Chat on first use - and then one for each request waiting
+/// that has joined no other (requests for the same path join). Leaves every
+/// AI Chat panel alone; see phi_chat_web_app.h. Must be called on the main
+/// thread. Callers must guard with respondsToSelector: (skew).
+/// `completion` fires at most once, on the UI thread: success=YES once a
+/// window shows the route or is on its way to it, otherwise NO with the
+/// extension API's error string - @"openPhiChat: invalid path" (`path` does
+/// not start with '/'), @"openPhiChat: AI features are off" or
+/// @"openPhiChat: could not open the window". An invalid path, or the AI
+/// switch off at the call, fires it before this returns. The AI switch going
+/// off later fires @"openPhiChat: AI features are off" while the request
+/// still waits to be served, and @"openPhiChat: could not open the window"
+/// once a window is opening for it. Otherwise it is held until a window
+/// opens or the request fails - seconds on first use, while Phi Chat
+/// installs - so capture the caller weakly in it. It may never fire, for
+/// example if the browser quits first.
+- (void)openPhiChatAtPath:(NSString *)path
+               completion:(nullable void (^)(BOOL success, NSString * _Nullable error))completion;
+
 /// Install one or more extensions from Chrome Web Store by their IDs.
 /// Results are reported per-extension via extensionInstallResult:status: delegate callback.
 /// Status values: @"success", @"skipped", @"disabled", @"blocked", @"failed"
@@ -1434,14 +1545,6 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (void)clearWebsiteCookies:(NSString *)website windowId:(int64_t)windowId;
 
 // Autocomplete
-/// YES means Tab or Space; NO means Tab only for the window profile.
-- (BOOL)isSearchEngineSpaceShortcutEnabledForWindowId:(int64_t)windowId;
-
-/// Expands the selected engine's search template without requesting suggestions.
-/// Returns an empty string for an unavailable engine, empty query, or invalid URL.
-- (NSString *)keywordSearchURLForKeyword:(NSString *)keyword
-                                  query:(NSString *)query
-                               windowId:(int64_t)windowId;
 - (void)requestAutoCompleteSuggestionsForText:(NSString *)text preventInlineAutoComplete:(BOOL)preventInlineAutoComplete windowId:(int64_t)windowId;
 - (void)stopAutoCompleteSuggestions:(int64_t)windowId;
 - (void)selectSuggestionAtLine:(size_t)line
@@ -1524,7 +1627,13 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// particular a NO releases a tab's DOM fullscreen, which otherwise stays
 /// on inside the windowed shell. Idempotent, so the transitions Chromium
 /// itself started (content fullscreen, which the client answers by
-/// fullscreening the shell) are no-ops here.
+/// fullscreening the shell) are no-ops here. When the browser is the one
+/// the shell presents, the shell's other hosted browsers bound at that time
+/// (the window's background Space instances) take the same state within
+/// this call, with no exit instruction and no `windowRequestedFullscreen:`
+/// back: their change completes at once, ahead of the presented browser's,
+/// which waits for the shell to settle. A browser bound afterwards takes
+/// the state at the next report or at its own present.
 - (void)setHostedFullscreen:(BOOL)fullscreen forWindowId:(int64_t)windowId;
 /// Complete an explicit-display request after the native shell has settled.
 - (void)hostedFullscreenTransitionDidCompleteForWindowId:(int64_t)windowId;
@@ -1577,6 +1686,16 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// when every surviving window reports NotAttempting; see
 /// `windowGroupCloseDidSettle` for the settle contract this protects.
 - (PhiWindowCloseState)windowCloseStateForWindowId:(int64_t)windowId;
+
+/// Enters placeholder mode for a window whose tab strip is empty: a Browser the
+/// Mac client just created without seeding a tab (the Omnibox "New tab
+/// behavior"), for which Chromium's own last-tab-close path never fires.
+/// Returns YES when the window is in placeholder mode on return (already was,
+/// or entered now) and NO when it still needs a tab: the strip is not empty,
+/// the window cannot hold a placeholder (Incognito, non-normal windows), or
+/// `windowId` resolves to no live Browser. On NO the caller seeds a tab as
+/// before. Callers must guard with respondsToSelector: (version skew).
+- (BOOL)enterPlaceholderModeIfEmptyForWindowId:(int64_t)windowId;
 
 // Favicon service
 - (void)getFaviconForURL:(NSString *)urlString completion:(void (^)(NSData * _Nullable faviconData))completion;
@@ -1648,7 +1767,8 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
     completion:(void (^)(NSArray<id<DownloadItemWrapper>> *items, NSArray<NSString *> *failedProfileIds))completion
     NS_SWIFT_NAME(getDownloadItems(forProfileIds:completion:));
 
-/// Profile-addressed operations target loaded regular profiles without a window.
+/// Profile-addressed operations load regular profiles and their download history
+/// as needed, retaining the profile until the operation has been dispatched.
 - (void)pauseDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
 - (void)resumeDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
 - (void)cancelDownloadWithGuid:(NSString *)guid profileId:(NSString *)profileId;
@@ -1710,7 +1830,7 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 // Asks Chromium to rebuild the main menu after shortcut settings change.
 - (void)requestRebuildMainMenu;
 
-// Main thread only. Effective hidden aliases, including WebContents-only ones.
+// Main thread only. Configured hidden aliases, including WebContents-only ones.
 // Each entry contains commandId, keyEquivalent, modifierFlags, and source.
 - (NSArray<NSDictionary<NSString*, id>*>*)shortcutBindings;
 
@@ -1743,6 +1863,23 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// never diverge. Main thread only.
 - (BOOL)isRestorePreviousSessionEnabled;
 - (void)setRestorePreviousSessionEnabled:(BOOL)enabled;
+
+/// Marks Sign out's session-restore discard (Mac ADR 0012). Call this on both
+/// Sign out paths once the Sign out is committed, before closing the windows.
+/// The mark is recorded in Chromium local state and written to disk at once;
+/// unless consumeSignOutSessionDiscard takes it first, the next launch empties
+/// Session restore and Undo Close for every profile before it restores
+/// anything, even after a quit or crash. It also makes every window open now
+/// close without leave-page (beforeunload) prompts, which is why it must come
+/// before the windows close. Main thread only.
+- (void)markSignOutSessionDiscard;
+
+/// Consumes what markSignOutSessionDiscard left, in the same run: call it
+/// before committing a signed-in account and before entering Guest, so the
+/// mark never outlives the return of browser access. Synchronous: whatever it
+/// carries out is visible to any restore that starts after it returns. A no-op
+/// when nothing is marked. Main thread only.
+- (void)consumeSignOutSessionDiscard;
 
 /// Updates Chromium's process-local routing cache for external links. Phi
 /// UserDefaults remains the persisted source of truth. Main thread only.
@@ -1933,11 +2070,14 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 // Split view control (Mac → Chromium)
 // ==========================================================================
 
-/// Create a split from two existing tabs. Returns the split ID string, or nil on failure.
-- (NSString * _Nullable)createSplitWithTabId:(int64_t)primaryTabId
-                                  secondTabId:(int64_t)secondaryTabId
-                                       layout:(NSString *)layout
-                                     windowId:(int64_t)windowId;
+/// Create a split from two to four existing tabs, in the given pane order.
+/// Chromium arranges the tabs next to each other in that order first (they
+/// take the group of whichever is active, else the first). Returns the
+/// split ID string, or nil when a tab is missing, already split, or
+/// repeated.
+- (NSString * _Nullable)createSplitWithTabIds:(NSArray<NSNumber *> *)tabIds
+                                        layout:(NSString *)layout
+                                      windowId:(int64_t)windowId;
 
 /// Disband a split (tabs remain open, just no longer side-by-side).
 - (void)removeSplit:(NSString *)splitId windowId:(int64_t)windowId;
@@ -1945,11 +2085,34 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 /// Change split orientation (@"vertical" side-by-side, @"horizontal" stacked).
 - (void)updateSplitLayout:(NSString *)splitId layout:(NSString *)layout windowId:(int64_t)windowId;
 
-/// Adjust the divider position (ratio 0.0–1.0 is the fraction occupied by the primary pane).
-- (void)updateSplitRatio:(NSString *)splitId ratio:(double)ratio windowId:(int64_t)windowId;
+/// Set every pane's share of the split axis, in slot order (one entry per
+/// pane, summing to 1). Chromium echoes the accepted shares through
+/// splitVisualsChanged.
+- (void)updateSplitFractions:(NSString *)splitId
+                   fractions:(NSArray<NSNumber *> *)fractions
+                    windowId:(int64_t)windowId;
 
-/// Swap the positions of the two tabs within the split.
+/// Reverse the pane order of the split (a pair swaps).
 - (void)reverseTabsInSplit:(NSString *)splitId windowId:(int64_t)windowId;
+
+/// Add `tabId` (a tab in no split) to `splitId` as pane `slotIndex`
+/// (clamped to the end). The tab moves next to the split and takes its
+/// group and pinned state; the new pane gets an equal share. Ignored once
+/// the split holds four panes. Echoed as splitContentsChanged plus
+/// splitVisualsChanged.
+- (void)addTabToSplit:(NSString *)splitId
+                tabId:(int64_t)tabId
+            slotIndex:(int)slotIndex
+             windowId:(int64_t)windowId;
+
+/// Take `tabId` out of its split; the other panes stay split and the tab
+/// lands right after them. A pair dissolves (splitRemoved) instead.
+- (void)removeTabFromSplitWithTabId:(int64_t)tabId windowId:(int64_t)windowId;
+
+/// Move `tabId` to pane `slotIndex` of its split.
+- (void)moveTabInSplitWithTabId:(int64_t)tabId
+                         toSlot:(int)slotIndex
+                       windowId:(int64_t)windowId;
 
 /// Mark `tabId` as the soon-to-be partner of a split currently being formed.
 /// While marked, the active-tab visibility path skips the OCCLUDED transition
@@ -1964,14 +2127,14 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
 - (void)clearPendingSplitPartnerWithTabId:(int64_t)tabId
                                  windowId:(int64_t)windowId;
 
-/// Cross-tab reordering: replace or swap one side of a split with another tab in the strip.
+/// Cross-tab reordering: replace or swap one pane of a split with another tab in the strip.
 /// @param splitId   Target split.
-/// @param slotIndex 0 = primary slot, 1 = secondary slot.
+/// @param slotIndex The pane to replace, 0 to the split's pane count - 1.
 /// @param otherTabId The tab outside the split that moves in.
 /// @param swap      YES → other tab takes the slot; the evicted tab moves right
 ///                  next to the split and joins its tab group, if any.
 ///                  NO  → kReplace (evicted tab is closed).
-/// If neither side of the split is currently active, the targeted slot is
+/// If no pane of the split is currently active, the targeted slot is
 /// activated first so Chromium's "split contains the active tab" invariant
 /// holds. Callers should not rely on focus being preserved across this call.
 - (void)swapTabInSplit:(NSString *)splitId
@@ -1980,7 +2143,7 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                    swap:(BOOL)swap
                windowId:(int64_t)windowId;
 
-/// Move the entire split (both tabs) as a block to a new position in the tab strip.
+/// Move the entire split (every pane) as a block to a new position in the tab strip.
 /// Pin/group state of the split is preserved.
 - (void)moveSplit:(NSString *)splitId
           toIndex:(int)toIndex
@@ -2282,6 +2445,23 @@ typedef NS_ENUM(NSInteger, PhiGhostMaterializeOutcome) {
                              zOrder:(NSInteger)zOrder
     NS_SWIFT_NAME(setContentHosting(forWebView:frameInWindow:clipInWindow:topLeftRadius:topRightRadius:bottomRightRadius:bottomLeftRadius:zOrder:));
 
+/// Whether this launch was silent: the browser was started with no startup
+/// window, as the Phi Chat app's shim and Sentinel start it to show Phi Chat,
+/// so the cold-launch restore did not run (chromium ADR 0019). NO for a hidden
+/// login-item launch, whose first Dock reopen Chromium restores itself. Fixed
+/// for the life of the process. Optional so an older framework reads as not
+/// silent. Main thread only.
+- (BOOL)isSilentLaunch;
+
+/// Whether `window` is one of Chromium's picture-in-picture windows: a video
+/// picture-in-picture window from its first show, or a document
+/// picture-in-picture browser window from its creation. Answered by Chromium
+/// so the Mac client never guesses from window classes or levels. Cheap
+/// enough to call while validating menu items. Optional so an older framework
+/// reads as NO, no window being picture-in-picture. Main thread only.
+- (BOOL)isPictureInPictureWindow:(NSWindow *)window
+    NS_SWIFT_NAME(isPictureInPictureWindow(_:));
+
 @end
 
 typedef NS_ENUM(NSInteger, PhiMediaControlAction) {
@@ -2441,16 +2621,16 @@ typedef NS_ENUM(NSInteger, PhiMediaControlAction) {
    andAddToGroupTokenHex:(NSString *)targetGroupTokenHex
               afterTabId:(int64_t)anchorTabId;
 
-/// Split-aware tear-off: when the receiver belongs to a split, move BOTH tabs
-/// of the split (preserving layout and ratio) into a new window as a single
+/// Split-aware tear-off: when the receiver belongs to a split, move EVERY pane
+/// of the split (preserving layout and shares) into a new window as a single
 /// user-visible operation. The move is not transactional — the source split is
-/// dissolved, both tabs are detached, a new window is created, and the tabs
+/// dissolved, the panes are detached, a new window is created, and the tabs
 /// are re-inserted and re-grouped; observers see those intermediate states.
 /// When the receiver is not in a split, behaves identically to moveSelfToNewWindow:.
 - (void)moveSplitToNewWindow:(BOOL)activateNewWindow;
 /// Split-aware cross-window move: when the receiver belongs to a split, move
-/// BOTH tabs of the split into the target window starting at insertIndex,
-/// preserving layout and ratio. Same intermediate-state caveat as
+/// EVERY pane of the split into the target window starting at insertIndex,
+/// preserving layout and shares. Same intermediate-state caveat as
 /// moveSplitToNewWindow:. When not in a split, behaves identically to
 /// moveSelfToWindow:atIndex:.
 - (void)moveSplitToWindow:(int64_t)targetWindowId atIndex:(NSInteger)insertIndex;
@@ -2474,6 +2654,16 @@ typedef NS_ENUM(NSInteger, PhiMediaControlAction) {
 - (void)toggleAudioMuted;
 - (void)muteAudio;
 - (void)unmuteAudio;
+
+@optional
+/// Whether Chromium keeps this tab loaded. While YES, Memory Saver and
+/// memory-pressure unloading skip the tab; an extension's explicit
+/// chrome.tabs.discard and the unload of a frozen page whose memory keeps
+/// growing still go through. Every new WebContents starts at NO and the value
+/// is not saved with the session, so the client pushes it whenever it binds a
+/// wrapper and whenever the value changes. The Mac client is the only writer.
+/// Optional so a newer client keeps working with an older framework.
+- (void)setPhiKeepLoaded:(BOOL)keepLoaded;
 @end
 
 @protocol BookmarkWrapper <NSObject>

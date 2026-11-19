@@ -19,13 +19,24 @@ struct ExtensionBadge: View {
     let state: ExtensionManager.BadgeState
 
     var body: some View {
-        Text(state.text)
+        IconBadgePill(text: state.text, backgroundColor: state.backgroundColor, textColor: state.textColor)
+    }
+}
+
+/// Shared compact pill for icon-corner counts and extension action badges.
+struct IconBadgePill: View {
+    let text: String
+    let backgroundColor: NSColor
+    let textColor: NSColor
+
+    var body: some View {
+        Text(verbatim: text)
             .font(.system(size: 8, weight: .semibold))
             .lineLimit(1)
-            .foregroundStyle(Color(nsColor: state.textColor))
+            .foregroundStyle(Color(nsColor: textColor))
             .padding(.horizontal, 2)
             .frame(minWidth: 11, minHeight: 11)
-            .background(Capsule().fill(Color(nsColor: state.backgroundColor)))
+            .background(Capsule().fill(Color(nsColor: backgroundColor)))
             .fixedSize()
     }
 }

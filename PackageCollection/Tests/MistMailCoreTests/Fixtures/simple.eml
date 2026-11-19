@@ -1,0 +1,8 @@
+From: Sender <sender@example.com>
+To: Me <me@example.com>
+Subject: A fixture
+Message-ID: <fixture@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+A fixture body.

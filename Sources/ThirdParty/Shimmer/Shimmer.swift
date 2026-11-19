@@ -156,7 +156,6 @@ public extension View {
     }
 }
 
-#if DEBUG
 struct Shimmer_Previews: PreviewProvider {
     static var previews: some View {
         Group {
@@ -193,4 +192,3 @@ struct Shimmer_Previews: PreviewProvider {
             )
     }
 }
-#endif

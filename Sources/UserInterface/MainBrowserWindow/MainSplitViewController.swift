@@ -8,7 +8,7 @@ import Combine
 class MainSplitViewController: NSViewController, BrowserThemeContextProviding {
     static let leftItemMinWidth: CGFloat = 193
     static let leftItemMaxWidth: CGFloat = 500
-    
+
     private let splitViewController = NSSplitViewController()
 
     /// Hosted: the session presents into a shell window whose
@@ -73,7 +73,6 @@ class MainSplitViewController: NSViewController, BrowserThemeContextProviding {
     /// Retaining this tree makes a return switch as ready as the docked sidebar.
     private(set) lazy var floatingSidebarContent = FloatingSidebarViewController(
         browserState: state, mediaController: sidebarMediaController)
-
 
     /// This window's sidebar controller. Exposed so `SpaceManager` can drive
     /// the vertical-layout Space-switch push-in (snapshot a window's content
@@ -199,9 +198,7 @@ class MainSplitViewController: NSViewController, BrowserThemeContextProviding {
     override func viewDidAppear() {
         super.viewDidAppear()
 
-        #if DEBUG
         applySidebarHeaderWidthOverrideForUITestsIfNeeded()
-        #endif
     }
 
     /// A window created minimized never runs `viewWillAppear` for this tree,
@@ -212,28 +209,6 @@ class MainSplitViewController: NSViewController, BrowserThemeContextProviding {
         viewWillAppear()
         verticalTabListViewController.bindDownloadsManagerIfNeeded()
         webContentContainerViewController.mountActiveTabForRestore()
-    }
-
-    func toggleSidebar(_ sender: Any?) {
-        // Sidebar is always collapsed in traditional layout.
-        guard !PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional else { return }
-        if isHosted {
-            shellSplit?.toggleSidebar()
-            return
-        }
-        setSidebarCollapsed(!isSidebarCollapsed, animated: true)
-    }
-
-    /// The per-Space chrome that should slide during a cross-Space swap.
-    /// Traditional (horizontal) layout only — the full content view slides
-    /// so the tab strip and page content move together as a coherent page
-    /// swipe. Vertical layout runs its own transition instead (the sidebar
-    /// content band pushes in over a ramping tint gradient; see
-    /// `SpaceManager.performVerticalSidebarPushIn`), so a nil return here
-    /// means the horizontal slide shouldn't run. Read-only; never used for
-    /// layout.
-    var swapAnchorView: NSView? {
-        PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional ? view : nil
     }
 
     /// Explicit window geometry changes (for example the UI-test width
@@ -252,10 +227,6 @@ class MainSplitViewController: NSViewController, BrowserThemeContextProviding {
         guard !collapsed, let width, width > 0 else { return }
         let clamped = min(max(width, Self.leftItemMinWidth), Self.leftItemMaxWidth)
         splitViewController.splitView.setPosition(clamped, ofDividerAt: 0)
-    }
-
-    func toggleAIChat(_ sender: Any?) {
-        webContentContainerViewController.toggleAIChat()
     }
 
     func containsSidebarTabDragBoundary(at screenLocation: CGPoint) -> Bool {
@@ -303,7 +274,7 @@ class MainSplitViewController: NSViewController, BrowserThemeContextProviding {
         sideBarSplitViewItem.maximumThickness = Self.leftItemMaxWidth
         sideBarSplitViewItem.canCollapse = true
         sideBarSplitViewItem.holdingPriority = .init(rawValue: 260)
-        
+
         if PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional {
             sideBarSplitViewItem.isCollapsed = true
         }
@@ -347,7 +318,6 @@ class MainSplitViewController: NSViewController, BrowserThemeContextProviding {
         updateSidebarWidth()
     }
 
-    #if DEBUG
     private func applySidebarHeaderWidthOverrideForUITestsIfNeeded() {
         let arguments = ProcessInfo.processInfo.arguments
         guard arguments.contains("-uitest"),
@@ -376,27 +346,26 @@ class MainSplitViewController: NSViewController, BrowserThemeContextProviding {
         splitViewController.splitView.layoutSubtreeIfNeeded()
         updateSidebarWidth()
     }
-    #endif
 
     private func setupTitlebarAwareLayout() {
         if let window = view.window, window.styleMask.contains(.fullSizeContentView) {
             verticalTabListViewController.view.wantsLayer = true
-            
+
             let titleBarHeight: CGFloat = 28
             let topInset = NSView()
             topInset.translatesAutoresizingMaskIntoConstraints = false
             topInset.wantsLayer = true
             topInset.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-            
+
             verticalTabListViewController.view.addSubview(topInset)
-            
+
             NSLayoutConstraint.activate([
                 topInset.topAnchor.constraint(equalTo: verticalTabListViewController.view.topAnchor),
                 topInset.leadingAnchor.constraint(equalTo: verticalTabListViewController.view.leadingAnchor),
                 topInset.trailingAnchor.constraint(equalTo: verticalTabListViewController.view.trailingAnchor),
                 topInset.heightAnchor.constraint(equalToConstant: titleBarHeight)
             ])
-            
+
             if let scrollView = verticalTabListViewController.view.subviews.first(where: { $0 is NSScrollView }) {
                 scrollView.translatesAutoresizingMaskIntoConstraints = false
                 NSLayoutConstraint.activate([
@@ -430,10 +399,11 @@ extension MainSplitViewController: NSSplitViewDelegate {
         guard width != Self.leftItemMinWidth else {
             return
         }
-        AccountController.shared.localDataAccount?.userDefaults.setLastKnownSidebarWidth(width)
+        AccountController.shared.localDataAccount.userDefaults.setLastKnownSidebarWidth(width)
     }
 }
 
+@MainActor
 protocol TitlebarAwareHitTestable: NSView {
     /// Returns whether this view should consume a hit inside titlebar space.
     func shouldConsumeHitTest(at point: NSPoint) -> Bool

@@ -579,12 +579,6 @@ final class SplitTabPreviewController {
         resolver = SplitTabPreviewContentResolver()
     }
 
-    init(window: NSWindow, resolver: SplitTabPreviewContentResolver) {
-        self.window = window
-        presentationController = window.customTooltipController
-        self.resolver = resolver
-    }
-
     func pointerEntered(
         ownerID: UUID,
         anchorView: NSView,

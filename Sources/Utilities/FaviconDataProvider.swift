@@ -69,6 +69,7 @@ extension NSImage {
     }
 }
 
+@MainActor
 protocol ProfileScopedFaviconFetching: AnyObject {
     func getFavicon(profileId: String, pageURLString: String, completion: @escaping (Data?) -> Void)
 }

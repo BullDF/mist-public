@@ -244,7 +244,6 @@ struct OverlayToastContainer: View {
     }
 }
 
-#if DEBUG
 // Preview using standalone LivingDownloadsManager
 struct OverlayToastContainer_Previews: PreviewProvider {
     static var previews: some View {
@@ -265,4 +264,3 @@ struct OverlayToastContainer_Previews: PreviewProvider {
         .frame(width: 800, height: 600)
     }
 }
-#endif

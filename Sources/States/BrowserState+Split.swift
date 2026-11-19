@@ -345,16 +345,6 @@ extension BrowserState {
         return pinnedDBGuids.contains(primaryDB) && pinnedDBGuids.contains(secondaryDB)
     }
 
-    /// Flattened tabId → partnerTabId lookup across all split groups in this window.
-    /// Consumed by tab-insertion logic so a link opened from a split tab lands after
-    /// the whole split pair instead of between its two panes.
-    func splitPartnerByTabIdMap() -> [Int: Int] {
-        splits.reduce(into: [:]) { result, group in
-            result[group.primaryTabId] = group.secondaryTabId
-            result[group.secondaryTabId] = group.primaryTabId
-        }
-    }
-
     /// Lower-index positions of split pairs whose two members sit adjacent in
     /// `normalTabs`. Consumed by the tab-strip drag controller to keep the
     /// drop indicator from landing between the two panes.
@@ -403,25 +393,15 @@ extension BrowserState {
                             secondaryTabId: Int,
                             layout: SplitLayout,
                             ratio: Double) {
-        // `pendingSplitPrimaryByCreateId` is written synchronously by
-        // `createSplit(leftTabId:rightTabId:)` and consumed here once
-        // Chromium echoes the split back. The contract assumes a main-thread
-        // hop on the bridge side — verify so a reentrant non-main delivery
-        // doesn't silently lose the orientation hint.
+        // `pendingPinnedSplitMarkByCreateId` is written synchronously by the
+        // caller of `createSplit` and consumed here once Chromium echoes the
+        // split back. The contract assumes a main-thread hop on the bridge
+        // side — verify so a reentrant non-main delivery doesn't silently
+        // lose the mark.
         assert(Thread.isMainThread, "handleSplitCreated must run on the main thread")
-        // Chromium always reports the lower-tab-strip-indexed tab as
-        // `primaryTabId`. If the caller asked for a specific tab on the
-        // left/primary side, publish the corrected orientation up front and
-        // ask Chromium to match. Storing the wrong orientation first and then
-        // reversing causes the focused tab's webContentView to be reparented
-        // twice in quick succession; the second mount lands a Chromium
-        // renderer that hasn't been re-driven and the pane shows blank.
-        let intendedPrimary = pendingSplitPrimaryByCreateId.removeValue(forKey: splitId)
-        let needsReverse = intendedPrimary != nil
-            && intendedPrimary != primaryTabId
-            && intendedPrimary == secondaryTabId
-        let storedPrimary = needsReverse ? secondaryTabId : primaryTabId
-        let storedSecondary = needsReverse ? primaryTabId : secondaryTabId
+        // Chromium keeps the pane order `createSplit` asked for.
+        let storedPrimary = primaryTabId
+        let storedSecondary = secondaryTabId
 
         // A split that involves two already-pinned tabs is itself pinned.
         // Inferring it here (rather than relying on `toggleSplitPinStatus`)
@@ -467,30 +447,16 @@ extension BrowserState {
             updateNormalTabs()
         }
 
-        if needsReverse {
-            // Defer one main-actor hop. `handleSplitCreated` is dispatched
-            // via `Task { @MainActor }` from a TabStripModel observer
-            // callback; under contention that Task can land while Chromium
-            // is still mid-mutation, and `TabStripModel::ReverseTabsInSplit`
-            // hard-CHECKs its reentrancy guard. Re-checking `splitGroup`
-            // also drops the bridge call if the split was torn down in the
-            // meantime, since the C++ side past `ContainsSplit` has no
-            // defensive null check on `GetSplitData`.
-            Task { @MainActor [weak self] in
-                guard let self, self.splitGroup(forId: splitId) != nil else { return }
-                self.reverseTabsInSplit(splitId)
-            }
-        }
-
         // Closed-split drop relocation: a split opened from a closed bookmark
         // or unopened pinned pair was materialized at the strip's end (its
         // panes are bridge-created tabs with no insert hint). Now that the
         // SplitGroup exists, move the pair as a unit to the drop index the
-        // user released on. Deferred for the same reason as the reverse above
-        // — running synchronously can land mid-Chromium-mutation and trip
-        // `MoveSplitTo`'s reentrancy guard — and scheduled after the reverse
-        // Task so the two strip mutations stay ordered. Re-resolve the group
-        // inside the Task since it may have been reversed or torn down.
+        // user released on. Deferred one main-actor hop: `handleSplitCreated`
+        // is dispatched via `Task { @MainActor }` from a TabStripModel
+        // observer callback, so running synchronously can land
+        // mid-Chromium-mutation and trip `MoveSplitTo`'s reentrancy guard.
+        // Re-resolve the group inside the Task since it may have been torn
+        // down.
         if let targetIndex = pendingSplitMoveToNormalIndexByCreateId.removeValue(forKey: splitId) {
             Task { @MainActor [weak self] in
                 guard let self, let liveGroup = self.splitGroup(forId: splitId) else { return }
@@ -515,9 +481,7 @@ extension BrowserState {
             updateNormalTabs()
         }
 
-        reconcileSplitChatBinding(group)
         syncSplitAIChatCollapsed(group)
-        notifyTravelBackSceneChanged(tabIds: [group.primaryTabId, group.secondaryTabId])
     }
 
     /// Sync both panes of a freshly-created split to one AI Chat collapse
@@ -544,34 +508,11 @@ extension BrowserState {
         }
     }
 
-    /// Reconcile a freshly-created split so it shares exactly one chat tab.
-    /// Principle 1: a pane that already has a chat tab keeps it (resolver handles
-    /// it; no action needed here). Principle 2: when BOTH panes have a chat tab,
-    /// keep the foreground pane's and close the other (a split owns one chat tab),
-    /// clearing that pane's undo-close panel record with it.
-    @MainActor
-    func reconcileSplitChatBinding(_ group: SplitGroup) {
-        guard let primary = tabs.first(where: { $0.guid == group.primaryTabId }),
-              let secondary = tabs.first(where: { $0.guid == group.secondaryTabId }) else {
-            return
-        }
-        let primaryId = getTabIdentifier(for: primary)
-        let secondaryId = getTabIdentifier(for: secondary)
-        guard aiChatTabs[primaryId] != nil, aiChatTabs[secondaryId] != nil else {
-            return
-        }
-        let keepSecondary = focusingTab?.guid == secondary.guid
-        let dropId = keepSecondary ? primaryId : secondaryId
-        closeAIChatTab(for: dropId)
-        splitPaneLostAIChatPanel(keepSecondary ? primary : secondary)
-    }
-
     @MainActor
     func handleSplitVisualsChanged(splitId: String, layout: SplitLayout, ratio: Double) {
         guard let index = splits.firstIndex(where: { $0.id == splitId }) else { return }
         splits[index].layout = layout
         splits[index].ratio = ratio
-        notifyTravelBackSceneChanged(tabIds: [splits[index].primaryTabId, splits[index].secondaryTabId])
         persistRepresentedSplitLayout(splitId: splitId, layout: layout)
     }
 
@@ -582,7 +523,6 @@ extension BrowserState {
         guard let index = splits.firstIndex(where: { $0.id == splitId }) else { return }
         splits[index].primaryTabId = primaryTabId
         splits[index].secondaryTabId = secondaryTabId
-        notifyTravelBackSceneChanged(tabIds: [primaryTabId, secondaryTabId])
         // The accompanying `TabMoved` event lands first via `reorderTabs` →
         // `updateNormalTabs` → `enforceSplitAdjacency`, which runs against
         // the stale primary/secondary on this SplitGroup and undoes the
@@ -616,20 +556,13 @@ extension BrowserState {
 
     @MainActor
     func handleSplitRemoved(splitId: String) {
-        let removedSplit = splits.first { $0.id == splitId }
         // A pinned split's underlying Chromium split only dissolves on close
         // (its panes can't be "Remove from Split"-ed). Capture the partner
         // linkage from the still-present live group before dropping it, so the
         // two pinned records survive as one reopenable merged cell instead of
         // splintering into two separate pinned tabs.
         reconcilePinnedSplitPartners()
-        if let removedSplit {
-            SidecarAIOutputStateStore.shared.splitDidDissolve(removedSplit, in: self)
-        }
         splits.removeAll { $0.id == splitId }
-        if let removedSplit {
-            notifyTravelBackSceneChanged(tabIds: [removedSplit.primaryTabId, removedSplit.secondaryTabId])
-        }
         // Drop any split-bookmark bindings that pointed at this split so the
         // bookmark cell stops claiming "opened" and a fresh click re-opens
         // the split. Capture all keys, clear them in a single pass, then
@@ -656,47 +589,21 @@ extension BrowserState {
 
     // MARK: - Mac → Chromium commands
 
-    /// Returns the new split ID on success.
-    @discardableResult
-    func createSplit(primaryTabId: Int, secondaryTabId: Int, layout: SplitLayout) -> String? {
-        ChromiumLauncher.sharedInstance().bridge?.createSplit(
-            withTabId: primaryTabId.int64Value,
-            secondTabId: secondaryTabId.int64Value,
-            layout: layout.rawValue,
-            windowId: windowId.int64Value)
-    }
-
-    /// Same as `createSplit`, but enforces that `leftTabId` ends up in the
-    /// primary (left/top) slot regardless of the tabs' relative tab-strip
-    /// indices. Chromium normalizes primary to the lower-indexed tab on
-    /// creation; this records the intent so `handleSplitCreated` can issue a
-    /// follow-up `reverseTabsInSplit` if needed.
+    /// Pairs two tabs: `leftTabId` takes the primary slot (left / top),
+    /// `rightTabId` the secondary. Chromium arranges the tabs next to each
+    /// other in that order and reports the split back through
+    /// `handleSplitCreated`. Returns the new split ID on success.
     ///
-    /// Always passes the currently focused tab to Chromium as the primary
-    /// argument so its internal `ActivateTabAt(primary_idx)` is a no-op.
-    /// Activating the other tab takes the focused tab through HIDDEN→VISIBLE,
-    /// and `RenderWidgetHostViewCocoa` does not always cleanly resume — the
-    /// previously-focused tab's pane then renders blank. `reverseTabsInSplit`
-    /// only reorders the strip, never re-activates, so it preserves the
-    /// renderer.
+    /// Chromium pivots the split on whichever tab is already active, so the
+    /// active tab never bounces HIDDEN → VISIBLE (which
+    /// `RenderWidgetHostViewCocoa` does not always cleanly resume from — the
+    /// previously-focused tab's pane then renders blank).
     @discardableResult
     func createSplit(leftTabId: Int, rightTabId: Int, layout: SplitLayout) -> String? {
-        let primaryArg: Int
-        let secondaryArg: Int
-        if focusingTab?.guid == leftTabId {
-            primaryArg = leftTabId
-            secondaryArg = rightTabId
-        } else {
-            primaryArg = rightTabId
-            secondaryArg = leftTabId
-        }
-        guard let splitId = createSplit(primaryTabId: primaryArg,
-                                        secondaryTabId: secondaryArg,
-                                        layout: layout) else {
-            return nil
-        }
-        pendingSplitPrimaryByCreateId[splitId] = leftTabId
-        return splitId
+        ChromiumLauncher.sharedInstance().bridge?.createSplit(
+            withTabIds: [NSNumber(value: Int64(leftTabId)), NSNumber(value: Int64(rightTabId))],
+            layout: layout.rawValue,
+            windowId: windowId.int64Value)
     }
 
     func removeSplit(_ splitId: String) {
@@ -726,9 +633,10 @@ extension BrowserState {
     /// notification back so the UI converges on whatever value it accepts.
     func updateSplitRatio(_ splitId: String, ratio: Double) {
         let clamped = max(0.0, min(1.0, ratio))
-        ChromiumLauncher.sharedInstance().bridge?.updateSplitRatio(splitId,
-                                                                   ratio: clamped,
-                                                                   windowId: windowId.int64Value)
+        ChromiumLauncher.sharedInstance().bridge?.updateSplitFractions(
+            splitId,
+            fractions: [NSNumber(value: clamped), NSNumber(value: 1.0 - clamped)],
+            windowId: windowId.int64Value)
     }
 
     func reverseTabsInSplit(_ splitId: String) {
@@ -758,15 +666,6 @@ extension BrowserState {
         ChromiumLauncher.sharedInstance().bridge?.moveSplit(splitId,
                                                             to: Int32(toIndex),
                                                             windowId: windowId.int64Value)
-    }
-
-    func splitId(forTabId tabId: Int) -> String? {
-        ChromiumLauncher.sharedInstance().bridge?.getSplitId(forTabId: tabId.int64Value,
-                                                             windowId: windowId.int64Value)
-    }
-
-    func listSplitIds() -> [String] {
-        ChromiumLauncher.sharedInstance().bridge?.listSplits(inWindow: windowId.int64Value) ?? []
     }
 
     // MARK: - Pin / Unpin a split
@@ -834,7 +733,7 @@ extension BrowserState {
                 bridge.removeTabsFromGroup(withWindowId: windowId.int64Value,
                                             tabIds: groupedPanes.map { NSNumber(value: Int64($0.guid)) })
                 for pane in groupedPanes {
-                    pane.groupToken = nil
+                    pane.updateGroupMembership(nil)
                 }
             }
         }
@@ -1240,6 +1139,9 @@ extension BrowserState {
               !bookmark.isFolder,
               let url = bookmark.url, !url.isEmpty,
               splitGroup(forTabId: partnerTabId) == nil else { return false }
+        if layoutMode.isTraditional || bookmarksAreLaunchers {
+            detachBookmarkTabsForComfortableLayout(bookmarkGuids: [bookmarkGuid])
+        }
         // Resolve the bookmark's attached live tab BEFORE the partner
         // normalization below — `makeTabNormalOpened(partnerTabId)` clears
         // the partner tab's `guidInLocalDB`, so if the attached
@@ -1504,7 +1406,7 @@ extension BrowserState {
         // split-view bookmark re-activates this split instead of opening
         // another duplicate. Cleared in `handleSplitRemoved`.
         if let bookmarkGuid = pending.boundBookmarkGuid, !bookmarkGuid.isEmpty,
-           let splitId = createdSplitId {
+           let splitId = createdSplitId, !(layoutMode.isTraditional || bookmarksAreLaunchers) {
             splitBookmarkBindings[bookmarkGuid] = splitId
             syncSplitBookmarkOpenedState(bookmarkGuid: bookmarkGuid)
             // Re-filter the sidebar tab list so the two split panes hide

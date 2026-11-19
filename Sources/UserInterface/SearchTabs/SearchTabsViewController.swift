@@ -188,13 +188,10 @@ final class SearchTabsViewController: NSViewController {
     }
 
     private func setupBindings() {
-        viewModel.$sections
-            .combineLatest(viewModel.$selectedIndex)
-            .combineLatest(viewModel.$inputText)
+        viewModel.$results
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] sectionState, query in
-                let (sections, selectedIndex) = sectionState
-                self?.updateResults(sections, selectedIndex: selectedIndex, query: query)
+            .sink { [weak self] results in
+                self?.updateResults(results.sections, selectedIndex: results.selectedIndex, query: results.query)
             }
             .store(in: &cancellables)
 
@@ -301,6 +298,7 @@ extension SearchTabsViewController: SearchTabsTextFieldKeyDelegate {
     }
 
     func searchTabsTextFieldDidConfirm(_ textField: SearchTabsTextField) -> Bool {
+        viewModel.flushPendingSearch()
         guard let selectedItem = viewModel.selectedItem else {
             return true
         }

@@ -8,11 +8,11 @@ import SwiftUI
 // MARK: - Theme Environment Key
 
 private struct ThemeKey: EnvironmentKey {
-    static let defaultValue: Theme = ThemeManager.shared.currentTheme
+    static let defaultValue: Theme = ThemeManager.resolutionState.theme
 }
 
 private struct AppearanceKey: EnvironmentKey {
-    static let defaultValue: Appearance = ThemeManager.shared.currentAppearance
+    static let defaultValue: Appearance = ThemeManager.resolutionState.appearance
 }
 
 private struct ThemeObserverKey: EnvironmentKey {
@@ -41,7 +41,7 @@ public extension EnvironmentValues {
 /// ObservableObject that mirrors theme and appearance changes.
 public final class ThemeObserver: ObservableObject {
     /// Shared observer used by SwiftUI views to avoid duplicate subscriptions.
-    public static let shared = ThemeObserver(themeSource: ThemeManager.shared)
+    public static let shared = ThemeObserver()
     
     @Published public var theme: Theme
     @Published public var appearance: Appearance
@@ -49,7 +49,24 @@ public final class ThemeObserver: ObservableObject {
     private var subscription: AnyObject?
     private var generation: UInt = 0
     
-    public init(themeSource: ThemeStateProvider = ThemeManager.shared) {
+    private init() {
+        let state = ThemeManager.resolutionState
+        self.theme = state.theme
+        self.appearance = state.appearance
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                bindSubscription(to: ThemeManager.shared)
+            }
+        } else {
+            // Never wait synchronously for main while holding the static initializer's lock.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.generation == 0 else { return }
+                self.bindSubscription(to: ThemeManager.shared)
+            }
+        }
+    }
+
+    public init(themeSource: ThemeStateProvider) {
         self.theme = themeSource.currentTheme
         self.appearance = themeSource.currentAppearance
         bindSubscription(to: themeSource)
@@ -86,11 +103,6 @@ public final class ThemeObserver: ObservableObject {
     }
 }
 
-extension ColorScheme {
-    var phiAppearance: Appearance {
-        self == .dark ? .dark : .light
-    }
-}
 
 // MARK: - ThemedColor to SwiftUI Color
 
@@ -100,10 +112,6 @@ public extension ThemedColor {
         resolver(theme, appearance).swiftUIColor
     }
     
-    /// Resolves a SwiftUI color from the current theme manager state.
-    var color: Color {
-        dynamicColor().swiftUIColor
-    }
 }
 
 // MARK: - NSColor to SwiftUI Color Extension
@@ -180,37 +188,6 @@ struct ThemedTintModifier: ViewModifier {
     }
 }
 
-/// Applies a themed border.
-struct ThemedBorderModifier: ViewModifier {
-    let themedColor: ThemedColor
-    let width: CGFloat
-    @Environment(\.phiTheme) private var theme
-    @Environment(\.phiAppearance) private var appearance
-    
-    func body(content: Content) -> some View {
-        content.border(themedColor.swiftUIColor(theme: theme, appearance: appearance), width: width)
-    }
-}
-
-/// Applies a themed shadow color.
-struct ThemedShadowModifier: ViewModifier {
-    let themedColor: ThemedColor
-    let radius: CGFloat
-    let x: CGFloat
-    let y: CGFloat
-    @Environment(\.phiTheme) private var theme
-    @Environment(\.phiAppearance) private var appearance
-    
-    func body(content: Content) -> some View {
-        content.shadow(
-            color: themedColor.swiftUIColor(theme: theme, appearance: appearance),
-            radius: radius,
-            x: x,
-            y: y
-        )
-    }
-}
-
 // MARK: - View Extensions
 
 public extension View {
@@ -233,20 +210,6 @@ public extension View {
         modifier(ThemedTintModifier(themedColor: themedColor))
     }
     
-    /// Applies a themed border.
-    func themedBorder(_ themedColor: ThemedColor, width: CGFloat = 1) -> some View {
-        modifier(ThemedBorderModifier(themedColor: themedColor, width: width))
-    }
-    
-    /// Applies a themed shadow.
-    func themedShadow(
-        _ themedColor: ThemedColor,
-        radius: CGFloat,
-        x: CGFloat = 0,
-        y: CGFloat = 0
-    ) -> some View {
-        modifier(ThemedShadowModifier(themedColor: themedColor, radius: radius, x: x, y: y))
-    }
 }
 
 // MARK: - Shape Extensions
@@ -369,36 +332,11 @@ public class ThemedHostingView: NSHostingView<AnyView> {
 
     /// Updates the hosted content while preserving theme injection.
     public func setThemedContent<Content: View>(_ content: Content) {
-        rootView = AnyView(content.phiThemeObserver(themeObserver))
+        rootView = themedRootView(content)
     }
-}
 
-// MARK: - Convenience Color Extension
-
-public extension Color {
-    /// Creates a static SwiftUI color from a themed color.
-    static func themed(_ themedColor: ThemedColor) -> Color {
-        themedColor.color
-    }
-}
-
-// MARK: - ThemedText
-
-/// `Text` wrapper that tracks themed foreground colors.
-public struct ThemedText: View {
-    let text: String
-    let themedColor: ThemedColor
-    @Environment(\.phiTheme) private var theme
-    @Environment(\.phiAppearance) private var appearance
-    
-    public init(_ text: String, color: ThemedColor) {
-        self.text = text
-        self.themedColor = color
-    }
-    
-    public var body: some View {
-        Text(text)
-            .foregroundColor(themedColor.swiftUIColor(theme: theme, appearance: appearance))
+    public func themedRootView<Content: View>(_ content: Content) -> AnyView {
+        AnyView(content.phiThemeObserver(themeObserver))
     }
 }
 

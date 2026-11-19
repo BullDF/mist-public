@@ -89,13 +89,6 @@ switcher). For bulk edits the user didn't spell out — reorganizing their
 bookmarks, rewriting their rule table — confirm first; for additive
 single-item asks ("pin this", "bookmark that") just do it.
 
-This whole surface (and the `{space}` tab-layout path) sits behind a user
-permission: Settings ▸ Developer ▸ "Allow agents to operate your Spaces".
-When it's off, these helpers fail with `user_space_operations_disabled` —
-don't retry or work around it; tell the user to flip the toggle if they want
-the operation, and continue inside the agent Space otherwise. Agent-Space
-work is never affected.
-
 ## Working in a user Space
 
 `enterContext({kind:'user', space, profile, create, activate})` binds the round to a
@@ -141,7 +134,7 @@ Semantics and differences from a task Space:
   no overlay pill or transcript console — `setStatus`/`narrate`/`markError`
   are quiet no-ops; report progress in chat instead.
 - No viewport emulation: the window is visible and sized for real, so
-  layout is exactly what the user sees. `setViewport` and `diffUrls` refuse
+  layout is exactly what the user sees. `diffUrls` refuses
   in this mode (the first would visibly reshape the user's tab, the second
   churns a temporary tab through their strip) — use an agent Space for
   both.
@@ -159,11 +152,9 @@ Semantics and differences from a task Space:
 - Tab layout and downloads helpers (`listTabGroups`, `createSplitView`,
   `listDownloads`, …) target the bound Space's window automatically, same
   as they target the task window in agent mode; `{space}` still overrides.
-- Same gate as the rest of this surface: everything fails with
-  `user_space_operations_disabled` until the user enables agent Space
-  operations.
 
-Credentials, downloads, exports and the observation stack all work
+
+Downloads, exports and the observation stack all work
 unchanged — they are tab-scoped, not Space-scoped.
 
 ## Tab groups and split view
@@ -179,10 +170,13 @@ Every helper also takes a `{space}` option (Space name or id) to target a
 USER Space's open window instead — app-level like the rest of browser
 management: no agent Space and no control ownership involved. Enumerate that
 Space's tabs first with `listSpaceTabs(space)` → `[{tabId, targetId, url,
-title, active, kind}]` — the window's FULL inventory: `kind` is `normal`,
-`pinned` (an open pinned tab), or `bookmark` (a tab opened from a bookmark
-or a bookmark-bound split), so pinned/bookmark tabs the sidebar projects
-outside the normal list are still listed. The integer `tabId`s work
+title, active, kind, group?}]` — the window's FULL inventory, in the order
+the window shows it (pinned, bookmarks, then the tab list): `kind` is
+`normal`, `pinned` (an open pinned tab), or `bookmark` (a tab opened from a
+bookmark or a bookmark-bound split), so pinned/bookmark tabs the sidebar
+projects outside the normal list are still listed, and a grouped tab
+carries `group` `{token, title, color, collapsed}` (`title` is empty for an
+unnamed group). The integer `tabId`s work
 directly as tab references (a user tab may have no CDP target —
 `targetId: null` — its `tabId` still works). Needs the Space to have an
 open window (`space_not_open` otherwise; `window_not_ready` means the

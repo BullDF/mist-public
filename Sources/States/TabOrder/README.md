@@ -157,13 +157,11 @@ Stores the Mac-side computed selection target before a close operation:
 
 ### 4.2 New Tab Insertion
 
-`NativeTabDecisionEngine.insertionIndex(visibleNormalTabIds:context:relationGraph:splitPartnerByTabId:hiddenOpenerTabIds:)` computes the insertion position:
+`NativeTabDecisionEngine.insertionIndex(visibleNormalTabIds:context:relationGraph:)` computes the insertion position:
 
 | `creationKind` | Logic |
 |----------------|-------|
-| `linkForeground` | Right after opener in visible order; fallback to `insertAfterTabId` |
-| `linkBackground` | After the opener's last visible descendant; fallback to `insertAfterTabId` |
-| `typedNewTab` / `typedNavigation` | Append to end |
+| `linkForeground` / `linkBackground` / `typedNewTab` / `typedNavigation` | Append to end |
 | `restore` | `insertAfterTabId` + 1 when the anchor resolves in the visible list. No anchor at all → `0`, because that payload is the strip's first restored tab and belongs ahead of any placeholder the window already shows. Anchor present but **absent from the visible list** → nil (caller appends) |
 | `explicitInsert` / `moveFromOtherWindow` / `bridgeCreate` / `unknown` | Use `insertAfterTabId` if present; otherwise nil (caller appends) |
 
@@ -171,7 +169,7 @@ A `restore` anchor can be missing from the visible list while still existing in 
 
 The head-insert fallback predates the feature that exposed it. `.restore` used to fire only on incidental paths (undo-close-tab, cross-window moves), where the `tabIndicesUpdated` echo that follows every insert re-sequenced the order anyway. Restoring the previous session replays a whole window through `.restore` on every cold start and window reopen, and the restored-window snapshot suppresses that echo while its batch is open — so a wrong order now survives until the next tab insert instead of being corrected immediately.
 
-Split-pair adjustment: if the opener is in a split with a partner at a higher tab-strip index, the insertion anchor shifts from the opener to the partner. This keeps the split pair contiguous — link clicks from a split tab land after the whole pair instead of between its two panes.
+Every kind that appends (`NativeTabCreationKind.appendsToNormalTabs`) goes to the end wherever Chromium inserted the tab: links regardless of whether the opener is visible, pinned, bookmark-bound, or part of a split, and typed tabs even when created at an explicit index (Mail's links). The native slot is protected through the first Chromium order echo, and Chromium's strip is moved to match (`BrowserState.movesArrivalToEnd`). Explicit and pending insertion targets still take priority; tabs that join a group may remain at the end of that group, and a typed tab Chromium created inside a group (New Tab in Group) keeps its group slot.
 
 Integration in `BrowserState.handleNewTabFromChromium`:
 
@@ -309,7 +307,6 @@ When a tab is detached to another window, its own opener and reset flag are clea
 
 - `Close Tabs to Right` has not been implemented with native order semantics
 - `pinned/bookmark → normal` opener policy is not finalized
-- Dangling window (pre-login tabs) loses `creationContext` during replay — negligible impact as those tabs use `restore`/`typedNewTab` which append to end
 
 ## 7. Debugging
 
@@ -323,7 +320,7 @@ All native tab order logs use the `[NativeTab]` prefix. Key log points:
 | `apply(snapshot:)` | Snapshot version, merge decisions |
 | `fixOpenersAfterMovingTab` | Affected children, new openers |
 | `moveNormalTabLocally` | Children added to `locallyFixedOpenerTabIds`; Chromium normal-order sync |
-| `insertIntoNormalTabOrder` | Optional Chromium normal-order sync for pinned/bookmark/cross-window insertions |
+| `insertIntoNormalTabOrder` | Optional Chromium normal-order sync for link/pinned/bookmark/cross-window insertions |
 | `closeTab` | Children state, graph before/after |
 
 Filter logs with:

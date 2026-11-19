@@ -10,121 +10,6 @@ import XCTest
 @testable import Phi
 
 final class OverlayToastCenterTests: XCTestCase {
-    private final class PreviewTab: Tab {
-        let previewView = NSView()
-        override var webContentView: NSView? { previewView }
-    }
-
-    @MainActor
-    func testHighlightConfirmationLivesInsideKioskAndPeekAndClearsOnContentChanges() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let store = LocalStore(account: Account(userID: UUID().uuidString), storeDirectoryURL: directory)
-        let state = KioskBrowserState(
-            windowId: 987654, localStore: store, profileId: LocalStore.defaultProfileId, isIncognito: false)
-        defer { OverlayToastCenter.shared.clearWindow(windowId: state.windowId) }
-        let url = try XCTUnwrap(URL(string: "https://example.com/#:~:text=highlight"))
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-            styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.close() }
-        let kiosk = KioskBrowserContentViewController(state: state)
-        window.contentViewController = kiosk
-        window.contentView?.layoutSubtreeIfNeeded()
-
-        func overlay(in view: NSView) -> OverlayToastViewController.BgView? {
-            if let overlay = view as? OverlayToastViewController.BgView { return overlay }
-            return view.subviews.lazy.compactMap { overlay(in: $0) }.first
-        }
-        func shareButton(in view: NSView) -> NSButton? {
-            if let button = view as? NSButton,
-               button.accessibilityIdentifier() == "overlayToast.shareButton",
-               !button.isHiddenOrHasHiddenAncestor { return button }
-            return view.subviews.lazy.compactMap { shareButton(in: $0) }.first
-        }
-        func drainUpdates() {
-            let drained = expectation(description: "Toast updates delivered")
-            DispatchQueue.main.async { drained.fulfill() }
-            wait(for: [drained], timeout: 1)
-        }
-
-        let kioskOverlay = try XCTUnwrap(overlay(in: kiosk.view))
-        let kioskModel = try XCTUnwrap(kioskOverlay.viewModel)
-        OverlayToastCenter.shared.showHighlightLinkCopyConfirmation(url: url, in: state)
-        drainUpdates()
-        kiosk.view.layoutSubtreeIfNeeded()
-        XCTAssertEqual(kioskModel.genericToasts.first?.shareURLs, [url])
-        XCTAssertEqual(kioskModel.genericToastTopOffset, 16)
-        XCTAssertTrue(kioskOverlay.window === window)
-        XCTAssertNotNil(shareButton(in: kioskOverlay))
-
-        OverlayToastCenter.shared.showURLCopyConfirmation(copiedURLs: [url.absoluteString], in: state)
-        drainUpdates()
-        kiosk.view.layoutSubtreeIfNeeded()
-        XCTAssertEqual(kioskModel.genericToasts.first?.shareURLs, [url])
-        XCTAssertNotNil(shareButton(in: kioskOverlay))
-
-        let peek = PeekPanelController(
-            browserState: state, parentWindow: window, anchorView: kiosk.view,
-            cardViewProvider: { kiosk.view }, originTracker: nil)
-        defer { peek.dismiss() }
-        let tab = PreviewTab(guid: 10, url: url.absoluteString, isActive: false, index: 0)
-        peek.present(tab: tab, flyIn: false)
-        let peekWindow = try XCTUnwrap(window.childWindows?.first)
-        let peekOverlay = try XCTUnwrap(overlay(in: try XCTUnwrap(peekWindow.contentView)))
-        let peekModel = try XCTUnwrap(peekOverlay.viewModel)
-        XCTAssertFalse(peekModel.toastCenter === kioskModel.toastCenter)
-        XCTAssertEqual(peekModel.genericToastTopOffset, 16)
-
-        peek.showHighlightLinkCopyConfirmation(url: url, tabId: tab.guid)
-        drainUpdates()
-        peekWindow.contentView?.layoutSubtreeIfNeeded()
-        let originalID = try XCTUnwrap(peekModel.genericToasts.first?.id)
-        XCTAssertEqual(peekModel.genericToasts.first?.shareURLs, [url])
-        XCTAssertNotNil(shareButton(in: peekOverlay))
-        peek.showHighlightLinkCopyConfirmation(url: url, tabId: 999)
-        XCTAssertEqual(peekModel.toastCenter.visibleToasts(for: state.windowId).first?.id, originalID)
-
-        let nextTab = PreviewTab(guid: 11, url: url.absoluteString, isActive: false, index: 1)
-        peek.present(tab: nextTab, flyIn: false)
-        XCTAssertTrue(peekModel.toastCenter.visibleToasts(for: state.windowId).isEmpty)
-        peek.showHighlightLinkCopyConfirmation(url: url, tabId: tab.guid)
-        XCTAssertTrue(peekModel.toastCenter.visibleToasts(for: state.windowId).isEmpty)
-        peek.showHighlightLinkCopyConfirmation(url: url, tabId: nextTab.guid)
-        XCTAssertEqual(peekModel.toastCenter.visibleToasts(for: state.windowId).count, 1)
-        peekModel.toastCenter.clearWindow(windowId: state.windowId)
-        peek.showToast(id: UUID(), message: "Link copied", shareURLs: [url], duration: 4, tabId: tab.guid)
-        XCTAssertTrue(peekModel.toastCenter.visibleToasts(for: state.windowId).isEmpty)
-        peek.showToast(id: UUID(), message: "Link copied", shareURLs: [url], duration: 4, tabId: nextTab.guid)
-        let linkToast = try XCTUnwrap(peekModel.toastCenter.visibleToasts(for: state.windowId).first)
-        XCTAssertEqual(linkToast.placement, .topTrailing)
-        XCTAssertEqual(linkToast.shareURLs, [url])
-        drainUpdates()
-        peekWindow.contentView?.layoutSubtreeIfNeeded()
-        XCTAssertNotNil(shareButton(in: peekOverlay))
-        let noticeID = UUID()
-        XCTAssertTrue(peek.showToast(id: noticeID, message: "Image copied", shareURLs: [], duration: 4, tabId: nextTab.guid))
-        peek.dismissToast(id: linkToast.id)
-        XCTAssertEqual(peekModel.toastCenter.visibleToasts(for: state.windowId).first?.id, noticeID)
-        drainUpdates()
-        peekWindow.contentView?.layoutSubtreeIfNeeded()
-        XCTAssertEqual(peekModel.genericToasts.first?.title, "Image copied")
-        // The outgoing Share toast remains mounted until its removal animation finishes.
-        let shareButtonRemoved = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in shareButton(in: peekOverlay) == nil }, object: nil)
-        wait(for: [shareButtonRemoved], timeout: 2)
-        peek.dismissToast(id: noticeID)
-        XCTAssertTrue(peekModel.toastCenter.visibleToasts(for: state.windowId).isEmpty)
-        peek.hide()
-        peek.showToast(id: UUID(), message: "Link copied", shareURLs: [url], duration: 4, tabId: nextTab.guid)
-        XCTAssertTrue(peekModel.toastCenter.visibleToasts(for: state.windowId).isEmpty)
-        peek.showHighlightLinkCopyConfirmation(url: url, tabId: nextTab.guid)
-        XCTAssertTrue(peekModel.toastCenter.visibleToasts(for: state.windowId).isEmpty)
-        XCTAssertEqual(OverlayToastCenter.shared.visibleToasts(for: state.windowId).count, 1)
-    }
-
     private final class ManualScheduler {
         private final class ScheduledAction {
             var isCancelled: Bool = false
@@ -203,7 +88,7 @@ final class OverlayToastCenterTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = LocalStore(account: Account(userID: UUID().uuidString), storeDirectoryURL: directory)
-        let state = BrowserState(windowId: 7, localStore: store, isKioskWindow: true)
+        let state = BrowserState(windowId: 7, localStore: store)
         let viewModel = OverlayToastViewModel(browserState: state)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),

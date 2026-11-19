@@ -13,5 +13,4 @@ struct TabSwitchItem {
     let liveFaviconImage: NSImage?
     /// Page URL for `FaviconDataProvider` when `liveFaviconImage` is nil; same role as `faviconLoadURL ?? url` in `UnifiedTabFaviconView`.
     let faviconPageURL: String?
-    let isCurrentTab: Bool
 }

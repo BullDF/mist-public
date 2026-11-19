@@ -293,27 +293,6 @@ public class Theme: NSObject {
         color(for: .windowOverlayBackground, appearance: appearance).alphaComponent
     }
 
-    @available(*, deprecated, message: "Theme overlay alpha is fixed at 0.8 in ThemeSnapshot V2.")
-    public func setWindowOverlayOpacity(_ opacity: CGFloat, for appearance: Appearance) {
-        _ = opacity
-        let existingPair = colorPair(for: .windowOverlayBackground)
-
-        switch appearance {
-        case .light:
-            setColor(
-                light: existingPair.light,
-                dark: existingPair.dark,
-                for: .windowOverlayBackground
-            )
-        case .dark:
-            setColor(
-                light: existingPair.light,
-                dark: existingPair.dark,
-                for: .windowOverlayBackground
-            )
-        }
-    }
-
     func makeSnapshot() -> ThemeSnapshot {
         let standardizedTheme = ThemeColorAdjustment.applyingStandardAlpha(to: self)
         return ThemeSnapshot(

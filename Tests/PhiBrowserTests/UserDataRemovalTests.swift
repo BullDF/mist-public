@@ -32,7 +32,8 @@ final class UserDataRemovalTests: XCTestCase {
         let bundleId = try XCTUnwrap(Bundle.main.bundleIdentifier)
         let current = UserDataRemoval.Targets.currentProduct
 
-        XCTAssertEqual(current.dataRootURL.lastPathComponent, bundleId)
+        XCTAssertEqual(current.dataRootURL,
+                       URL(fileURLWithPath: FileSystemUtils.applicationSupportDirctory()))
         XCTAssertEqual(current.cachesURL.lastPathComponent, bundleId)
         XCTAssertEqual(current.preferencesPlistURL.lastPathComponent, "\(bundleId).plist")
         XCTAssertEqual(current.preferencesDomain, bundleId)

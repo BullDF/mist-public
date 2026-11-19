@@ -22,8 +22,6 @@ struct DownloadItemRow: View {
     var onDiscard: ((DownloadItem) -> Void)?
 
     private let iconSize: CGFloat = 30
-    private let buttonSize: CGFloat = 24
-
     private var showsActions: Bool {
         !usesHoverAppearance || isHovered
     }
@@ -372,36 +370,6 @@ struct DownloadItemRow: View {
             }
     }
 
-    private var moreOptionsMenu: some View {
-        Menu {
-            Button(action: { onRemove(item) }) {
-                Label(NSLocalizedString("downloads.item.moreMenu.removeAction", value: "Remove from list", comment: "Download item row - Menu option to remove download from list"), systemImage: "trash")
-            }
-            
-            if item.canShowInFolder {
-                Button(action: { onShowInFinder(item) }) {
-                    Label(NSLocalizedString("downloads.item.moreMenu.showInFinderAction", value: "Show in Finder", comment: "Download item row - Menu option to reveal file in Finder"), systemImage: "folder")
-                }
-            }
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isHovered ? Color.phiPrimary.opacity(0.06) : Color.clear)
-                    .frame(width: 24, height: 24)
-                
-                // Three dots icon
-                HStack(spacing: 2) {
-                    ForEach(0..<3, id: \.self) { _ in
-                        Circle()
-                            .fill(Color.phiPrimary.opacity(0.6))
-                            .frame(width: 3, height: 3)
-                    }
-                }
-            }
-        }
-        .menuStyle(BorderlessButtonMenuStyle())
-        .frame(width: 24, height: 24)
-    }
 }
 
 struct DownloadFileIconView: View {
@@ -532,7 +500,6 @@ struct DownloadActionButton: View {
 
 // MARK: - Preview
 
-#if DEBUG
 struct DownloadItemRow_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 0) {
@@ -689,4 +656,3 @@ enum PreviewDownloadItem {
         return item
     }
 }
-#endif

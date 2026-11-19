@@ -62,7 +62,7 @@ final class ContentFullscreenSurfaceTests: XCTestCase {
         let hostIndex = try XCTUnwrap(hostHome.subviews.firstIndex(of: hostView))
         let windowSubviews = fixture.window.contentView?.subviews.count
         enterFullscreen(fixture)
-        weak var overlay = hostView.superview
+        weak let overlay = hostView.superview
         XCTAssertNotNil(overlay)
 
         exitFullscreen(fixture)
@@ -109,7 +109,7 @@ final class ContentFullscreenSurfaceTests: XCTestCase {
         let home = try XCTUnwrap(surface.superview)
         let windowSubviews = fixture.window.contentView?.subviews.count
         enterFullscreen(fixture)
-        weak var overlay = hostView.superview
+        weak let overlay = hostView.superview
         XCTAssertNotNil(overlay)
 
         fixture.state.tabs = [fixture.tabs[1]]

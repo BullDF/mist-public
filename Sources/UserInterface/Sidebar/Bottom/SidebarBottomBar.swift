@@ -5,29 +5,6 @@
 
 import SwiftUI
 import Combine
-import PostHog
-
-@MainActor
-enum FeatureEntryAnalytics {
-    enum Button: String, CaseIterable {
-        case chat
-        case memory
-        case download
-        case organizeTabs = "organize_tabs"
-    }
-
-    enum Surface: String, CaseIterable {
-        case sidebar
-        case webContentHeader = "web_content_header"
-    }
-
-    static func capture(_ button: Button, surface: Surface) {
-        PostHogSDK.shared.capture("feature_entry_tapped", properties: [
-            "button": button.rawValue,
-            "surface": surface.rawValue,
-        ])
-    }
-}
 
 /// State model for the sidebar bottom bar.
 class SidebarBottomBarState: ObservableObject {
@@ -35,28 +12,16 @@ class SidebarBottomBarState: ObservableObject {
     static let singleRowHeight: CGFloat = 24
     /// Two-row height.
     static let doubleRowHeight: CGFloat = 54
-    /// Spacing between the two rows.
-    static let rowSpacing: CGFloat = 6
-    
     /// Legacy compact layout flag, kept for compatibility.
     @Published var isCompact: Bool = false
-    
-    /// Whether the feedback button is hidden for the current access mode.
-    @Published var isFeedbackHidden: Bool = ApplicationState.shared.isGuest
-    
-    /// Current bar height.
-    var currentHeight: CGFloat {
-        isCompact ? Self.doubleRowHeight : Self.singleRowHeight
-    }
-    
+
+
     func height(for compact: Bool) -> CGFloat {
         return compact ? Self.doubleRowHeight : Self.singleRowHeight
     }
     /// Whether the chat button is hidden.
     @Published var isChatHidden: Bool = false
-
-    /// Whether the AI memory button is hidden (mirrors the global Phi AI toggle).
-    @Published var isMemoryHidden: Bool = false
+    @Published var showsMarkAsPrimary = false
 
     /// Whether the downloads popover is visible.
     @Published var isDownloadPopoverShown: Bool = false
@@ -67,14 +32,12 @@ struct SidebarBottomBarSwiftUI: View {
     @ObservedObject var state: SidebarBottomBarState
     @ObservedObject var downloadViewModel: DownloadButtonViewModel
     @ObservedObject var cardManager: NotificationCardManager
-    
-    let onFeedbackTap: () -> Void
-    let onBookmarkTap: () -> Void
+
     let onChatTap: () -> Void
     let onCardEntryTap: () -> Void
-    let onMemoryTap: () -> Void
     let onDownloadTap: () -> Void
-    
+    let onMarkAsPrimaryTap: () -> Void
+
     var body: some View {
         GeometryReader { geometry in
             regularLayout(availableWidth: geometry.size.width)
@@ -83,44 +46,28 @@ struct SidebarBottomBarSwiftUI: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sidebar.footer")
     }
-    
+
     // MARK: - Regular Layout
-    
-    private var widthWithFeedback: CGFloat {
-        let iconCount = 3 + (state.isMemoryHidden ? 0 : 1) + (showCardEntry ? 1 : 0)
-        let chatCount = state.isChatHidden ? 0 : 1
-        // Include both gaps around the zero-length spacer.
-        return CGFloat(iconCount) * 24 + CGFloat(iconCount + chatCount) * 4
-            + (state.isChatHidden ? 0 : ChatButton.preferredContentWidth)
-            + 2 * WebContentConstant.edgesSpacing
-    }
+
 
     private func regularLayout(availableWidth: CGFloat) -> some View {
-        let showsFeedback = !state.isFeedbackHidden && availableWidth >= widthWithFeedback
-        let iconCount = 2 + (state.isMemoryHidden ? 0 : 1) + (showCardEntry ? 1 : 0)
-            + (showsFeedback ? 1 : 0)
+        let iconCount = 1 + (showCardEntry ? 1 : 0) + (state.showsMarkAsPrimary ? 1 : 0)
         let gapCount = iconCount + (state.isChatHidden ? 0 : 1)
         let controlsWidth = CGFloat(iconCount) * 24
             + (state.isChatHidden ? 0 : ChatButton.preferredContentWidth)
-        // Hide Feedback first, then compress only the gaps if the remaining row cannot fit.
+        // Compress the gaps if the row cannot fit.
         let spacing = min(4, max(0, (availableWidth - controlsWidth
             - 2 * WebContentConstant.edgesSpacing) / CGFloat(gapCount)))
         return HStack(spacing: spacing) {
-            ProfileButton(surface: .sidebar)
-                .frame(width: 24, height: 24)
-
-            downloadButton
-
-            memoryButton
-
+            if state.showsMarkAsPrimary {
+                MarkAsPrimaryButton(action: onMarkAsPrimaryTap)
+            }
             cardEntryButton
 
             Spacer(minLength: 0)
 
-            if showsFeedback {
-                FeedbackButtonSwiftUI(action: onFeedbackTap)
-                    .layoutPriority(1)
-            }
+            downloadButton
+
 
             if !state.isChatHidden {
                 ChatButton(action: onChatTap)
@@ -130,15 +77,8 @@ struct SidebarBottomBarSwiftUI: View {
         .padding(.horizontal, WebContentConstant.edgesSpacing)
     }
 
-    @ViewBuilder
-    private var memoryButton: some View {
-        if !state.isMemoryHidden {
-            MemoryButton(action: onMemoryTap)
-        }
-    }
-    
     // MARK: - Download Button
-    
+
     @ViewBuilder
     private var downloadButton: some View {
         DownloadButtonView(
@@ -155,35 +95,8 @@ struct SidebarBottomBarSwiftUI: View {
             )
         )
     }
-    
+
     // MARK: - Legacy Compact Layout
-    
-    private var compactLayout: some View {
-        VStack(spacing: SidebarBottomBarState.rowSpacing) {
-            HStack(spacing: 2) {
-                downloadButton
-
-                memoryButton
-
-                cardEntryButton
-
-                Spacer()
-
-                if !state.isChatHidden {
-                    ChatButton(action: onChatTap)
-                }
-            }
-            .padding(.leading, WebContentConstant.edgesSpacing)
-            .frame(height: SidebarBottomBarState.singleRowHeight)
-            .animation(showCardEntry ? .spring(response: 0.28, dampingFraction: 0.78) : nil, value: showCardEntry)
-            
-            if !state.isFeedbackHidden {
-                FeedbackButtonSwiftUI(action: onFeedbackTap)
-                    .padding(.leading, 8)
-                    .frame(height: SidebarBottomBarState.singleRowHeight)
-            }
-        }
-    }
 
     private var showCardEntry: Bool {
         cardManager.latestCard != nil
@@ -325,54 +238,14 @@ private struct SidebarDownloadsPopoverPresenter: NSViewRepresentable {
     }
 }
 
-// MARK: - Feedback Button
-
-struct FeedbackButtonSwiftUI: View {
-    let action: () -> Void
-    var useCircularHoverShape: Bool = false
-
-    private let buttonSize: CGFloat = 24
-    private let cornerRadius: CGFloat = 6
-    
-    @State private var isHovering = false
-    
-    var body: some View {
-        Button(action: action) {
-            Image(nsImage: NSImage(resource: .sidebarFeedback))
-                .resizable()
-                .renderingMode(.template)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 16, height: 16)
-                .themedForeground(.textPrimary)
-                .frame(width: buttonSize, height: buttonSize)
-                .background(
-                    hoverBackground
-                        .fill(isHovering ? Color(nsColor: .sidebarTabHovered) : Color.clear)
-                )
-        }
-        .buttonStyle(.plain)
-        .help(NSLocalizedString("sidebar.feedbackButton.tooltip", value: "Feedback", comment: "Feedback - Tooltip text for feedback button"))
-        .accessibilityLabel(NSLocalizedString("sidebar.feedbackButton.tooltip", value: "Feedback", comment: "Feedback - Tooltip text for feedback button"))
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                isHovering = hovering
-            }
-        }
-    }
-
-    private var hoverBackground: AnyShape {
-        useCircularHoverShape ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: cornerRadius))
-    }
-}
-
 // MARK: - Toolbar Icon Button
 
 struct ToolbarIconButton: View {
     let image: NSImage
     let action: () -> Void
-    
+
     @State private var isHovering = false
-    
+
     var body: some View {
         Button(action: action) {
             Image(nsImage: image)
@@ -388,6 +261,36 @@ struct ToolbarIconButton: View {
         .onHover { hovering in
             isHovering = hovering
         }
+    }
+}
+
+// MARK: - Mark as Primary Button
+
+struct MarkAsPrimaryButton: View {
+    let action: () -> Void
+    @State private var isHovering = false
+
+    private var title: String {
+        NSLocalizedString("sidebar.footer.markAsPrimary", value: "Mark as Primary", comment: "Sidebar footer button tooltip and accessibility label for a non-primary window")
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "macwindow.badge.plus")
+                .renderingMode(.template)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 16, height: 16)
+                .themedForeground(.textPrimary)
+                .frame(width: 24, height: 24)
+                .background(RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovering ? Color.sidebarTabHovered : .clear))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .customTooltip(title)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier("sidebar.footer.markAsPrimary")
     }
 }
 
@@ -449,43 +352,37 @@ class SidebarBottomBarSwiftUIView: NSView {
     private let state = SidebarBottomBarState()
     private let downloadViewModel = DownloadButtonViewModel()
     private var cancellables = Set<AnyCancellable>()
-    private var heightConstraint: NSLayoutConstraint?
-    
     /// Height change callback.
     var onHeightChange: ((CGFloat) -> Void)?
-    
+
     /// Button callbacks.
-    var onFeedbackTap: (() -> Void)?
-    var onBookmarkTap: (() -> Void)?
     var onChatTap: (() -> Void)?
     var onCardEntryTap: (() -> Void)?
-    var onMemoryTap: (() -> Void)?
     var onDownloadTap: (() -> Void)?
-    
+    var onMarkAsPrimaryTap: (() -> Void)?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupHostingView()
         setupObservers()
     }
-    
+
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupHostingView()
         setupObservers()
     }
-    
+
     private func setupHostingView() {
         let hosting = ThemedHostingView(
             rootView: SidebarBottomBarSwiftUI(
                 state: state,
                 downloadViewModel: downloadViewModel,
                 cardManager: NotificationCardManager.shared,
-                onFeedbackTap: { [weak self] in self?.onFeedbackTap?() },
-                onBookmarkTap: { [weak self] in self?.onBookmarkTap?() },
                 onChatTap: { [weak self] in self?.onChatTap?() },
                 onCardEntryTap: { [weak self] in self?.onCardEntryTap?() },
-                onMemoryTap: { [weak self] in self?.onMemoryTap?() },
-                onDownloadTap: { [weak self] in self?.onDownloadTap?() }
+                onDownloadTap: { [weak self] in self?.onDownloadTap?() },
+                onMarkAsPrimaryTap: { [weak self] in self?.onMarkAsPrimaryTap?() }
             )
         )
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -495,17 +392,17 @@ class SidebarBottomBarSwiftUIView: NSView {
         // see ShellSidebarHostViewController.host.
         hosting.sizingOptions = []
         addSubview(hosting)
-        
+
         NSLayoutConstraint.activate([
             hosting.topAnchor.constraint(equalTo: topAnchor),
             hosting.leadingAnchor.constraint(equalTo: leadingAnchor),
             hosting.trailingAnchor.constraint(equalTo: trailingAnchor),
             hosting.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-        
+
         self.hostingView = hosting
     }
-    
+
     private func setupObservers() {
         // Propagate compact-mode height changes to the container.
         state.$isCompact
@@ -516,22 +413,15 @@ class SidebarBottomBarSwiftUIView: NSView {
             }
             .store(in: &cancellables)
 
-        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.state.isFeedbackHidden = ApplicationState.shared.isGuest
-            }
-            .store(in: &cancellables)
     }
-    
+
     /// Hides or shows the chat button, for example in private mode.
     func setChatHidden(_ hidden: Bool) {
         state.isChatHidden = hidden
     }
 
-    /// Hides or shows the AI memory button. Should be hidden when Phi AI is disabled.
-    func setMemoryHidden(_ hidden: Bool) {
-        state.isMemoryHidden = hidden
+    func setMarkAsPrimaryVisible(_ visible: Bool) {
+        state.showsMarkAsPrimary = visible
     }
 
     /// Hides the hosted controls while the create-Space form covers the bottom
@@ -540,14 +430,10 @@ class SidebarBottomBarSwiftUIView: NSView {
     func setCreateSpaceOverlayInteractionSuppressed(_ suppressed: Bool) {
         hostingView?.isHidden = suppressed
     }
-    
+
     /// Binds the downloads manager for progress display.
     func bindDownloadsManager(_ manager: DownloadsManager) {
         downloadViewModel.bindTo(manager)
     }
-    
-    /// Current rendered bar height.
-    var currentHeight: CGFloat {
-        state.currentHeight
-    }
+
 }

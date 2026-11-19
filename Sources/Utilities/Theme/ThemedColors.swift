@@ -13,8 +13,6 @@ public extension ThemedColor {
     
     static let themeColorOnHover = ThemedColor(role: .themeColorOnHover)
 
-    static let extensionActonColor = ThemedColor(role: .extensionActonColor)
-
     // MARK: - Text Colors
     
     /// Primary text color.
@@ -58,7 +56,31 @@ public extension ThemedColor {
             ? NSColor(white: 0.9, alpha: 1)
             : NSColor.white.withAlphaComponent(0.18)
     }
-    
+
+    // MARK: - Theme Button Colors
+
+    /// Fill for a prominent button that wears the theme's color (the Chat
+    /// pill). Pure's swatch is white while its accent role is blue, so Pure
+    /// gets a monochrome fill that matches the swatch instead of the blue.
+    static let themeButtonBackground = ThemedColor { theme, appearance in
+        guard theme.id == Theme.pure.id else {
+            return theme.color(for: .themeColor, appearance: appearance)
+        }
+        return NSColor(white: appearance.isDark ? 0.9 : 0.15, alpha: 1)
+    }
+
+    static let themeButtonBackgroundOnHover = ThemedColor { theme, appearance in
+        guard theme.id == Theme.pure.id else {
+            return theme.color(for: .themeColorOnHover, appearance: appearance)
+        }
+        return NSColor(white: appearance.isDark ? 0.8 : 0.25, alpha: 1)
+    }
+
+    /// Icon and label color on `themeButtonBackground`.
+    static let themeButtonForeground = ThemedColor { theme, appearance in
+        theme.id == Theme.pure.id && appearance.isDark ? NSColor(white: 0.1, alpha: 1) : .white
+    }
+
     // MARK: - Sidebar Colors
     
     /// Selected sidebar tab background color.
@@ -82,48 +104,16 @@ public extension ThemedColor {
     
     // MARK: - Convenience Initializers
     
-    /// Creates a themed color from a light and dark pair.
-    static func pair(_ light: NSColor, _ dark: NSColor) -> ThemedColor {
-        ThemedColor(light: light, dark: dark)
-    }
-    
-    /// Creates a themed color from light and dark hex values.
-    static func hex(light: Int, dark: Int) -> ThemedColor {
-        ThemedColor(lightHex: light, darkHex: dark)
-    }
-    
     /// Transparent themed color.
     static let clear = ThemedColor(.clear)
     
     /// White themed color.
     static let white = ThemedColor(.white)
     
-    /// Black themed color.
-    static let black = ThemedColor(.black)
-}
-
-// MARK: - ColorConvertible to ThemedColor
-
-public extension ColorConvertible {
-    /// Wraps the value as a fixed themed color.
-    var themed: ThemedColor {
-        ThemedColor(asColor())
-    }
 }
 
 // MARK: - NSColor Themed Extension
 
-public extension NSColor {
-    /// Creates a fixed themed color.
-    var themed: ThemedColor {
-        ThemedColor(self)
-    }
-    
-    /// Creates a light and dark themed color pair.
-    func themedWith(dark: NSColor) -> ThemedColor {
-        ThemedColor(light: self, dark: dark)
-    }
-}
 
 extension Theme {
     /// Incognito theme — dedicated theme for private browsing windows.

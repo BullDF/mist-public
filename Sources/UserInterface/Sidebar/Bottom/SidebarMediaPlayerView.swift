@@ -5,15 +5,7 @@
 
 import AppKit
 import Combine
-import PostHog
 import SwiftUI
-
-@MainActor
-private enum SidebarMediaAnalytics {
-    static func capture(_ action: String) {
-        PostHogSDK.shared.capture("mini_player_action", properties: ["action": action])
-    }
-}
 
 /// Owns horizontal wheel gestures before they reach sidebar Space navigation.
 /// A claimed gesture remains local to this window if the pointer leaves the card.
@@ -145,7 +137,6 @@ final class SidebarMediaHostingView: ThemedHostingView {
             if !cancelled, !isMediaSwipeCancelled, distance != 0,
                SpaceSwipeTracker.shouldComplete(distance: distance, velocity: velocity, width: min(bounds.width, 114)),
                let item = swipeItem {
-                SidebarMediaAnalytics.capture("switch_source")
                 mediaController?.cycleSource(for: item, direction: distance < 0 ? .next : .previous,
                                              from: mediaSurface)
             }
@@ -460,7 +451,6 @@ struct SidebarMediaPlayerView: View {
                 guard let source = cardDragItem,
                       abs(value.translation.width) >= 40,
                       abs(value.translation.width) > abs(value.translation.height) else { return }
-                SidebarMediaAnalytics.capture("switch_source")
                 controller.cycleSource(for: source,
                                        direction: value.translation.width < 0 ? .next : .previous,
                                        from: surface)
@@ -472,7 +462,6 @@ struct SidebarMediaPlayerView: View {
     private func transportRow(_ item: SidebarMediaController.Item) -> some View {
         HStack(spacing: 4) {
             Button(action: {
-                SidebarMediaAnalytics.capture("show_tab")
                 controller.showTab(for: item, from: surface)
             }) {
                 siteIcon(item).frame(width: 24, height: 24)
@@ -495,14 +484,12 @@ struct SidebarMediaPlayerView: View {
             HStack(spacing: 2) {
                 controlButton("backward.end.fill", label: previousTrackLabel,
                               enabled: item.playback.canPreviousTrack) {
-                    SidebarMediaAnalytics.capture("previous_track")
                     controller.perform(.previousTrack, for: item, from: surface)
                 }
                 .accessibilityIdentifier("sidebarMedia.previousTrack")
                 playPauseButton(item)
                 controlButton("forward.end.fill", label: nextTrackLabel,
                               enabled: item.playback.canNextTrack) {
-                    SidebarMediaAnalytics.capture("next_track")
                     controller.perform(.nextTrack, for: item, from: surface)
                 }
                 .accessibilityIdentifier("sidebarMedia.nextTrack")
@@ -512,8 +499,6 @@ struct SidebarMediaPlayerView: View {
                           label: volumeLabel,
                           enabled: true, isSelected: controller.isVolumeExpanded, action: {
                               let optionPressed = NSEvent.modifierFlags.contains(.option)
-                              SidebarMediaAnalytics.capture(optionPressed || item.playback.isMuted
-                                  ? "toggle_mute" : "toggle_volume")
                               controller.volumeButtonClicked(for: item, from: surface,
                                   optionPressed: optionPressed)
                           })
@@ -534,13 +519,9 @@ struct SidebarMediaPlayerView: View {
                 Slider(value: Binding(
                     get: { item.playback.volume ?? volume },
                     set: {
-                        if volumeTarget == nil { SidebarMediaAnalytics.capture("adjust_volume") }
                         controller.setVolume($0, for: volumeTarget ?? item, from: surface)
                     }
                 ), in: 0...1, onEditingChanged: { editing in
-                    if !editing, volumeTarget != nil {
-                        SidebarMediaAnalytics.capture("adjust_volume")
-                    }
                     volumeTarget = editing ? item : nil
                 })
                 .themedTint(.themeColor)
@@ -568,7 +549,6 @@ struct SidebarMediaPlayerView: View {
                         .accessibilityIdentifier("sidebarMedia.title")
                     if item.playback.canPictureInPicture {
                         Button {
-                            SidebarMediaAnalytics.capture("picture_in_picture")
                             controller.perform(.pictureInPicture, for: item, from: surface)
                         } label: {
                             Image(item.playback.isPictureInPicture
@@ -590,7 +570,6 @@ struct SidebarMediaPlayerView: View {
                         .accessibilityIdentifier("sidebarMedia.pictureInPicture")
                     }
                     Button(action: {
-                        SidebarMediaAnalytics.capture("dismiss")
                         controller.dismissCurrent(for: item, from: surface)
                     }) {
                         Image(systemName: "chevron.down")
@@ -730,7 +709,6 @@ struct SidebarMediaPlayerView: View {
     @ViewBuilder
     private func playPauseButton(_ item: SidebarMediaController.Item) -> some View {
         let button = Button {
-            SidebarMediaAnalytics.capture(item.playback.isPlaying ? "pause" : "play")
             controller.perform(.playPause, for: item, from: surface)
         } label: {
             Image(systemName: item.playback.isPlaying ? "pause.fill" : "play.fill")
@@ -748,14 +726,12 @@ struct SidebarMediaPlayerView: View {
         button.accessibilityActions {
             if controller.backgroundSourceCount > 1 {
                 Button(nextSourceLabel) {
-                    SidebarMediaAnalytics.capture("switch_source")
                     controller.cycleSource(for: item, from: surface)
                 }
             }
             if controller.presentationMode == .dynamic {
                 Button(showDetailsLabel) {
                     guard controller.matchesCurrentSource(item) else { return }
-                    SidebarMediaAnalytics.capture("show_details")
                     keyboardExpanded = true
                     setExpanded(true)
                 }
@@ -764,7 +740,6 @@ struct SidebarMediaPlayerView: View {
     }
 
     private func seek(_ time: Double, for item: SidebarMediaController.Item) {
-        SidebarMediaAnalytics.capture("seek")
         controller.perform(.seek(time), for: item, from: surface)
     }
 
@@ -885,14 +860,6 @@ struct SidebarMediaPlayerView: View {
     private var openTabLabel: String {
         NSLocalizedString("sidebar.media.openTab", value: "Show playing tab",
                           comment: "Sidebar media player - Switch to the tab that owns the media")
-    }
-    private var muteLabel: String {
-        NSLocalizedString("sidebar.media.mute", value: "Mute tab",
-                          comment: "Sidebar media player - Mute the tab that owns the media")
-    }
-    private var unmuteLabel: String {
-        NSLocalizedString("sidebar.media.unmute", value: "Unmute tab",
-                          comment: "Sidebar media player - Unmute the tab that owns the media")
     }
     private var enterPictureInPictureLabel: String {
         NSLocalizedString("sidebar.media.enterPictureInPicture",

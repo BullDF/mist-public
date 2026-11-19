@@ -45,11 +45,6 @@ public struct ThemedColor {
     
     // MARK: - Custom Color Factory
     
-    /// Creates a custom color that does not vary with appearance.
-    public static func custom(_ color: NSColor) -> ThemedColor {
-        ThemedColor(color)
-    }
-    
     /// Creates a custom light/dark color pair.
     public static func custom(light: NSColor, dark: NSColor) -> ThemedColor {
         ThemedColor(light: light, dark: dark)
@@ -69,17 +64,15 @@ public struct ThemedColor {
     
     /// Resolves the color using the current theme and appearance.
     public func resolved() -> NSColor {
-        let manager = ThemeManager.shared
-        return resolver(manager.currentTheme, manager.currentAppearance)
+        let state = ThemeManager.resolutionState
+        return resolver(state.theme, state.appearance)
     }
     
     /// Creates an NSColor that tracks theme and appearance changes.
     public func dynamicColor() -> NSColor {
         if #available(macOS 10.15, *) {
             return NSColor(name: nil) { appearance in
-                let manager = ThemeManager.shared
-                let phiAppearance = appearance.phiAppearance
-                return self.resolver(manager.currentTheme, phiAppearance)
+                self.resolver(ThemeManager.resolutionState.theme, appearance.phiAppearance)
             }
         } else {
             return resolved()

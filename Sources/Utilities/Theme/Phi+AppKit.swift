@@ -163,42 +163,12 @@ public extension Phi where Base: NSTextField {
         self[\.textColor] = value.nsColorMapper
     }
     
-    /// Sets the text color from a non-optional mapper.
-    func setTextColor(_ value: Mapper<NSColor>) {
-        self[\.textColor] = value.optional
-    }
-    
-    /// Sets the text color from an optional mapper.
-    func setTextColor(_ value: Mapper<NSColor?>) {
-        self[\.textColor] = value
-    }
-    
-    /// Sets the background color from a themed color.
-    func setBackgroundColor(_ value: ThemedColor) {
-        self[\.backgroundColor] = value.nsColorMapper
-    }
-    
-    /// Sets the background color from a non-optional mapper.
-    func setBackgroundColor(_ value: Mapper<NSColor>) {
-        self[\.backgroundColor] = value.optional
-    }
-    
-    /// Sets the background color from an optional mapper.
-    func setBackgroundColor(_ value: Mapper<NSColor?>) {
-        self[\.backgroundColor] = value
-    }
-    
     /// Raw mapper access for `textColor`.
     var textColor: Mapper<NSColor?>? {
         get { self[\.textColor] }
         nonmutating set { self[\.textColor] = newValue }
     }
     
-    /// Raw mapper access for `backgroundColor`.
-    var backgroundColor: Mapper<NSColor?>? {
-        get { self[\.backgroundColor] }
-        nonmutating set { self[\.backgroundColor] = newValue }
-    }
 }
 
 // MARK: - NSButton Phi Extensions
@@ -209,49 +179,11 @@ public extension Phi where Base: NSButton {
         self[\.contentTintColor] = value.nsColorMapper
     }
     
-    /// Sets the content tint color from a non-optional mapper.
-    func setContentTintColor(_ value: Mapper<NSColor>) {
-        self[\.contentTintColor] = value.optional
-    }
-    
     /// Sets the content tint color from an optional mapper.
     func setContentTintColor(_ value: Mapper<NSColor?>) {
         self[\.contentTintColor] = value
     }
     
-    /// Raw mapper access for `title`.
-    var title: Mapper<String>? {
-        get { self[\.title] }
-        nonmutating set { self[\.title] = newValue }
-    }
-    
-    /// Raw mapper access for `attributedTitle`.
-    var attributedTitle: Mapper<NSAttributedString>? {
-        get { self[\.attributedTitle] }
-        nonmutating set { self[\.attributedTitle] = newValue }
-    }
-    
-    /// Raw mapper access for `contentTintColor`.
-    var contentTintColor: Mapper<NSColor?>? {
-        get { self[\.contentTintColor] }
-        nonmutating set { self[\.contentTintColor] = newValue }
-    }
-}
-
-// MARK: - NSView Phi Extensions
-
-public extension Phi where Base: NSView {
-    /// Raw mapper access for `isHidden`.
-    var isHidden: Mapper<Bool>? {
-        get { self[\.isHidden] }
-        nonmutating set { self[\.isHidden] = newValue }
-    }
-    
-    /// Raw mapper access for `alphaValue`.
-    var alphaValue: Mapper<CGFloat>? {
-        get { self[\.alphaValue] }
-        nonmutating set { self[\.alphaValue] = newValue }
-    }
 }
 
 // MARK: - NSImageView Phi Extensions
@@ -262,27 +194,6 @@ public extension Phi where Base: NSImageView {
         self[\.contentTintColor] = value.nsColorMapper
     }
     
-    /// Sets the content tint color from a non-optional mapper.
-    func setContentTintColor(_ value: Mapper<NSColor>) {
-        self[\.contentTintColor] = value.optional
-    }
-    
-    /// Sets the content tint color from an optional mapper.
-    func setContentTintColor(_ value: Mapper<NSColor?>) {
-        self[\.contentTintColor] = value
-    }
-    
-    /// Raw mapper access for `image`.
-    var image: Mapper<NSImage?>? {
-        get { self[\.image] }
-        nonmutating set { self[\.image] = newValue }
-    }
-    
-    /// Raw mapper access for `contentTintColor`.
-    var contentTintColor: Mapper<NSColor?>? {
-        get { self[\.contentTintColor] }
-        nonmutating set { self[\.contentTintColor] = newValue }
-    }
 }
 
 // MARK: - CALayer Phi Extensions
@@ -293,44 +204,9 @@ public extension Phi where Base: CALayer {
         self[\.backgroundColor] = value.cgColorMapperOptional
     }
 
-    /// Sets the background color from a non-optional mapper.
-    func setBackgroundColor(_ value: Mapper<CGColor>) {
-        self[\.backgroundColor] = value.optional
-    }
-    
-    /// Sets the background color from an optional mapper.
-    func setBackgroundColor(_ value: Mapper<CGColor?>) {
-        self[\.backgroundColor] = value
-    }
-    
     /// Sets the border color from a themed color.
     func setBorderColor(_ value: ThemedColor) {
         self[\.borderColor] = value.cgColorMapperOptional
-    }
-    
-    /// Sets the border color from a non-optional mapper.
-    func setBorderColor(_ value: Mapper<CGColor>) {
-        self[\.borderColor] = value.optional
-    }
-    
-    /// Sets the border color from an optional mapper.
-    func setBorderColor(_ value: Mapper<CGColor?>) {
-        self[\.borderColor] = value
-    }
-    
-    /// Sets the shadow color from a themed color.
-    func setShadowColor(_ value: ThemedColor) {
-        self[\.shadowColor] = value.cgColorMapperOptional
-    }
-    
-    /// Sets the shadow color from a non-optional mapper.
-    func setShadowColor(_ value: Mapper<CGColor>) {
-        self[\.shadowColor] = value.optional
-    }
-    
-    /// Sets the shadow color from an optional mapper.
-    func setShadowColor(_ value: Mapper<CGColor?>) {
-        self[\.shadowColor] = value
     }
     
     /// Raw mapper access for `backgroundColor`.
@@ -345,11 +221,6 @@ public extension Phi where Base: CALayer {
         nonmutating set { self[\.borderColor] = newValue }
     }
     
-    /// Raw mapper access for `shadowColor`.
-    var shadowColor: Mapper<CGColor?>? {
-        get { self[\.shadowColor] }
-        nonmutating set { self[\.shadowColor] = newValue }
-    }
 }
 
 // MARK: - Theme Color Swatch

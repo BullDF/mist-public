@@ -29,32 +29,13 @@ const { createRequire } = await import('node:module')
 const { join } = await import('node:path')
 surface.require = createRequire(join(process.cwd(), '__phi-heredoc__.mjs'))
 
-// Everything this process prints reaches the agent's context — scrub any
-// secret the round handled out of ALL of it, not just cliLog.
-const scrub = surface.__scrubSessionSecrets ?? ((t) => t)
-
-// The heredoc body's ambient `console` writes would bypass cliLog's
-// scrubber — shadow it with a scrubbing shim, injected as one more surface
-// name so it wins inside the function body without touching the global.
-const { inspect } = await import('node:util')
-const scrubArg = (a) => scrub(typeof a === 'string' ? a : inspect(a))
-surface.console = Object.assign(Object.create(console), {
-  log: (...a) => console.log(...a.map(scrubArg)),
-  info: (...a) => console.info(...a.map(scrubArg)),
-  warn: (...a) => console.warn(...a.map(scrubArg)),
-  error: (...a) => console.error(...a.map(scrubArg)),
-  debug: (...a) => console.debug(...a.map(scrubArg)),
-  trace: (...a) => console.trace(...a.map(scrubArg)),
-})
-
 // A floating rejection (or a throw from a fire-and-forget callback) kills
 // Node WITHOUT running finally blocks: the busy badge would stick and the
 // round-end keep-alive would never be granted, expiring the Space
-// mid-conversation — and the default reporter bypasses the secret scrubber.
-// Treat both like a normal failure: scrub, dispose, exit 1.
+// mid-conversation. Treat both like a normal failure: dispose, exit 1.
 for (const event of ['unhandledRejection', 'uncaughtException']) {
   process.on(event, (err) => {
-    console.error(scrub(`phi-browser ${event}: ${err?.message || err}`))
+    console.error(`phi-browser ${event}: ${err?.message || err}`)
     __dispose().catch(() => {}).finally(() => process.exit(1))
   })
 }
@@ -90,7 +71,7 @@ try {
   const fn = new AsyncFunction(...names, source)
   await fn(...values)
 } catch (err) {
-  console.error(scrub(`phi-browser error: ${err?.message || err}`))
+  console.error(`phi-browser error: ${err?.message || err}`)
   // A few stack frames locate the failing line inside the heredoc (the
   // script compiles as an anonymous async function, so frames read
   // "<anonymous>:LINE"). Skip the message line already printed above. The
@@ -100,7 +81,7 @@ try {
     (m, n) => `<anonymous>:${Math.max(1, Number(n) - 2)}`)
   const frames = fixLines(String(err?.stack || '')
     .split('\n').slice(1, 6).join('\n'))
-  if (frames) console.error(scrub(frames))
+  if (frames) console.error(frames)
   exitCode = 1
 } finally {
   await __dispose().catch(() => {})

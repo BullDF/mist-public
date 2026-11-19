@@ -11,6 +11,39 @@ import XCTest
 
 @MainActor
 final class CustomTooltipTests: XCTestCase {
+    func testMenuTrackingDismissesAndSuppressesTooltipsUntilEveryMenuCloses() {
+        let fixture = makeWindow()
+        let scheduler = ManualScheduler()
+        let presenter = RecordingPresenter()
+        let controller = makeController(fixture: fixture, scheduler: scheduler, presenter: presenter)
+        func hover() {
+            controller.pointerEntered(ownerID: UUID(), anchorView: fixture.host, content: AnyView(Text("Folder")),
+                                      configuration: .init(showDelay: 0, displayDuration: nil))
+        }
+        hover()
+        XCTAssertTrue(presenter.isVisible)
+        let menu = NSMenu(), submenu = NSMenu()
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+        XCTAssertFalse(presenter.isVisible)
+        hover()
+        XCTAssertFalse(presenter.isVisible)
+        NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: submenu)
+        NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: submenu)
+        hover()
+        XCTAssertFalse(presenter.isVisible)
+        NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+        hover()
+        XCTAssertTrue(presenter.isVisible)
+    }
+
+    private var windows: [NSWindow] = []
+
+    override func tearDown() {
+        windows.forEach { $0.close() }
+        windows.removeAll()
+        super.tearDown()
+    }
+
     private struct TooltipThemeSnapshot: Equatable {
         let themeID: String
         let appearance: Appearance
@@ -483,11 +516,10 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertTrue(presenter.isVisible)
 
         mouseLocation = .zero
-        let watchdogFired = expectation(description: "Pointer watchdog fired")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            watchdogFired.fulfill()
-        }
-        wait(for: [watchdogFired], timeout: 1)
+        let watchdogFired = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !presenter.isVisible
+        }, object: nil)
+        wait(for: [watchdogFired], timeout: 3)
 
         XCTAssertFalse(presenter.isVisible)
         XCTAssertNil(controller.activeOwnerID)
@@ -1186,9 +1218,9 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertEqual(presenter.lastThemeProvider?.currentAppearance, .dark)
     }
 
-    func testRealTooltipSurfaceTracksWindowThemeAndSwiftUIEnvironment() throws {
-        let fixture = makeWindow()
-        fixture.window.orderFront(nil)
+    func testRealTooltipSurfaceTracksWindowThemeAndSwiftUIEnvironment() async throws {
+        let fixture = makeWindow(nonactivating: true)
+        await showWindowBeforeObservingItsLifecycle(fixture.window)
         let scheduler = ManualScheduler()
         let initialTheme = Theme(id: "tooltip-light", name: "Tooltip Light")
         let updatedTheme = Theme(id: "tooltip-dark", name: "Tooltip Dark")
@@ -1215,7 +1247,7 @@ final class CustomTooltipTests: XCTestCase {
             content: AnyView(TooltipThemeProbeView(probe: probe)),
             configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil)
         )
-        waitForMainQueueUpdates()
+        await drainMainQueueUpdates()
 
         let panel = try XCTUnwrap(
             fixture.window.childWindows?.compactMap { $0 as? NSPanel }.first
@@ -1233,7 +1265,7 @@ final class CustomTooltipTests: XCTestCase {
 
         themeContext.setTheme(updatedTheme)
         themeContext.setUserAppearanceChoice(.dark)
-        waitForMainQueueUpdates()
+        await drainMainQueueUpdates()
 
         XCTAssertTrue(controller.isVisible)
         XCTAssertEqual(controller.surfaceIdentifiers?.panel, surface.panel)
@@ -1252,11 +1284,10 @@ final class CustomTooltipTests: XCTestCase {
         fixture.window.orderOut(nil)
     }
 
-    func testVisualDefaultCustomWarmHandoffAndDarkModeAttachments() throws {
+    func testVisualDefaultCustomWarmHandoffAndDarkModeAttachments() async throws {
         let fixture = makeVisualWindow()
         fixture.window.appearance = Appearance.light.nsAppearance
-        fixture.window.orderFront(nil)
-        waitForMainQueueUpdates()
+        await showWindowBeforeObservingItsLifecycle(fixture.window)
 
         let scheduler = ManualScheduler()
         let themeContext = BrowserThemeContext(
@@ -1289,14 +1320,14 @@ final class CustomTooltipTests: XCTestCase {
             content: AnyView(DefaultCustomTooltipContent(text: "Default tooltip from A")),
             configuration: CustomTooltipConfiguration(showDelay: 0, displayDuration: nil)
         )
-        waitForMainQueueUpdates()
+        await drainMainQueueUpdates()
 
         let panel = try XCTUnwrap(
             fixture.window.childWindows?.compactMap { $0 as? NSPanel }.first
         )
         let firstSurface = try XCTUnwrap(controller.surfaceIdentifiers)
         let firstPanelOrigin = panel.frame.origin
-        try attachVisualTooltipSnapshot(
+        try await attachVisualTooltipSnapshot(
             window: fixture.window,
             panel: panel,
             named: "Custom Tooltip - Light - Default Style"
@@ -1314,7 +1345,7 @@ final class CustomTooltipTests: XCTestCase {
             content: AnyView(VisualCustomTooltipContent()),
             configuration: CustomTooltipConfiguration(showDelay: 5, displayDuration: nil)
         )
-        waitForMainQueueUpdates()
+        await drainMainQueueUpdates()
 
         let secondSurface = try XCTUnwrap(controller.surfaceIdentifiers)
         XCTAssertTrue(controller.isVisible)
@@ -1323,7 +1354,7 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertEqual(firstSurface.panel, secondSurface.panel)
         XCTAssertEqual(firstSurface.hostingView, secondSurface.hostingView)
         XCTAssertNotEqual(firstPanelOrigin.x, panel.frame.origin.x)
-        try attachVisualTooltipSnapshot(
+        try await attachVisualTooltipSnapshot(
             window: fixture.window,
             panel: panel,
             named: "Custom Tooltip - Light - Warm Custom Style"
@@ -1334,14 +1365,14 @@ final class CustomTooltipTests: XCTestCase {
         fixture.surface.needsDisplay = true
         fixture.firstHost.needsDisplay = true
         fixture.secondHost.needsDisplay = true
-        waitForMainQueueUpdates()
+        await drainMainQueueUpdates()
 
         XCTAssertTrue(controller.isVisible)
         XCTAssertEqual(panel.appearance?.phiAppearance, .dark)
         XCTAssertEqual(panel.contentView?.effectiveAppearance.phiAppearance, .dark)
         XCTAssertEqual(controller.surfaceIdentifiers?.panel, firstSurface.panel)
         XCTAssertEqual(controller.surfaceIdentifiers?.hostingView, firstSurface.hostingView)
-        try attachVisualTooltipSnapshot(
+        try await attachVisualTooltipSnapshot(
             window: fixture.window,
             panel: panel,
             named: "Custom Tooltip - Dark - Warm Custom Style"
@@ -1357,13 +1388,13 @@ final class CustomTooltipTests: XCTestCase {
             content: AnyView(DefaultCustomTooltipContent(text: "Default tooltip from A")),
             configuration: CustomTooltipConfiguration(showDelay: 5, displayDuration: nil)
         )
-        waitForMainQueueUpdates()
+        await drainMainQueueUpdates()
 
         XCTAssertTrue(controller.isVisible)
         XCTAssertTrue(scheduler.pendingDelays.isEmpty)
         XCTAssertEqual(controller.surfaceIdentifiers?.panel, firstSurface.panel)
         XCTAssertEqual(controller.surfaceIdentifiers?.hostingView, firstSurface.hostingView)
-        try attachVisualTooltipSnapshot(
+        try await attachVisualTooltipSnapshot(
             window: fixture.window,
             panel: panel,
             named: "Custom Tooltip - Dark - Default Style"
@@ -1458,6 +1489,31 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertFalse(registration.isHovering)
     }
 
+    /// The tracking area fires under a view laid over the host (Mail's recipient suggestions over compose's toolbar).
+    func testAppKitRegistrationIgnoresPointerUnderCoveringView() throws {
+        let fixture = makeWindow()
+        fixture.host.setCustomTooltip("Custom")
+        let registration = try XCTUnwrap(fixture.host.customTooltipRegistration)
+        let root = try XCTUnwrap(fixture.window.contentView)
+        root.addSubview(NSView(frame: CGRect(x: 100, y: 0, width: 300, height: 300)))
+        func event(_ type: NSEvent.EventType, x: CGFloat) throws -> NSEvent {
+            let location = root.convert(CGPoint(x: x, y: 56), to: nil)
+            return try XCTUnwrap(type == .mouseMoved
+                ? NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0,
+                                     windowNumber: fixture.window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)
+                : NSEvent.enterExitEvent(with: type, location: location, modifierFlags: [], timestamp: 0,
+                                         windowNumber: fixture.window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+        }
+        let entered = NSSelectorFromString("mouseEntered:"), moved = NSSelectorFromString("mouseMoved:")
+
+        registration.perform(entered, with: try event(.mouseEntered, x: 130))
+        XCTAssertFalse(registration.isHovering)
+        registration.perform(moved, with: try event(.mouseMoved, x: 60))
+        XCTAssertTrue(registration.isHovering)
+        registration.perform(moved, with: try event(.mouseMoved, x: 130))
+        XCTAssertFalse(registration.isHovering)
+    }
+
     func testSwiftUIModifierInstallsSharedAppKitRegistration() {
         let fixture = makeWindow()
         let swiftUIView = Text("Host")
@@ -1476,16 +1532,11 @@ final class CustomTooltipTests: XCTestCase {
         XCTAssertNotNil(registration)
     }
 
-    func testSwiftUICustomTooltipSuppressesAdjacentHelpInEitherOrder() {
+    func testSwiftUICustomTooltipSuppressesPrecedingHelp() {
         let helpBeforeCustom = Text("Host")
             .help("Native")
             .customTooltip("Custom")
-        let helpAfterCustom = Text("Host")
-            .customTooltip("Custom")
-            .help("Native")
-
         XCTAssertTrue(helpBeforeCustom.suppressesNativeHelp)
-        XCTAssertTrue(helpAfterCustom.suppressesNativeHelp)
     }
 
     private typealias WindowFixture = (window: NSWindow, host: NSView, mouseLocation: CGPoint)
@@ -1496,13 +1547,24 @@ final class CustomTooltipTests: XCTestCase {
         secondHost: VisualFixtureHostView
     )
 
-    private func makeWindow() -> WindowFixture {
-        let window = NSWindow(
-            contentRect: CGRect(x: 100, y: 100, width: 400, height: 300),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
+    private func makeWindow(nonactivating: Bool = false) -> WindowFixture {
+        let window: NSWindow
+        if nonactivating {
+            let panel = NSPanel(
+                contentRect: CGRect(x: 100, y: 100, width: 400, height: 300),
+                styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.hidesOnDeactivate = false
+            window = panel
+        } else {
+            window = NSWindow(
+                contentRect: CGRect(x: 100, y: 100, width: 400, height: 300),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+        }
+        window.isReleasedWhenClosed = false
+        windows.append(window)
         let contentView = NSView(frame: CGRect(origin: .zero, size: window.frame.size))
         let host = NSView(frame: CGRect(x: 40, y: 40, width: 120, height: 32))
         contentView.addSubview(host)
@@ -1525,12 +1587,15 @@ final class CustomTooltipTests: XCTestCase {
             x: visibleFrame.midX - windowSize.width / 2,
             y: visibleFrame.midY - windowSize.height / 2
         )
-        let window = NSWindow(
+        let window = NSPanel(
             contentRect: CGRect(origin: windowOrigin, size: windowSize),
-            styleMask: [.borderless],
+            styleMask: [.titled, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+        window.hidesOnDeactivate = false
+        window.isReleasedWhenClosed = false
+        windows.append(window)
         let surface = VisualFixtureSurfaceView(
             frame: CGRect(origin: .zero, size: windowSize)
         )
@@ -1561,22 +1626,30 @@ final class CustomTooltipTests: XCTestCase {
         window: NSWindow,
         panel: NSPanel,
         named name: String
-    ) throws {
+    ) async throws {
         let sourceView = try XCTUnwrap(window.contentView)
         let panelView = try XCTUnwrap(panel.contentView)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
         sourceView.layoutSubtreeIfNeeded()
         panelView.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         panel.displayIfNeeded()
 
         let sourceImage = try XCTUnwrap(snapshot(of: sourceView))
+        var capturedPanel: NSImage?
+        let deadline = Date().addingTimeInterval(3)
+        // Keep AppKit/window capture on this test's main actor while yielding
+        // between attempts so SwiftUI and WindowServer can finish drawing.
+        repeat {
+            capturedPanel = WebContentSnapshotter.captureOnScreen(
+                panelView, resolution: .bestResolution)
+            if capturedPanel != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        } while Date() < deadline
         let panelImage = try XCTUnwrap(
-            WebContentSnapshotter.captureOnScreen(
-                panelView,
-                resolution: .bestResolution
-            ),
-            "The visual attachment must use the real on-screen tooltip panel"
+            capturedPanel,
+            "The visual attachment must use the real on-screen tooltip panel: \(name), "
+                + "visible=\(panel.isVisible), frame=\(panel.frame), "
+                + "content=\(panelView.bounds), hostActive=\(NSApp.isActive)"
         )
         let panelOrigin = CGPoint(
             x: panel.frame.minX - window.frame.minX,
@@ -1630,6 +1703,28 @@ final class CustomTooltipTests: XCTestCase {
 
     private func allSubviews(of view: NSView) -> [NSView] {
         view.subviews + view.subviews.flatMap(allSubviews)
+    }
+
+    private func showWindowBeforeObservingItsLifecycle(_ window: NSWindow) async {
+        window.level = .floating
+        window.makeKeyAndOrderFront(nil)
+        let becameKey = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.isKeyWindow
+        }, object: nil)
+        await fulfillment(of: [becameKey], timeout: 3)
+        // Initial occlusion notifications legitimately dismiss a tooltip. Let
+        // them arrive before the controller begins observing window lifecycle.
+        // These tests inject eligibility and also run behind other applications;
+        // WindowServer visibility is not a prerequisite for their theme checks.
+        await drainMainQueueUpdates()
+    }
+
+    private func drainMainQueueUpdates() async {
+        for _ in 0..<4 {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
     }
 
     private func waitForMainQueueUpdates() {

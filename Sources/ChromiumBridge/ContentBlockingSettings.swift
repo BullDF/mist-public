@@ -103,17 +103,11 @@ protocol ContentBlockingBridging {
     func removeContentBlockingCustomList(_ profileId: String,
                                          listId: String,
                                          completion: @escaping (Bool, String?) -> Void)
-    func refreshContentBlockingLists(_ profileId: String,
-                                     completion: @escaping (Bool, String?) -> Void)
     /// Downloads the given lists now, checked or not. Chromium never fetches
     /// a list on its own; this is the user's action.
     func downloadContentBlockingLists(_ profileId: String,
                                       listIds: [String],
                                       completion: @escaping (Bool, String?) -> Void)
-    /// Deletes a list's downloaded text; Chromium also unchecks it.
-    func deleteContentBlockingListDownload(_ profileId: String,
-                                           listId: String,
-                                           completion: @escaping (Bool, String?) -> Void)
 }
 
 /// Adapts the live Chromium bridge to `ContentBlockingBridging`. Every call
@@ -202,15 +196,6 @@ struct LiveContentBlockingBridge: ContentBlockingBridging {
         bridge.removeContentBlockingCustomList(profileId, listId: listId, completion: completion)
     }
 
-    func refreshContentBlockingLists(_ profileId: String,
-                                     completion: @escaping (Bool, String?) -> Void) {
-        guard supports(#selector(PhiChromiumBridgeProtocol.refreshContentBlockingLists(_:completion:))) else {
-            completion(false, "bridge too old")
-            return
-        }
-        bridge.refreshContentBlockingLists(profileId, completion: completion)
-    }
-
     func downloadContentBlockingLists(_ profileId: String,
                                       listIds: [String],
                                       completion: @escaping (Bool, String?) -> Void) {
@@ -221,15 +206,6 @@ struct LiveContentBlockingBridge: ContentBlockingBridging {
         bridge.downloadContentBlockingLists(profileId, listIds: listIds, completion: completion)
     }
 
-    func deleteContentBlockingListDownload(_ profileId: String,
-                                           listId: String,
-                                           completion: @escaping (Bool, String?) -> Void) {
-        guard supports(#selector(PhiChromiumBridgeProtocol.deleteContentBlockingListDownload(_:listId:completion:))) else {
-            completion(false, "bridge too old")
-            return
-        }
-        bridge.deleteContentBlockingListDownload(profileId, listId: listId, completion: completion)
-    }
 }
 
 extension Notification.Name {
@@ -246,35 +222,17 @@ extension Notification.Name {
 /// for views. Writes update `state` optimistically and revert when the
 /// bridge reports failure. Views never touch the bridge directly.
 final class ContentBlockingSettings: ObservableObject {
-    @Published private(set) var state: ContentBlockingState? {
-        didSet {
-            // Only the switches are mirrored; list and download changes are not.
-            guard let state,
-                  oldValue == nil
-                    || state.blockAds != oldValue?.blockAds
-                    || state.blockCookieBanners != oldValue?.blockCookieBanners
-                    || state.blockTrackers != oldValue?.blockTrackers else { return }
-            mirrorSwitches(state)
-        }
-    }
+    @Published private(set) var state: ContentBlockingState?
 
     let profileId: String
     private let bridge: ContentBlockingBridging?
     private var statusObserver: NSObjectProtocol?
-    private let mirrorSwitches: (ContentBlockingState) -> Void
 
     init(profileId: String,
          bridge: ContentBlockingBridging? = ChromiumLauncher.sharedInstance().bridge.map(LiveContentBlockingBridge.init),
-         notificationCenter: NotificationCenter = .default,
-         mirrorSwitches: ((ContentBlockingState) -> Void)? = nil) {
+         notificationCenter: NotificationCenter = .default) {
         self.profileId = profileId
         self.bridge = bridge
-        // Feeds the content blocking fields of `user_defaults_snapshot`.
-        self.mirrorSwitches = mirrorSwitches ?? { state in
-            ContentBlockingAnalytics.mirror(
-                state, profileId: profileId,
-                knownProfileIds: Set(ProfileManager.shared.profiles.map(\.profileId)))
-        }
         statusObserver = notificationCenter.addObserver(
             forName: .contentBlockingStatusChanged, object: nil, queue: .main
         ) { [weak self] notification in
@@ -427,40 +385,6 @@ final class ContentBlockingSettings: ObservableObject {
         downloadLists([id], completion: completion)
     }
 
-    /// Deletes a list's downloaded text; the row shows it unchecked and not
-    /// downloaded right away and reverts if Chromium refuses.
-    func deleteListDownload(_ id: String, completion: @escaping (Bool) -> Void = { _ in }) {
-        guard let bridge, var updated = state,
-              let index = updated.lists.firstIndex(where: { $0.id == id }) else {
-            completion(false)
-            return
-        }
-        let previous = state
-        updated.lists[index].available = false
-        updated.lists[index].isDownloading = false
-        updated.lists[index].checked = false
-        updated.lists[index].fetchedAt = nil
-        updated.lists[index].lastError = ""
-        state = updated
-        bridge.deleteContentBlockingListDownload(profileId, listId: id) { [weak self] success, _ in
-            DispatchQueue.main.async {
-                if !success { self?.state = previous }
-                completion(success)
-            }
-        }
-    }
-
-    /// Downloads the enabled lists again now.
-    func refreshLists(completion: @escaping (Bool) -> Void = { _ in }) {
-        guard let bridge else {
-            completion(false)
-            return
-        }
-        bridge.refreshContentBlockingLists(profileId) { success, _ in
-            DispatchQueue.main.async { completion(success) }
-        }
-    }
-
     /// The exception key for the page at `url`, or nil when the page is not
     /// a site (chrome://, file:, an empty URL) or the bridge is unavailable.
     func siteExceptionDomain(forURL url: String) -> String? {
@@ -523,9 +447,9 @@ enum ContentBlockingListStrings {
         case "adguard-spanish":
             return NSLocalizedString("settings.privacy.contentBlocking.list.adguardSpanish.title", value: "AdGuard Spanish/Portuguese (Español/Português)", comment: "Privacy settings - Name of the AdGuard Spanish and Portuguese regional filter list")
         case "adguard-chinese":
-            return NSLocalizedString("settings.privacy.contentBlocking.list.adguardChinese.title", value: "AdGuard Chinese (中文)", comment: "Privacy settings - Name of the AdGuard Chinese regional filter list")
+            return NSLocalizedString("settings.privacy.contentBlocking.list.adguardChinese.title", value: "AdGuard Chinese", comment: "Privacy settings - Name of the AdGuard Chinese regional filter list")
         case "adguard-japanese":
-            return NSLocalizedString("settings.privacy.contentBlocking.list.adguardJapanese.title", value: "AdGuard Japanese (日本語)", comment: "Privacy settings - Name of the AdGuard Japanese regional filter list")
+            return NSLocalizedString("settings.privacy.contentBlocking.list.adguardJapanese.title", value: "AdGuard Japanese", comment: "Privacy settings - Name of the AdGuard Japanese regional filter list")
         case "phi-specific":
             return NSLocalizedString("settings.privacy.contentBlocking.list.phiSpecific.title", value: "Phi Blocklists", comment: "Privacy settings - Name of Phi's own first-party filter list")
         default:

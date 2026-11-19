@@ -8,17 +8,13 @@ import XCTest
 
 final class AutoPictureInPictureModeTests: XCTestCase {
     private var defaults: UserDefaults!
-    private var defaultsSuiteName: String!
 
     override func setUp() {
         super.setUp()
-        defaultsSuiteName = "AutoPictureInPictureModeTests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: defaultsSuiteName)!
+        defaults = makeTestDefaults().defaults
     }
 
     override func tearDown() {
-        defaults.removePersistentDomain(forName: defaultsSuiteName)
-        defaultsSuiteName = nil
         defaults = nil
         super.tearDown()
     }

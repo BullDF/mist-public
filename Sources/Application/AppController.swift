@@ -8,44 +8,19 @@ import AuthenticationServices
 import SwiftData
 import CocoaLumberjackSwift
 import Kingfisher
-import Auth0
-#if !PHI_OSS_BUILD
-import Sparkle
-#endif
 import WebKit
 import Settings
-import PostHog
 
 @objc class AppController: NSObject, NSApplicationDelegate {
     @IBOutlet var window: NSWindow!
     @objc static private(set)var shared: AppController!
-    
+
     var settingsWindowController: SettingsWindowController?
-    private var allDownloadsWindowController: AllDownloadsWindowController?
     /// The application the settings window took the foreground from, so
     /// closing the window can hand activation back to it.
     var settingsActivationSource: NSRunningApplication?
-    /// Whether `settingsWindowController` was built with the Developer pane.
-    /// The pane list is fixed at window creation, so this goes stale when the
-    /// General-tab "Developer mode" toggle changes while the window is open;
-    /// `developerModeDidChange()` consults it to rebuild the window.
-    var settingsPanesIncludeDeveloper = false
-
-    var container: ModelContainer?
-    #if !PHI_OSS_BUILD
-    var updater: SPUUpdater?
-    var sparkleUserDriver: PhiSparkleUserDriver?
-    /// Sparkle update state
-    var updateState: UpdateState = .idle {
-        didSet {
-            DispatchQueue.main.async {
-                self.updateCheckForUpdateMenuItem()
-            }
-        }
-    }
-    #endif
-    
     var menuObservation: NSKeyValueObservation?
+    var removedMenuItemsObservation: NSObjectProtocol?
     /// Refreshes the main menu when the layout mode changes, so the Tab menu's
     /// layout-dependent New Tab title follows it; a layout change swaps no
     /// menu, so `menuObservation` does not see it.
@@ -54,47 +29,18 @@ import PostHog
     /// refreshed only when this actually changes.
     var lastMenuLayoutMode: LayoutMode?
     var isMainMenuRefreshScheduled = false
-    /// Rebuilds flag-gated menu rows once PostHog's flags land — they arrive
-    /// after setup, over the network, and every menu built before then read
-    /// each flag as off.
-    var featureFlagObservation: NSObjectProtocol?
-    var applicationActivationObservation: NSObjectProtocol?
-    let applicationOpenedThrottle = ApplicationOpenedThrottle()
-
-    // MARK: - Auth0 login gating
-    private var pendingLaunchAfterLogin: Bool = true
-
     /// Polls cold-launch readiness without forwarding before the first regular
     /// Chromium window can safely own or precede the external open.
     private static let coldOpenURLForwardDelay: TimeInterval = 0.5
     /// Upper bound on cold-open forward deferrals (attempts × delay ≈ 4s).
-    /// Standard opens then forward as a last resort; Kiosk opens request a
-    /// regular window and use the longer bounded wait below.
     private static let coldOpenURLForwardMaxAttempts = 8
-    /// A Kiosk cold open also lets multi-window restore visibility settle, but
-    /// never holds an external URL forever if no regular window materializes.
-    private static let coldKioskOpenForwardMaxAttempts = 30
-    private static let postLoginKioskPresentationTimeout: TimeInterval = 10
     private var coldOpenURLForwardWorkItem: DispatchWorkItem?
     private var coldOpenURLForwardAttempts = 0
     private var pendingColdOpenForwardURLs: [URL] = []
-    private var pendingColdOpenRequiresSpaceReadiness = false
-    private var pendingColdOpenRequiresVisibleRegularWindow = false
-    private var requestedRegularWindowForPendingKioskOpen = false
-    private var pendingOpenURLsAwaitingBrowserAccess: [URL] = []
-    private var pendingBrowserAccessOpenRequiresRegularWindow = false
-    private var pendingHotKioskPresentationInFlight = false
-    private var pendingHotKioskPresentationWorkItem: DispatchWorkItem?
     private var screenshotExportTerminationTask: Task<Void, Never>?
-    private var hasFinishedLaunching = false
-    private var crashFeedbackCoordinator: CrashFeedbackCoordinator?
+    private var mailTerminationTask: Task<Void, Never>?
     /// Cached in `applicationWillFinishLaunching`; weak — owned by `ChromiumLauncher`, not AppController.
     private weak var chromiumBridge: (any PhiChromiumBridgeProtocol)?
-    private lazy var kioskGlobalShortcutRegistrar =
-        KioskGlobalShortcutRegistrar { [weak self] in
-            self?.newKioskWindowFromGlobalShortcut()
-        }
-
     override init() {
         super.init()
         Self.shared = self
@@ -110,77 +56,35 @@ import PostHog
         // `applicationWillFinishLaunching`) so it lands before AppKit reads it.
         UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
     }
-    
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Resolve the synchronous browser-access gate before Chromium asks
-        // whether its windows may be shown. The async refresh below can still
-        // recover a fresher shared credential snapshot afterwards.
-        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: true)
-        if ApplicationState.shared.isGuest || !PhiBuildCapabilities.supportsAI {
-            GuestModePreferences.disableAI()
-        }
-        let permitsSentinelLaunch: Bool
-        if PhiBuildCapabilities.supportsAuthentication {
-            LoginController.shared.prepareGuestMigrationRecoveryBeforeChromiumLaunch()
-            if ApplicationState.shared.isGuest {
-                permitsSentinelLaunch =
-                    AuthManager.shared
-                        .prepareGuestSessionBoundaryBeforeServiceLaunch(
-                            preserveLocalRecoveryCredentials:
-                                ApplicationState.shared
-                                    .isGuestMigrationRecoveryInProgress
-                        )
-            } else {
-                permitsSentinelLaunch = true
-            }
-            LoginController.shared.refreshLoginStatusOnLaunching()
-        } else {
-            permitsSentinelLaunch = true
-        }
-        
         ChromiumLauncher.sharedInstance().bridge?.applicationDidFinishLaunching(notification)
-        hasFinishedLaunching = true
-        #if PHI_OSS_BUILD
+        MistBuildFlavor.applyApplicationIcon()
+        MistSyncEngine.shared.start()
+        MistAppPlaceholders.shared.start()
+        MistMailService.shared.start()
+        SlackAgentConnection.shared.start()
+        SlackAgentBridge.shared.start()
+        SlackAgentAccess.installChatHooks()
+        DrifterCodexPicks.preload()
         ChromiumLauncher.sharedInstance().bridge?.setMetricsReportingEnabled(false) { effectiveEnabled in
             if effectiveEnabled {
                 AppLogWarn("[OSS] Failed to disable Chromium metrics reporting")
             }
         }
-        #endif
-        
-        #if !PHI_OSS_BUILD
-        SentinelTelemetryConsentPublisher.shared.start()
-        #endif
-        
+
         ASWebAuthenticationSessionWebBrowserSessionManager.shared.sessionHandler = self
-        
-        #if !PHI_OSS_BUILD
-        setupSparkle()
-        #endif
+
         setupKinfisherCache()
-        
-        #if !PHI_OSS_BUILD
-        let crashFeedbackCoordinator = CrashFeedbackCoordinator()
-        self.crashFeedbackCoordinator = crashFeedbackCoordinator
-        SentryService.setup { [weak crashFeedbackCoordinator] context in
-            // Delivery resumes after this launch callback has finished.
-            DispatchQueue.main.async {
-                crashFeedbackCoordinator?.enqueue(context)
-            }
-        }
-        #endif
-        
-        MemoryUsageMonitor.shared.start()
 
         DefaultExtensionManifestWriter.start()
-        FeedbackOutboxUploader.shared.start()
 
         // The agent CDP socket listens for the whole app session, whether or
-        // not agent browser control is switched on: an agent that connects
-        // while it is off gets a consent prompt offering to turn it on, rather
-        // than an endpoint that isn't there (see AgentCDPListener).
+        // not agent browser control is switched on: Mist's own Browser Agent
+        // connects through it either way, and other agents are refused while
+        // it is off (see AgentCDPListener).
         AgentCDPListener.shared.start()
-        
+
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiWillTryToTerminateApplicationNotification(_:)),
                                                name: Notification.Name("PhiWillTryToTerminateApplicationNotification"),
@@ -188,28 +92,6 @@ import PostHog
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(phiDidCancelTerminateApplicationNotification(_:)),
                                                name: Notification.Name("PhiDidCancelTerminateApplicationNotification"),
-                                               object: nil)
-        NotificationCenter.default.addObserver(self,
-                                               selector: #selector(loginStatusRefreshCompleted(_:)),
-                                               name: .loginStatusRefreshCompleted,
-                                               object: nil)
-        NotificationCenter.default.addObserver(self,
-                                               selector: #selector(loginCompleted(_:)),
-                                               name: .loginCompleted,
-                                               object: nil)
-        NotificationCenter.default.addObserver(self,
-                                               selector: #selector(browserAccessStateDidChange(_:)),
-                                               name: .browserAccessStateDidChange,
-                                               object: nil)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(kioskExternalLinkAccessDidChange(_:)),
-            name: .kioskExternalLinkAccessDidChange,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(self,
-                                               selector: #selector(mainAccountChanged(_:)),
-                                               name: .mainAccountChanged,
                                                object: nil)
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(refreshSpacesMenuVisibility),
@@ -230,23 +112,6 @@ import PostHog
                                                selector: #selector(refreshBookmarksMenuVisibility),
                                                name: .activeBrowserWindowDidChange,
                                                object: nil)
-        kioskGlobalShortcutRegistrar.start()
-        
-        if permitsSentinelLaunch,
-           ApplicationState.shared.isAuthenticated {
-            AuthenticatedSentinelSessionLifecycle.reconcile()
-            Task.detached(priority: .utility) {
-                await SentinelVersionGuard.shared.runStartupCheck()
-            }
-        } else {
-            AuthenticatedSentinelSessionLifecycle.reconcile()
-            if !permitsSentinelLaunch {
-                AppLogError(
-                    "Sentinel launch suppressed because the Guest " +
-                    "shared-token boundary could not be established"
-                )
-            }
-        }
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -254,88 +119,15 @@ import PostHog
 
         // Register defaults before any settings are read.
         UserDefaultsRegistration.registerDefaults()
-        setOpenExternalLinksInKioskEnabled(
-            PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
-        )
-        setOpenKioskOnCommandOptionClickEnabled(
-            PhiPreferences.GeneralSettings.openKioskOnCommandOptionClick.loadValue()
-        )
-        
+        // The framework still has Kiosk routing; Mist keeps it off.
+        chromiumBridge?.setOpenExternalLinksInKioskEnabled(false)
+        chromiumBridge?.setOpenKioskOnCommandOptionClickEnabled(false)
+
         setupLogging()
-        SentinelLanguagePreferenceSync.persistCurrentPreference()
-        // Wire the shared keychain store into AppLog so its keychain errors and
-        // retry recoveries land in the same log file as the rest of the app.
-        // Must happen before any auth flow (login / renew / launch recovery)
-        // touches `SharedAuthTokenStore`.
-        SharedAuthTokenStore.shared.logDelegate = SharedAuthTokenStoreLogBridge.shared
         AppLogInfo("------------------------------  Starting: \(Self.makeClientString())  ------------------------------")
-        recordLaunchVersion()
 
         // The startup takeover for the user-data removal mechanism runs in
         // main() (UserDataRemovalBootstrap), before Chromium reads any state.
-
-        #if !PHI_OSS_BUILD
-        // Set up PostHog before `didFinishLaunchingNotification` fires. If
-        // either value is missing the app runs without analytics.
-        if let token = PostHogEnv.projectToken.value,
-           let host = PostHogEnv.host.value {
-            let isMetricsReportingEnabled = chromiumBridge?.isMetricsReportingEnabled() ?? false
-            let postHogConfig = PostHogConfig(apiKey: token, host: host)
-            // The SDK's lifecycle integration maps `Application Opened` /
-            // `Application Backgrounded` to `didBecomeActive` / `didResignActive`,
-            // which on macOS is every Cmd-Tab in and out — ~35 pairs per user
-            // per day, 265k events a week, none of them a launch. Off; the one
-            // launch event we want is captured by hand below.
-            postHogConfig.captureApplicationLifecycleEvents = false
-            postHogConfig.reuseAnonymousId = false
-            #if DEBUG
-            postHogConfig.debug = true
-            #endif
-            postHogConfig.setBeforeSend { event in
-                if PostHogIdentityResetPolicy.shouldDiscardAnonymousLaunchLifecycleEvent(
-                    eventName: event.event,
-                    isGuest: ApplicationState.shared.isGuest,
-                    isMetricsReportingEnabled: isMetricsReportingEnabled,
-                    distinctId: event.distinctId,
-                    anonymousId: PostHogSDK.shared.getAnonymousId()
-                ) {
-                    return nil
-                }
-                guard event.event == "Application Opened" else { return event }
-                event.properties["layout_mode"] = PhiPreferences.GeneralSettings.loadLayoutMode().rawValue
-                event.properties["ai_enabled"] = PhiPreferences.AISettings.phiAIEnabled.loadValue()
-                event.properties["is_guest_mode"] = ApplicationState.shared.isGuest
-                return event
-            }
-            PostHogSDK.shared.setup(postHogConfig)
-            // Flags arrive after setup, over the network. Menus built
-            // before then read every flag as off, so a flag-gated row
-            // (Folio's File menu entries) would stay missing for the whole
-            // session even once the flag was known. Schedule a refresh after
-            // menu tracking ends so an open menu is not rebuilt in place.
-            // Mirage read the same flags at its own boot, usually before
-            // they loaded, so it is told the decided Folio state as well.
-            featureFlagObservation = NotificationCenter.default.addObserver(
-                forName: PostHogSDK.didReceiveFeatureFlags,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.refreshPrefGatedMenuItems()
-                    SaveForLaterService.broadcastArmedState()
-                }
-            }
-            AccountController.shared.reconcilePostHogIdentityForAnonymousLaunchIfNeeded(
-                isMetricsReportingEnabled: isMetricsReportingEnabled
-            )
-            captureApplicationInstallOrUpdate()
-            captureApplicationOpened()
-            observeApplicationActivationForAnalytics()
-            captureUserDefaultsSnapshot()
-        } else {
-            AppLogInfo("PostHog: project token or host not set in PostHogConfig.generated.swift; skipping init")
-        }
-        #endif
 
         // Warm the Space registry before Chromium's cold-start replay can ask
         // it anything. That replay queries `coldStartEagerWindowIds` from its
@@ -348,22 +140,13 @@ import PostHog
 
         chromiumBridge?.applicationWillFinishLaunching(notification)
     }
-    
+
     func applicationWillTerminate(_ notification: Notification) {
-        crashFeedbackCoordinator?.stop()
         coldOpenURLForwardWorkItem?.cancel()
         coldOpenURLForwardWorkItem = nil
-        pendingHotKioskPresentationWorkItem?.cancel()
-        pendingHotKioskPresentationWorkItem = nil
-        kioskGlobalShortcutRegistrar.invalidate()
         AppLogInfo("-------applicationWillTerminate----")
-        MainActor.assumeIsolated {
-            LoginController.shared.recordOOBEAppTermination()
-            SentinelLanguagePreferenceTerminationCoordinator
-                .prepareForPhiTermination()
-        }
-        MemoryUsageMonitor.shared.stop()
         AgentCDPListener.shared.stop()
+        MistMailService.shared.applicationWillTerminate()
         if let chromiumBridge {
             chromiumBridge.applicationWillTerminate(notification)
         } else {
@@ -371,16 +154,17 @@ import PostHog
             ChromiumLauncher.sharedInstance().bridge?.applicationWillTerminate(notification)
         }
     }
-    
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         AppLogInfo("-----------------------------  Quitting: \(Self.makeClientString()) ------------------------------")
         // Note: on Cmd+Q this fires AFTER Chromium's window teardown; the restore
         // snapshot is frozen earlier, in phiWillTryToTerminateApplicationNotification.
         // Re-assert here as a backstop for any quit path that reaches this hook.
         SpaceManager.shared.markTerminating()
+        TabNameStore.shared.freeze()
         // Confirmed writes can start while Chromium's own quit confirmation is up.
         // Recheck both export owners after browser teardown, without a late discard veto.
-        if Self.inFlightBookmarkExportWrites > 0 || sender.windows.contains(where: {
+        if MistMailService.shared.needsTerminationFlush || Self.inFlightBookmarkExportWrites > 0 || sender.windows.contains(where: {
             ($0.windowController as? ScreenshotEditorWindowController)?.hasConfirmedExport == true
         }) {
             Self.bookmarkExportTerminationPending = true
@@ -389,11 +173,11 @@ import PostHog
         }
         return .terminateNow
     }
-    
+
     /// Uses the existing export termination gate; neither export owner may resume Quit early.
     @MainActor
     func resumeTerminationAfterConfirmedExports() {
-        guard Self.bookmarkExportTerminationPending, screenshotExportTerminationTask == nil else { return }
+        guard Self.bookmarkExportTerminationPending, screenshotExportTerminationTask == nil, mailTerminationTask == nil else { return }
         let editors = NSApp.windows.compactMap { $0.windowController as? ScreenshotEditorWindowController }
             .filter { $0.hasConfirmedExport }
         if !editors.isEmpty {
@@ -405,6 +189,14 @@ import PostHog
             return
         }
         guard Self.inFlightBookmarkExportWrites == 0 else { return }
+        if MistMailService.shared.needsTerminationFlush {
+            mailTerminationTask = Task { @MainActor [self] in
+                await MistMailService.shared.flushForTermination()
+                mailTerminationTask = nil
+                resumeTerminationAfterConfirmedExports()
+            }
+            return
+        }
         Self.bookmarkExportTerminationPending = false
         NSApp.reply(toApplicationShouldTerminate: true)
     }
@@ -412,7 +204,7 @@ import PostHog
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return true
     }
-    
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // Closing the last window keeps the app alive, and the session data
         // behind that close is safe: Chromium defers every close in the
@@ -421,98 +213,24 @@ import PostHog
         // session quitting does and a Dock reopen restores it.
         return false
     }
-    
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        let canUseBrowser = !PhiBuildCapabilities.supportsAuthentication
-            || ApplicationState.shared.canUseBrowser
-        if !canUseBrowser {
-            if !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
-                LoginController.shared.showLoginWindow()
-            }
+        if SpaceManager.shared.reopenOnPersistedSpaceIfWindowless() {
             return true
-        } else {
-            // Only renew on reopen when the access token is actually close to
-            // expiring. Calling `renewCredentials()` on every reopen turned a
-            // routine UX gesture into a high-frequency RT-exchange trigger and
-            // amplified ferrt risk on stale RTs (see Auth0 incident
-            // 2026-04-22). The periodic renew timer still handles long-term
-            // freshness; this gate just removes the redundant burst on reopen.
-            if ApplicationState.shared.isAuthenticated,
-               AuthManager.shared.shouldRenewOnReopen() {
-                AuthManager.shared.renewCredentials()
-            } else {
-                AppLogDebug("reopen: Guest Mode or fresh access token, skipping renew")
-            }
-            // With no surviving browser window, spawn the persisted
-            // last-active Space ourselves instead of letting Chromium's
-            // reopen create the window: Chromium seeds it from its own
-            // last-used-profile pref, which the window-close cascade
-            // pollutes, and the coordinator then re-resolves the Space to
-            // match that profile — reopening on the default Space instead
-            // of the one the user closed. See
-            // `SpaceManager.reopenOnPersistedSpaceIfWindowless`.
-            if SpaceManager.shared.reopenOnPersistedSpaceIfWindowless() {
-                return true
-            }
-            return ChromiumLauncher.sharedInstance().bridge?.applicationShouldHandleReopen(sender, hasVisibleWindows: hasVisibleWindows) ?? false
         }
+        return ChromiumLauncher.sharedInstance().bridge?.applicationShouldHandleReopen(sender, hasVisibleWindows: hasVisibleWindows) ?? false
     }
-    
+
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        guard ApplicationState.shared.canUseBrowser else {
-            return nil
-        }
         let menu = ChromiumLauncher.sharedInstance().bridge?.applicationDockMenu(sender)
         return menu
     }
-    
+
     func application(_ application: NSApplication, open urls: [URL]) {
-        if PhiBuildCapabilities.supportsAuthentication {
-            for url in urls where AuthManager.shared.resumeExternalBrowserAuthentication(with: url) {
-                return
-            }
+        if let url = urls.first, DeeplinkHandler.handle(url) {
+            return
         }
-
-        // AppKit delivers launch URLs between `applicationWillFinishLaunching`
-        // and `applicationDidFinishLaunching`, i.e. before the latter resolves
-        // the browser-access gate. Until then a signed-in user still reads the
-        // persisted default (`.loginRequired`), which presented the login
-        // window for a moment and then dismissed it. Resolve the gate on
-        // demand, exactly as `applicationDidFinishLaunching` and Chromium's
-        // window checks do, so the URL takes its ordinary path.
-        if !hasFinishedLaunching {
-            resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: true)
-        }
-
-        let requiresRegularWindowBeforeKiosk =
-            PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
-                && !hasFinishedLaunching
-        let opensInKiosk =
-            PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
-        let canOpenBrowser = ApplicationState.shared.canUseBrowser
-            && (!opensInKiosk
-                || ApplicationState.shared.canOpenExternalLinksInKiosk)
-
-        if !canOpenBrowser {
-            pendingOpenURLsAwaitingBrowserAccess.append(contentsOf: urls)
-            pendingBrowserAccessOpenRequiresRegularWindow =
-                pendingBrowserAccessOpenRequiresRegularWindow
-                    || requiresRegularWindowBeforeKiosk
-            if !ApplicationState.shared.canUseBrowser,
-               !ApplicationState.shared.isGuestMigrationRecoveryInProgress {
-                LoginController.shared.showLoginWindow()
-            }
-        } else {
-            if let url = urls.first, DeeplinkHandler.handle(url) {
-                return
-            }
-            scheduleForwardOpenURLsToChromium(
-                application: application,
-                urls: urls,
-                requiresRegularWindowBeforeKiosk:
-                    requiresRegularWindowBeforeKiosk
-            )
-        }
+        scheduleForwardOpenURLsToChromium(application: application, urls: urls)
     }
 
     /// Forwards `application(_:open:)` URLs to Chromium once the app can
@@ -523,58 +241,23 @@ import PostHog
     /// against an empty table and open it unrouted in the last-active
     /// window). Cold launch retries in `coldOpenURLForwardDelay` steps up to
     /// `coldOpenURLForwardMaxAttempts`. Standard opens then forward as a
-    /// last-resort; a cold Kiosk open asks Chromium to surface a regular window
-    /// and keeps waiting so the Kiosk activates last.
+    /// last resort if readiness does not arrive within the bounded wait.
     private func scheduleForwardOpenURLsToChromium(
         application: NSApplication,
-        urls: [URL],
-        requiresRegularWindowBeforeKiosk: Bool
+        urls: [URL]
     ) {
-        let opensInKiosk =
-            PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
-        // Kiosk opens also need the initial rule snapshot because a matching
-        // Space rule takes precedence over the external-link Kiosk preference.
-        let requiresSpaceReadiness = true
-
-        // Standard opens preserve the existing session-restore behavior so
-        // the link lands in the restored active window. A Kiosk cold open
-        // waits for Chromium's ordinary launch window instead; starting a
-        // second restore here could create an extra regular window.
-        if !opensInKiosk {
-            SpaceManager.shared.beginSessionRestoreForExternalOpenIfEligible()
-        }
-
-        let isCurrentRequestReady = isReadyToForwardOpenURLs(
-            requiresSpaceReadiness: requiresSpaceReadiness,
-            requiresVisibleRegularWindow: requiresRegularWindowBeforeKiosk
-        )
+        SpaceManager.shared.beginSessionRestoreForExternalOpenIfEligible()
+        let isCurrentRequestReady = isReadyToForwardOpenURLs()
 
         if !pendingColdOpenForwardURLs.isEmpty {
             pendingColdOpenForwardURLs.append(contentsOf: urls)
-            pendingColdOpenRequiresSpaceReadiness =
-                pendingColdOpenRequiresSpaceReadiness || requiresSpaceReadiness
-            pendingColdOpenRequiresVisibleRegularWindow =
-                pendingColdOpenRequiresVisibleRegularWindow
-                    || requiresRegularWindowBeforeKiosk
-            if isReadyToForwardOpenURLs(
-                requiresSpaceReadiness:
-                    pendingColdOpenRequiresSpaceReadiness,
-                requiresVisibleRegularWindow:
-                    pendingColdOpenRequiresVisibleRegularWindow
-            ) {
+            if isReadyToForwardOpenURLs() {
                 coldOpenURLForwardWorkItem?.cancel()
                 coldOpenURLForwardWorkItem = nil
                 let urlsToForward = pendingColdOpenForwardURLs
                 pendingColdOpenForwardURLs.removeAll()
                 coldOpenURLForwardAttempts = 0
-                pendingColdOpenRequiresSpaceReadiness = false
-                pendingColdOpenRequiresVisibleRegularWindow = false
-                requestedRegularWindowForPendingKioskOpen = false
-                forwardOpenURLsToChromium(
-                    application: application,
-                    urls: urlsToForward,
-                    label: "coalesced"
-                )
+                forwardOpenURLsToChromium(application: application, urls: urlsToForward, label: "coalesced")
             } else {
                 scheduleColdOpenForwardRetry(application: application)
             }
@@ -591,30 +274,13 @@ import PostHog
         }
 
         pendingColdOpenForwardURLs.append(contentsOf: urls)
-        pendingColdOpenRequiresSpaceReadiness =
-            pendingColdOpenRequiresSpaceReadiness || requiresSpaceReadiness
-        pendingColdOpenRequiresVisibleRegularWindow =
-            pendingColdOpenRequiresVisibleRegularWindow
-                || requiresRegularWindowBeforeKiosk
         scheduleColdOpenForwardRetry(application: application)
     }
 
-    private func isReadyToForwardOpenURLs(
-        requiresSpaceReadiness: Bool,
-        requiresVisibleRegularWindow: Bool
-    ) -> Bool {
-        let opensInKiosk =
-            PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
-        let spaceReady = !requiresSpaceReadiness
-            || (SpaceManager.shared.hasLoadedURLRules
-                && (opensInKiosk
-                    || SpaceSessionControllersManager.shared
-                        .getFirstAvailableWindowId() != nil))
-        let regularWindowReady = !requiresVisibleRegularWindow
-            || SpaceSessionControllersManager.shared.hasVisibleRegularBrowserWindow
-        let restoreSettled = !requiresVisibleRegularWindow
-            || !SpaceManager.shared.isSessionRestoreInFlight
-        return spaceReady && regularWindowReady && restoreSettled
+    private func isReadyToForwardOpenURLs() -> Bool {
+        SpaceManager.shared.hasLoadedURLRules
+            && !SpaceManager.shared.awaitsRestoredPrimary
+            && SpaceSessionControllersManager.shared.getFirstAvailableWindowId() != nil
     }
 
     private func scheduleColdOpenForwardRetry(application: NSApplication) {
@@ -627,32 +293,7 @@ import PostHog
             guard let self else { return }
             self.coldOpenURLForwardWorkItem = nil
             self.coldOpenURLForwardAttempts += 1
-            let isReady = self.isReadyToForwardOpenURLs(
-                requiresSpaceReadiness:
-                    self.pendingColdOpenRequiresSpaceReadiness,
-                requiresVisibleRegularWindow:
-                    self.pendingColdOpenRequiresVisibleRegularWindow
-            )
-            if !isReady,
-               self.pendingColdOpenRequiresVisibleRegularWindow {
-                if !SpaceSessionControllersManager.shared
-                        .hasVisibleRegularBrowserWindow,
-                   !self.requestedRegularWindowForPendingKioskOpen,
-                   self.coldOpenURLForwardAttempts
-                        >= Self.coldOpenURLForwardMaxAttempts {
-                    self.requestedRegularWindowForPendingKioskOpen = true
-                    ChromiumLauncher.sharedInstance().bridge?
-                        .applicationShouldHandleReopen(
-                            NSApp,
-                            hasVisibleWindows: false
-                        )
-                }
-                if self.coldOpenURLForwardAttempts
-                    < Self.coldKioskOpenForwardMaxAttempts {
-                    self.scheduleColdOpenForwardRetry(application: application)
-                    return
-                }
-            }
+            let isReady = self.isReadyToForwardOpenURLs()
             if !isReady,
                self.coldOpenURLForwardAttempts < Self.coldOpenURLForwardMaxAttempts {
                 self.scheduleColdOpenForwardRetry(application: application)
@@ -662,9 +303,6 @@ import PostHog
             let urlsToForward = self.pendingColdOpenForwardURLs
             self.pendingColdOpenForwardURLs.removeAll()
             self.coldOpenURLForwardAttempts = 0
-            self.pendingColdOpenRequiresSpaceReadiness = false
-            self.pendingColdOpenRequiresVisibleRegularWindow = false
-            self.requestedRegularWindowForPendingKioskOpen = false
             self.forwardOpenURLsToChromium(application: application, urls: urlsToForward, label: label)
         }
         coldOpenURLForwardWorkItem = work
@@ -673,266 +311,24 @@ import PostHog
     }
 
     private func forwardOpenURLsToChromium(application: NSApplication, urls: [URL], label: String) {
-        AppLogDebug("[coldopen] urls call bridge (\(label))")
-        let opensInKiosk =
-            PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
-        let hasLoadedURLRules = SpaceManager.shared.hasLoadedURLRules
-        AppLogDebug(
-            "[ExternalKioskRouting] forward label=\(label) count=\(urls.count) "
-                + "kioskPreference=\(opensInKiosk) "
-                + "rulesLoaded=\(hasLoadedURLRules)"
-        )
-        guard opensInKiosk,
-              hasLoadedURLRules else {
-            AppLogDebug(
-                "[ExternalKioskRouting] bypassing URL Rule evaluation; "
-                    + "forwarding directly to Chromium"
-            )
-            forwardOpenURLsDirectlyToChromium(
-                application: application,
-                urls: urls
-            )
-            return
+        let openedInPrimary = MainActor.assumeIsolated {
+            SpaceManager.shared.openExternalURLsInPrimaryWindow(urls)
         }
-
-        let urlsForChromium = MainActor.assumeIsolated {
-            let rules = SpaceManager.shared.allRules
-            AppLogDebug(
-                "[ExternalKioskRouting] evaluating \(urls.count) URL(s) "
-                    + "against \(rules.count) rule(s)"
-            )
-            var urlsForChromium: [URL] = []
-            var urlsByTargetSpaceId: [String: [String]] = [:]
-            for url in urls {
-                let urlSummary = "\(url.scheme ?? "unknown")://"
-                    + "\(url.host ?? "no-host")"
-                let matchingRule = URLRouter.matchingRule(
-                    for: url,
-                    rules: rules
-                )
-                let matchedTarget = matchingRule?.spaceId ?? "none"
-                let decision = ExternalKioskURLRuleResolver.decision(
-                    for: url,
-                    rules: rules
-                )
-                let decisionSummary: String
-                switch decision {
-                case .useKiosk:
-                    decisionSummary = "useKiosk"
-                case let .useKioskWithSpaceIdentity(targetSpaceId):
-                    decisionSummary = "useKioskWithSpaceIdentity:\(targetSpaceId)"
-                case let .ask(defaultSpaceId):
-                    decisionSummary = "ask:\(defaultSpaceId)"
-                case let .openInSpace(targetSpaceId):
-                    decisionSummary = "openInSpace:\(targetSpaceId)"
-                }
-                AppLogDebug(
-                    "[ExternalKioskRouting] url=\(urlSummary) "
-                        + "matchedTarget=\(matchedTarget) "
-                        + "decision=\(decisionSummary)"
-                )
-                switch decision {
-                case .useKiosk:
-                    urlsForChromium.append(url)
-                case let .useKioskWithSpaceIdentity(targetSpaceId):
-                    openExternalURLInKiosk(
-                        url,
-                        usingIdentityFromSpaceId: targetSpaceId
-                    )
-                case let .ask(defaultSpaceId):
-                    askForExternalURLRuleDestination(
-                        url,
-                        defaultSpaceId: defaultSpaceId
-                    )
-                case let .openInSpace(targetSpaceId):
-                    urlsByTargetSpaceId[targetSpaceId, default: []]
-                        .append(url.absoluteString)
-                }
-            }
-            for (targetSpaceId, urlStrings) in urlsByTargetSpaceId {
-                SpaceManager.shared.openExternalURLs(
-                    urlStrings,
-                    inURLRuleTargetSpaceId: targetSpaceId
-                )
-            }
-            return urlsForChromium
-        }
-        if !urlsForChromium.isEmpty {
-            forwardOpenURLsDirectlyToChromium(
-                application: application,
-                urls: urlsForChromium
-            )
-        }
+        AppLogDebug("[coldopen] urls call bridge (\(label), path=\(openedInPrimary ? "primary" : "chromium"))")
+        if openedInPrimary { return }
+        ChromiumLauncher.sharedInstance().bridge?.application(application, open: urls)
     }
 
-    @MainActor
-    private func openExternalURLInKiosk(
-        _ url: URL,
-        usingIdentityFromSpaceId targetSpaceId: String
-    ) {
-        let manager = SpaceManager.shared
-        let profileId = manager.profileId(
-            forURLRuleTargetSpaceId: targetSpaceId
-        )
-        let activeProfileId = SpaceSessionControllersManager.shared
-            .activeWindowController?.profileId ?? "none"
-        AppLogDebug(
-            "[ExternalKioskRouting] resolved identity targetSpace=\(targetSpaceId) "
-                + "targetProfile=\(profileId ?? "none") "
-                + "activeProfile=\(activeProfileId)"
-        )
-        guard let profileId, !profileId.isEmpty else {
-            AppLogWarn(
-                "[ExternalKioskRouting] URL Rule target Space has no available "
-                    + "profile identity: \(targetSpaceId)"
-            )
-            manager.openExternalURLs(
-                [url.absoluteString],
-                inURLRuleTargetSpaceId: targetSpaceId
-            )
-            return
-        }
-        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
-            AppLogWarn(
-                "[ExternalKioskRouting] Chromium bridge unavailable for "
-                    + "targetSpace=\(targetSpaceId) targetProfile=\(profileId)"
-            )
-            manager.openExternalURLs(
-                [url.absoluteString],
-                inURLRuleTargetSpaceId: targetSpaceId
-            )
-            return
-        }
-
-        AppLogDebug(
-            "[ExternalKioskRouting] requesting profile load "
-                + "targetSpace=\(targetSpaceId) targetProfile=\(profileId)"
-        )
-        bridge.ensureProfileLoaded(profileId) { success in
-            AppLogDebug(
-                "[ExternalKioskRouting] profile load completed "
-                    + "targetSpace=\(targetSpaceId) "
-                    + "targetProfile=\(profileId) success=\(success)"
-            )
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    AppController.shared?.finishOpeningExternalURLInKiosk(
-                        url,
-                        targetSpaceId: targetSpaceId,
-                        profileId: profileId,
-                        profileLoadSucceeded: success
-                    )
-                }
-            }
-        }
-    }
-
-    @MainActor
-    private func finishOpeningExternalURLInKiosk(
-        _ url: URL,
-        targetSpaceId: String,
-        profileId: String,
-        profileLoadSucceeded: Bool
-    ) {
-        let manager = SpaceManager.shared
-        guard profileLoadSucceeded else {
-            AppLogWarn(
-                "[ExternalKioskRouting] Failed to load URL Rule target profile "
-                    + "\(profileId); opening in Space \(targetSpaceId)"
-            )
-            manager.openExternalURLs(
-                [url.absoluteString],
-                inURLRuleTargetSpaceId: targetSpaceId
-            )
-            return
-        }
-        guard openNewKioskWindow(
-            url: url.absoluteString,
-            bringToFront: false,
-            profileId: profileId,
-            preferredSpaceId: targetSpaceId
-        ) else {
-            AppLogWarn(
-                "[ExternalKioskRouting] Failed to open Kiosk with URL Rule profile "
-                    + "\(profileId); opening in Space \(targetSpaceId)"
-            )
-            manager.openExternalURLs(
-                [url.absoluteString],
-                inURLRuleTargetSpaceId: targetSpaceId
-            )
-            return
-        }
-        AppLogDebug(
-            "[ExternalKioskRouting] Kiosk open succeeded "
-                + "targetSpace=\(targetSpaceId) targetProfile=\(profileId)"
-        )
-    }
-
-    private func askForExternalURLRuleDestination(
-        _ url: URL,
-        defaultSpaceId: String
-    ) {
-        assert(Thread.isMainThread)
-        let controllers = SpaceSessionControllersManager.shared
-            .getAllWindows()
-        // A hosted shell is visible for every session of its slot; only the
-        // presented one can host the chooser.
-        let sourceController = controllers.first(where: {
-            $0.browserType == .normal && $0.isPresentedOrLegacy && $0.window?.isVisible == true
-        }) ?? controllers.first(where: {
-            $0.isPresentedOrLegacy && $0.window?.isVisible == true
-        }) ?? controllers.first
-        guard let sourceController else {
-            // There is no window to host the chooser. Preserve the rule's
-            // non-Kiosk precedence by using its default Space destination.
-            AppLogWarn(
-                "[ExternalLinks] Ask rule has no source window; "
-                    + "opening in default Space \(defaultSpaceId)"
-            )
-            MainActor.assumeIsolated {
-                SpaceManager.shared.openExternalURLs(
-                    [url.absoluteString],
-                    inURLRuleTargetSpaceId: defaultSpaceId
-                )
-            }
-            return
-        }
-        PhiChromiumCoordinator.shared.askSpace(
-            forURL: url.absoluteString,
-            defaultSpaceId: defaultSpaceId,
-            sourceWindowId: Int64(sourceController.windowId),
-            sourceIsNewTab: false
-        )
-    }
-
-    private func forwardOpenURLsDirectlyToChromium(
-        application: NSApplication,
-        urls: [URL]
-    ) {
-        ChromiumLauncher.sharedInstance().bridge?.application(
-            application,
-            open: urls
-        )
-    }
-    
     func application(_ application: NSApplication, willContinueUserActivityWithType userActivityType: String) -> Bool {
         return ChromiumLauncher.sharedInstance().bridge?.application(application, willContinueUserActivityWithType: userActivityType) ?? false
     }
-    
+
     func application(_ application: NSApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
-        if PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue(),
-           userActivity.activityType == NSUserActivityTypeBrowsingWeb,
-           let url = userActivity.webpageURL {
-            self.application(application, open: [url])
-            restorationHandler([])
-            return true
-        }
         return ChromiumLauncher.sharedInstance().bridge?.application(application, continue: userActivity, restorationHandler: restorationHandler) ?? false
     }
-    
+
     @MainActor
     @objc func phiWillTryToTerminateApplicationNotification(_ notification: Notification) {
-        crashFeedbackCoordinator?.suspendForTermination()
         // Posted (synchronously, main thread) by phi_app_controller_mac.mm's
         // -tryToTerminateApplication once the quit is past the confirm sheet and
         // the in-progress-downloads prompt, BEFORE chrome::CloseAllBrowsers()
@@ -944,6 +340,7 @@ import PostHog
         // the teardown, a page's beforeunload prompt; it lifts the freeze again
         // through phiDidCancelTerminateApplicationNotification below.
         SpaceManager.shared.markTerminating()
+        TabNameStore.shared.freeze()
     }
 
     @MainActor
@@ -956,64 +353,7 @@ import PostHog
         // Nothing is written here; a change refused during the freeze is still
         // pending and lands with the next write.
         SpaceManager.shared.clearTerminating()
-        crashFeedbackCoordinator?.resumeAfterCancelledTermination()
-    }
-
-    @objc private func loginStatusRefreshCompleted(_ notification: Notification) {
-        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
-        Task { @MainActor in
-            self.flushPendingOpenURLsAwaitingBrowserAccess()
-        }
-    }
-
-    @objc private func loginCompleted(_ notification: Notification) {
-        if !PhiBuildCapabilities.supportsAuthentication {
-            ApplicationState.shared.enterGuestMode()
-        } else if LoginController.shared.isLoggedin() {
-            ApplicationState.shared.markSignedIn()
-        } else {
-            resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
-        }
-        Task { @MainActor in
-            self.flushPendingOpenURLsAwaitingBrowserAccess()
-        }
-    }
-
-    @objc private func browserAccessStateDidChange(_ notification: Notification) {
-        Task { @MainActor in
-            AuthenticatedSentinelSessionLifecycle.reconcile()
-            guard ApplicationState.shared.canUseBrowser,
-                  !ApplicationState.shared
-                    .isGuestAccountPromotionInProgress else {
-                return
-            }
-
-            let pendingKioskOwnsPostLoginPresentation =
-                self.shouldSuppressPostLoginRegularWindowForPendingKioskOpen
-            self.flushPendingOpenURLsAwaitingBrowserAccess()
-            ChromiumLauncher.sharedInstance().bridge?.notifyRebuildMenuAfterLogin()
-
-            // Guest entry can happen before Chromium has created a dangling
-            // window. Ask Chromium to create/reopen one only when neither a
-            // live nor a dangling browser already exists.
-            if !pendingKioskOwnsPostLoginPresentation,
-               SpaceSessionControllersManager.shared.getFirstAvailableWindowId() == nil {
-                ChromiumLauncher.sharedInstance().bridge?
-                    .applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
-            }
-        }
-    }
-
-    @objc private func kioskExternalLinkAccessDidChange(
-        _ notification: Notification
-    ) {
-        Task { @MainActor in
-            self.flushPendingOpenURLsAwaitingBrowserAccess()
-        }
-    }
-
-    @objc private func mainAccountChanged(_ notification: Notification) {
-        resolveBrowserAccessFromAuthentication(checkChromiumLaunchStatus: false)
+        TabNameStore.shared.unfreeze()
     }
 
     private func bindChromiumBridgeIfNeeded() {
@@ -1022,155 +362,6 @@ import PostHog
         }
     }
 
-    func setOpenExternalLinksInKioskEnabled(_ enabled: Bool) {
-        bindChromiumBridgeIfNeeded()
-        guard let chromiumBridge,
-              chromiumBridge.responds(
-                to: #selector(
-                    PhiChromiumBridgeProtocol
-                        .setOpenExternalLinksInKioskEnabled(_:)
-                )
-              ) else {
-            AppLogWarn(
-                "[ExternalLinks] Chromium bridge does not support Kiosk routing"
-            )
-            return
-        }
-        chromiumBridge.setOpenExternalLinksInKioskEnabled(enabled)
-    }
-
-    func setOpenKioskOnCommandOptionClickEnabled(_ enabled: Bool) {
-        bindChromiumBridgeIfNeeded()
-        guard let chromiumBridge,
-              chromiumBridge.responds(
-                to: #selector(
-                    PhiChromiumBridgeProtocol
-                        .setOpenKioskOnCommandOptionClickEnabled(_:)
-                )
-              ) else {
-            AppLogWarn(
-                "[Kiosk] Chromium bridge does not support Command-Option link routing"
-            )
-            return
-        }
-        chromiumBridge.setOpenKioskOnCommandOptionClickEnabled(enabled)
-    }
-
-    func setOpenKioskWithGlobalShortcutEnabled(_ enabled: Bool) {
-        kioskGlobalShortcutRegistrar.setEnabled(enabled)
-    }
-
-    var kioskGlobalShortcutStatus: KioskGlobalShortcutRegistrar.Status {
-        kioskGlobalShortcutRegistrar.status
-    }
-
-    func suspendKioskGlobalShortcutForRecording() -> () -> Void {
-        kioskGlobalShortcutRegistrar.suspendForShortcutRecording()
-    }
-
-    @MainActor
-    var shouldSuppressPostLoginRegularWindowForPendingKioskOpen: Bool {
-        pendingHotKioskPresentationInFlight
-            || (PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
-                && !pendingOpenURLsAwaitingBrowserAccess.isEmpty
-                && !pendingBrowserAccessOpenRequiresRegularWindow)
-    }
-
-    @MainActor
-    private func claimPostLoginPresentationForHotKioskOpen() {
-        pendingHotKioskPresentationInFlight = true
-        pendingHotKioskPresentationWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.pendingHotKioskPresentationInFlight else {
-                return
-            }
-            self.pendingHotKioskPresentationInFlight = false
-            self.pendingHotKioskPresentationWorkItem = nil
-            guard ApplicationState.shared.canUseBrowser,
-                  SpaceSessionControllersManager.shared
-                    .getFirstAvailableWindowId() == nil else {
-                return
-            }
-            ChromiumLauncher.sharedInstance().bridge?
-                .applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
-        }
-        pendingHotKioskPresentationWorkItem = work
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + Self.postLoginKioskPresentationTimeout,
-            execute: work
-        )
-    }
-
-    @MainActor
-    func externalLinkPresentationWindowDidOpen() {
-        guard pendingHotKioskPresentationInFlight else { return }
-        pendingHotKioskPresentationInFlight = false
-        pendingHotKioskPresentationWorkItem?.cancel()
-        pendingHotKioskPresentationWorkItem = nil
-    }
-
-    @MainActor
-    private func flushPendingOpenURLsAwaitingBrowserAccess() {
-        guard !pendingOpenURLsAwaitingBrowserAccess.isEmpty else {
-            return
-        }
-
-        let opensInKiosk =
-            PhiPreferences.GeneralSettings.openExternalLinksInKiosk.loadValue()
-        guard ApplicationState.shared.canUseBrowser,
-              (!opensInKiosk
-                || ApplicationState.shared.canOpenExternalLinksInKiosk) else {
-            return
-        }
-
-        let urls = pendingOpenURLsAwaitingBrowserAccess
-        pendingOpenURLsAwaitingBrowserAccess.removeAll()
-        let requiresRegularWindowBeforeKiosk =
-            pendingBrowserAccessOpenRequiresRegularWindow
-        pendingBrowserAccessOpenRequiresRegularWindow = false
-        if let url = urls.first, DeeplinkHandler.handle(url) {
-            return
-        }
-        if opensInKiosk && !requiresRegularWindowBeforeKiosk {
-            claimPostLoginPresentationForHotKioskOpen()
-        }
-        scheduleForwardOpenURLsToChromium(
-            application: NSApp,
-            urls: urls,
-            requiresRegularWindowBeforeKiosk:
-                requiresRegularWindowBeforeKiosk
-        )
-    }
-
-    private func resolveBrowserAccessFromAuthentication(
-        checkChromiumLaunchStatus: Bool
-    ) {
-        guard PhiBuildCapabilities.supportsAuthentication else {
-            ApplicationState.shared.enterGuestMode()
-            return
-        }
-
-        // A persisted Guest choice deliberately outranks credentials that were
-        // staged but never committed. LoginController performs the one
-        // identity-bound recovery when a migration journal exists; ordinary
-        // browser-access probes must not revive that session.
-        let isPersistedGuest = ApplicationState.shared.isGuest
-        let isAuthenticated: Bool
-        if isPersistedGuest {
-            isAuthenticated = false
-        } else {
-            isAuthenticated = checkChromiumLaunchStatus
-                ? AuthManager.shared.checkLoginStatusOnChromiumLaunch()
-                : LoginController.shared.isLoggedin()
-        }
-        ApplicationState.shared.resolveInitialAccess(
-            isAuthenticationBlocked: AuthManager.shared.isAccountDeletionInProgress,
-            hasRecoverableLoginSession: isPersistedGuest
-                ? false
-                : AuthManager.shared.hasRecoverableLoginSession(),
-            isAuthenticated: isAuthenticated
-        )
-    }
 }
 
 extension AppController {
@@ -1213,20 +404,8 @@ extension AppController: ASWebAuthenticationSessionWebBrowserSessionHandling {
     func begin(_ request: ASWebAuthenticationSessionRequest!) {
         ChromiumLauncher.sharedInstance().bridge?.beginHandling(request)
     }
-    
+
     func cancel(_ request: ASWebAuthenticationSessionRequest!)  {
         ChromiumLauncher.sharedInstance().bridge?.cancel(request)
-    }
-}
-
-extension AppController {
-    func showAllDownloads() {
-        if allDownloadsWindowController == nil {
-            let controller = AllDownloadsWindowController()
-            controller.onClose = { [weak self] in self?.allDownloadsWindowController = nil }
-            allDownloadsWindowController = controller
-        }
-        allDownloadsWindowController?.showWindow(nil)
-        allDownloadsWindowController?.window?.makeKeyAndOrderFront(nil)
     }
 }

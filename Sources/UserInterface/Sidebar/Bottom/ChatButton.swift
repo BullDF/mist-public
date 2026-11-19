@@ -14,6 +14,7 @@ struct ChatButton: View {
     /// Minimum width for contexts that reserve a fixed toolbar slot.
     var contentWidth: CGFloat? = nil
     var contentHeight: CGFloat? = nil
+    var systemName: String? = nil
 
     static var preferredContentWidth: CGFloat {
         let titleWidth = (localizedTitle as NSString).size(
@@ -29,15 +30,15 @@ struct ChatButton: View {
     
     private enum Constants {
         /// Button background color.
-        static let backgroundColor: ThemedColor = .themeColor
+        static let backgroundColor: ThemedColor = .themeButtonBackground
         /// Hover background color.
-        static let hoveredBackgroundColor: ThemedColor = .themeColorOnHover
+        static let hoveredBackgroundColor: ThemedColor = .themeButtonBackgroundOnHover
+        /// Icon and label color.
+        static let foregroundColor: ThemedColor = .themeButtonForeground
         /// Border color in dark appearance.
         static let borderColor = Color.white.opacity(0.4)
         /// Border width.
         static let borderWidth: CGFloat = 0
-        /// Capsule corner radius.
-        static let cornerRadius: CGFloat = 999
         /// Vertical padding.
         static let verticalPadding: CGFloat = 0
         /// Trailing padding.
@@ -48,6 +49,10 @@ struct ChatButton: View {
         static let spacing: CGFloat = 2
         /// Icon size.
         static let iconSize: CGFloat = 22
+        /// SF Symbol width. Symbol layouts pad both sides equally and keep the asset layout's total width.
+        static let symbolSize: CGFloat = 14
+        static let symbolSpacing: CGFloat = 4
+        static let symbolHorizontalPadding: CGFloat = (iconSize + spacing + trailingPadding - symbolSize - symbolSpacing) / 2
     }
 
     private static var localizedTitle: String {
@@ -60,22 +65,22 @@ struct ChatButton: View {
     
     var body: some View {
         Button(action: action) {
-            HStack(spacing: Constants.spacing) {
-                Image(.sidebarChat)
+            HStack(spacing: systemName == nil ? Constants.spacing : Constants.symbolSpacing) {
+                (systemName.map { Image(systemName: $0) } ?? Image(.sidebarChat))
                     .resizable()
                     .renderingMode(.template)
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: Constants.iconSize, height: Constants.iconSize)
-                    .foregroundColor(.white)
-                
+                    .frame(width: systemName == nil ? Constants.iconSize : Constants.symbolSize, height: Constants.iconSize)
+                    .themedForeground(Constants.foregroundColor)
+
                 Text(Self.localizedTitle)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
+                    .themedForeground(Constants.foregroundColor)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
-            .padding(.leading, Constants.leadingPadding)
-            .padding(.trailing, Constants.trailingPadding)
+            .padding(.leading, systemName == nil ? Constants.leadingPadding : Constants.symbolHorizontalPadding)
+            .padding(.trailing, systemName == nil ? Constants.trailingPadding : Constants.symbolHorizontalPadding)
             .padding(.vertical, Constants.verticalPadding)
             .frame(
                 minWidth: contentWidth,
@@ -93,49 +98,11 @@ struct ChatButton: View {
         }
         .buttonStyle(.plain)
         .fixedSize(horizontal: true, vertical: false)
-        .help(Self.localizedTitle)
+        .customTooltip(Self.localizedTitle)
         .accessibilityLabel(Self.localizedTitle)
         .onHover { hovering in
             isHovering = hovering
         }
-    }
-}
-
-// MARK: - AppKit Wrapper
-
-/// AppKit wrapper for `ChatButton`.
-class ChatButtonNSView: NSView {
-    private var hostingView: ThemedHostingView?
-    private let action: () -> Void
-    
-    init(action: @escaping () -> Void) {
-        self.action = action
-        super.init(frame: .zero)
-        setupHostingView(action: action)
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    private func setupHostingView(action: @escaping () -> Void) {
-        let hosting = ThemedHostingView(rootView: ChatButton(action: action))
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hosting)
-        
-        hosting.setContentHuggingPriority(.required, for: .horizontal)
-        hosting.setContentHuggingPriority(.required, for: .vertical)
-        hosting.setContentCompressionResistancePriority(.required, for: .horizontal)
-        hosting.setContentCompressionResistancePriority(.required, for: .vertical)
-        
-        NSLayoutConstraint.activate([
-            hosting.topAnchor.constraint(equalTo: topAnchor),
-            hosting.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hosting.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        
-        self.hostingView = hosting
     }
 }
 

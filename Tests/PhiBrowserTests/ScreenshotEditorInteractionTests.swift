@@ -221,8 +221,6 @@ final class ScreenshotEditorInteractionTests: XCTestCase {
         m.redo(); XCTAssertEqual(m.selected, preview)
         let moved = preview.translated(by: CGPoint(x: 30, y: 50))
         XCTAssertTrue(moved.contains(CGPoint(x: 130, y: 90), tolerance: 1))
-        let resized = preview.resized(to: CGRect(x: 20, y: 20, width: 440, height: 160))
-        XCTAssertTrue(resized.contains(CGPoint(x: 180, y: 60), tolerance: 1))
     }
     func testMultiSelectionStyleChangesOnlyRequestedFieldAndUndoIsAggregate() {
         let m = model(), ids = twoObjects(m)

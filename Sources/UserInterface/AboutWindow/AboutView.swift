@@ -8,14 +8,12 @@ import AppKit
 
 struct AboutView: View {
     private let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ??
-                         Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Phi"
-
-    private let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
-
-    private let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+                         Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Mist"
 
     private static let chromiumInfoKey = "Chromium version"
     private static let frameworkShortVersionKey = "CFBundleShortVersionString"
+    /// The Phi Framework release tag (`v2.16.1`), stamped by `mist/scripts/rebrand_app.py`.
+    private static let frameworkReleaseInfoKey = "PhiFrameworkRelease"
 
     /// Chromium project home — linked from the first 'Chromium' in acknowledgements.
     private static let chromiumProjectURL = URL(string: "https://www.chromium.org/Home/")!
@@ -40,11 +38,9 @@ struct AboutView: View {
     }
 
     private var chromiumVersion: String {
-        #if DEBUG
         if let version = Self.chromiumVersionFromFramework() {
             return version
         }
-        #endif
 
         if let version = Bundle.main.object(forInfoDictionaryKey: Self.chromiumInfoKey) as? String,
            !version.isEmpty {
@@ -52,6 +48,12 @@ struct AboutView: View {
         }
 
         return "Unknown"
+    }
+
+    private var frameworkRelease: String? {
+        guard let release = Bundle.main.object(forInfoDictionaryKey: Self.frameworkReleaseInfoKey) as? String,
+              !release.isEmpty else { return nil }
+        return release
     }
 
     private static func chromiumVersionFromFramework() -> String? {
@@ -172,18 +174,18 @@ struct AboutView: View {
                     .fontWeight(.bold)
                     .foregroundColor(.primary)
                 
-                VStack(spacing: 2) {
-                    Text(String(format: NSLocalizedString("about.versionLabel", value: "Version %@ (%@)", comment: "About window - App version and build number label"), appVersion, buildNumber))
-                        .font(.system(size: 10))
-                        .foregroundColor(Color(NSColor.labelColor))
-
+                VStack(spacing: 3) {
                     Text(String(format: NSLocalizedString("about.chromiumVersionLabel", value: "Chromium Engine Version %@", comment: "About window - Chromium engine version label"), chromiumVersion))
-                        .font(.system(size: 10))
-                        .foregroundColor(Color(NSColor.labelColor))
+                    // Verbatim: a product name in every language, and a catalog string would be rebranded to Mist.
+                    if let frameworkRelease {
+                        Text(verbatim: "Phi Framework \(frameworkRelease)")
+                    }
                 }
+                .font(.system(size: 10))
+                .foregroundColor(Color(NSColor.labelColor))
 
                 VStack(spacing: 8) {
-                    Text(String(format: NSLocalizedString("about.copyrightNotice", value: "© %d Phinomenon. All rights reserved.", comment: "About window - Copyright notice at bottom"), currentYear))
+                    Text(String(format: NSLocalizedString("about.copyrightNotice", value: "© %d Johnny Meng", comment: "About window - Copyright notice; the placeholder is the current year"), currentYear))
                         .font(.caption)
                         .foregroundColor(Color(NSColor.labelColor))
                         .padding(.top, 5)
@@ -199,7 +201,7 @@ struct AboutView: View {
             Spacer(minLength: 12)
         }
         .padding(20)
-        .frame(width: 290, height: 280)
+        .frame(width: 290, height: frameworkRelease == nil ? 266 : 280)
         .background(Color(NSColor.windowBackgroundColor))
     }
 }

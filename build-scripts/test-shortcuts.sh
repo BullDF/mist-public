@@ -8,6 +8,11 @@ from pathlib import Path
 import re
 import sys
 root, output = map(Path, sys.argv[1:])
+custom = (root / 'Sources/UserInterface/Preferences/Shortcuts/Shortcuts+Custom.swift').read_text()
+key_display = custom[custom.index('extension ShortcutsKey {'):custom.index('extension CommandWrapper {')]
+(output / 'ShortcutKeyDisplay.swift').write_text('import AppKit\n' + key_display)
+policy = custom[custom.index('    static let disabledShortcutCommands:'):custom.index('    /// Native main-menu actions')]
+(output / 'ShortcutPolicy.swift').write_text('extension Shortcuts {\n' + policy + '\n}\n')
 classes = ['ShortcutConfigurationTests', 'ShortcutInventoryTests']
 count = sum(len(re.findall(r'^    func test\w+\(', (root / 'Tests/PhiBrowserTests' / (name + '.swift')).read_text(), re.M)) for name in classes)
 assert count > 0
@@ -31,6 +36,8 @@ xcrun swiftc -swift-version 5 -D SHORTCUTS_HOSTLESS_TESTS \
   "$task_root/Sources/UserInterface/Preferences/Shortcuts/Shortcuts.swift" \
   "$task_root/Sources/UserInterface/Preferences/Shortcuts/ShortcutConfiguration.swift" \
   "$task_root/Sources/UserInterface/Preferences/Shortcuts/ShortcutInventory.swift" \
+  "$task_build/ShortcutKeyDisplay.swift" \
+  "$task_build/ShortcutPolicy.swift" \
   "$task_root/Tests/PhiBrowserTests/ShortcutConfigurationTests.swift" \
   "$task_root/Tests/PhiBrowserTests/ShortcutInventoryTests.swift" \
   "$task_build/main.swift" -o "$task_build/tests"

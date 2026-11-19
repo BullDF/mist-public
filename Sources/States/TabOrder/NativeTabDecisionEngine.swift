@@ -10,6 +10,15 @@ enum NativeTabCreationKind: String, Equatable {
     case restore
     case bridgeCreate
     case unknown
+
+    /// A new tab of these kinds goes to the end of the normal tab list,
+    /// wherever Chromium inserted it.
+    var appendsToNormalTabs: Bool {
+        switch self {
+        case .linkForeground, .linkBackground, .typedNewTab, .typedNavigation: true
+        case .explicitInsert, .moveFromOtherWindow, .restore, .bridgeCreate, .unknown: false
+        }
+    }
 }
 
 struct NativeTabCreationContext: Equatable {
@@ -187,14 +196,6 @@ struct NativeTabRelationGraph: Equatable {
         self.locallyFixedOpenerTabIds = locallyFixedOpenerTabIds
     }
 
-    init(snapshot: NativeTabRelationshipSnapshot) {
-        self.knownTabIds = snapshot.allTabIds
-        self.openerByTabId = snapshot.openerByTabId.compactMapValues { $0 }
-        self.resetOnActiveChangeTabIds = snapshot.resetOnActiveChangeTabIds
-        self.version = snapshot.version
-        self.locallyFixedOpenerTabIds = []
-    }
-
     mutating func apply(snapshot: NativeTabRelationshipSnapshot) {
         guard snapshot.version >= version else { return }
         let snapshotTabIds = snapshot.allTabIds
@@ -358,9 +359,7 @@ enum NativeTabDecisionEngine {
     static func insertionIndex(
         visibleNormalTabIds: [Int],
         context: NativeTabCreationContext?,
-        relationGraph: NativeTabRelationGraph,
-        splitPartnerByTabId: [Int: Int] = [:],
-        hiddenOpenerTabIds: Set<Int> = []
+        relationGraph: NativeTabRelationGraph
     ) -> Int? {
         let creationKindText = context?.creationKind.rawValue ?? "nil"
         let isActiveText = context?.isActiveAtCreation.description ?? "nil"
@@ -373,144 +372,66 @@ enum NativeTabDecisionEngine {
             "[NativeTab] insertionIndex visible=\(visibleNormalTabIds) " +
             "context={kind=\(creationKindText), active=\(isActiveText), opener=\(openerText), " +
             "insertAfter=\(insertAfterText), source=\(sourceText), resetOnActive=\(resetOnActiveText)} " +
-            "graph={openers=\(relationGraph.openerByTabId), reset=\(resetTabIds)} " +
-            "splitPartners=\(splitPartnerByTabId)"
+            "graph={openers=\(relationGraph.openerByTabId), reset=\(resetTabIds)}"
         )
         guard !visibleNormalTabIds.isEmpty else { return 0 }
         guard let context else { return nil }
 
-        switch context.creationKind {
-        case .linkForeground:
-            if let openerTabId = context.openerTabId,
-               let openerIndex = visibleNormalTabIds.firstIndex(of: openerTabId) {
-                let anchorIndex = splitAdjustedAnchorIndex(
-                    openerTabId: openerTabId,
-                    openerIndex: openerIndex,
-                    visibleNormalTabIds: visibleNormalTabIds,
-                    splitPartnerByTabId: splitPartnerByTabId
-                )
-                AppLogDebug(
-                    "[NativeTab] insertionIndex chose foreground opener=\(openerTabId) " +
-                    "openerIndex=\(openerIndex) anchorIndex=\(anchorIndex) result=\(anchorIndex + 1)"
-                )
-                return anchorIndex + 1
-            }
-            if let openerTabId = context.openerTabId,
-               hiddenOpenerTabIds.contains(openerTabId) {
-                let result = hiddenOpenerInsertionIndex(
-                    openerTabId: openerTabId,
-                    visibleNormalTabIds: visibleNormalTabIds,
-                    relationGraph: relationGraph
-                )
-                AppLogDebug(
-                    "[NativeTab] insertionIndex chose hidden foreground opener=\(openerTabId) " +
-                    "result=\(result)"
-                )
-                return result
-            }
-            if let insertAfterTabId = context.insertAfterTabId,
-               let anchorIndex = visibleNormalTabIds.firstIndex(of: insertAfterTabId) {
-                AppLogDebug(
-                    "[NativeTab] insertionIndex foreground fallback insertAfterTabId=\(insertAfterTabId) " +
-                    "anchorIndex=\(anchorIndex) result=\(anchorIndex + 1)"
-                )
-                return anchorIndex + 1
-            }
-        case .linkBackground:
-            if let openerTabId = context.openerTabId,
-               let openerIndex = visibleNormalTabIds.firstIndex(of: openerTabId) {
-                let anchorIndex = splitAdjustedAnchorIndex(
-                    openerTabId: openerTabId,
-                    openerIndex: openerIndex,
-                    visibleNormalTabIds: visibleNormalTabIds,
-                    splitPartnerByTabId: splitPartnerByTabId
-                )
-                let result = lastVisibleDescendantInsertionIndex(
-                    openerTabId: openerTabId,
-                    openerIndex: anchorIndex,
-                    visibleNormalTabIds: visibleNormalTabIds,
-                    relationGraph: relationGraph
-                )
-                AppLogDebug(
-                    "[NativeTab] insertionIndex chose background opener=\(openerTabId) " +
-                    "openerIndex=\(openerIndex) anchorIndex=\(anchorIndex) result=\(result)"
-                )
-                return result
-            }
-            if let openerTabId = context.openerTabId,
-               hiddenOpenerTabIds.contains(openerTabId) {
-                let result = hiddenOpenerInsertionIndex(
-                    openerTabId: openerTabId,
-                    visibleNormalTabIds: visibleNormalTabIds,
-                    relationGraph: relationGraph
-                )
-                AppLogDebug(
-                    "[NativeTab] insertionIndex chose hidden background opener=\(openerTabId) " +
-                    "result=\(result)"
-                )
-                return result
-            }
-            if let insertAfterTabId = context.insertAfterTabId,
-               let anchorIndex = visibleNormalTabIds.firstIndex(of: insertAfterTabId) {
-                AppLogDebug(
-                    "[NativeTab] insertionIndex background fallback insertAfterTabId=\(insertAfterTabId) " +
-                    "anchorIndex=\(anchorIndex) result=\(anchorIndex + 1)"
-                )
-                return anchorIndex + 1
-            }
-        case .typedNewTab, .typedNavigation:
+        if context.creationKind.appendsToNormalTabs {
             AppLogDebug(
                 "[NativeTab] insertionIndex chose append for kind=\(context.creationKind.rawValue) " +
                 "result=\(visibleNormalTabIds.count)"
             )
             return visibleNormalTabIds.count
-        case .explicitInsert, .moveFromOtherWindow, .restore, .bridgeCreate, .unknown:
-            if let insertAfterTabId = context.insertAfterTabId,
-               let anchorIndex = visibleNormalTabIds.firstIndex(of: insertAfterTabId) {
-                AppLogDebug(
-                    "[NativeTab] insertionIndex chose explicit insertAfterTabId=\(insertAfterTabId) " +
-                    "anchorIndex=\(anchorIndex) result=\(anchorIndex + 1)"
-                )
-                return anchorIndex + 1
-            } else if context.creationKind == .restore {
-                if context.insertAfterTabId == nil {
-                    // No predecessor at all: this is the strip's first restored
-                    // tab, so it belongs at the head even when the window
-                    // already shows a placeholder tab.
-                    AppLogDebug("[NativeTab] insertionIndex restore without anchor, result=0")
-                    return 0
-                }
-                // The anchor is a real strip neighbour the Mac side hides
-                // (pinned- or bookmark-bound, or a payload the restored-window
-                // transaction never admitted). Fall through to nil so the
-                // caller appends at the tail rather than prepending, which
-                // would move this tab — and every tab restored after it —
-                // ahead of the ones already placed. Inside the restore
-                // transaction payloads arrive in strip order, so the tail is
-                // the correct slot; on the per-tab path it is a best effort
-                // that the next `tabIndicesUpdated` echo corrects.
-                AppLogDebug(
-                    "[NativeTab] insertionIndex restore anchor hidden, appending " +
-                    "insertAfterTabId=\(insertAfterText)"
-                )
+        }
+        if let insertAfterTabId = context.insertAfterTabId,
+           let anchorIndex = visibleNormalTabIds.firstIndex(of: insertAfterTabId) {
+            AppLogDebug(
+                "[NativeTab] insertionIndex chose explicit insertAfterTabId=\(insertAfterTabId) " +
+                "anchorIndex=\(anchorIndex) result=\(anchorIndex + 1)"
+            )
+            return anchorIndex + 1
+        } else if context.creationKind == .restore {
+            if context.insertAfterTabId == nil {
+                // No predecessor at all: this is the strip's first restored
+                // tab, so it belongs at the head even when the window
+                // already shows a placeholder tab.
+                AppLogDebug("[NativeTab] insertionIndex restore without anchor, result=0")
+                return 0
             }
+            // The anchor is a real strip neighbour the Mac side hides
+            // (pinned- or bookmark-bound, or a payload the restored-window
+            // transaction never admitted). Fall through to nil so the
+            // caller appends at the tail rather than prepending, which
+            // would move this tab — and every tab restored after it —
+            // ahead of the ones already placed. Inside the restore
+            // transaction payloads arrive in strip order, so the tail is
+            // the correct slot; on the per-tab path it is a best effort
+            // that the next `tabIndicesUpdated` echo corrects.
+            AppLogDebug(
+                "[NativeTab] insertionIndex restore anchor hidden, appending " +
+                "insertAfterTabId=\(insertAfterText)"
+            )
         }
 
         AppLogDebug("[NativeTab] insertionIndex returned nil")
         return nil
     }
 
-    private static func hiddenOpenerInsertionIndex(
-        openerTabId: Int,
+    /// Where a tab reopened into a group that is still open goes, as in
+    /// Chrome: back to the list index it closed from, clamped into the
+    /// group's current run. `visibleNormalTabIds` leaves out the reopened
+    /// tab. Nil when no tab in the list belongs to the group.
+    static func reopenedGroupMemberIndex(
+        closedAtIndex: Int,
         visibleNormalTabIds: [Int],
-        relationGraph: NativeTabRelationGraph
-    ) -> Int {
-        var insertAfterIndex: Int?
-        for (index, tabId) in visibleNormalTabIds.enumerated()
-        where isDescendant(tabId, of: openerTabId, relationGraph: relationGraph) {
-            insertAfterIndex = index
+        isGroupMember: (Int) -> Bool
+    ) -> Int? {
+        guard let first = visibleNormalTabIds.firstIndex(where: isGroupMember),
+              let last = visibleNormalTabIds.lastIndex(where: isGroupMember) else {
+            return nil
         }
-        return insertAfterIndex.map { $0 + 1 } ?? 0
+        return min(max(closedAtIndex, first), last + 1)
     }
 
     static func selectionTarget(
@@ -555,38 +476,6 @@ enum NativeTabDecisionEngine {
         return nil
     }
 
-    private static func lastVisibleDescendantInsertionIndex(
-        openerTabId: Int,
-        openerIndex: Int,
-        visibleNormalTabIds: [Int],
-        relationGraph: NativeTabRelationGraph
-    ) -> Int {
-        var insertAfterIndex = openerIndex
-        for (index, tabId) in visibleNormalTabIds.enumerated() where index > openerIndex {
-            if isDescendant(tabId, of: openerTabId, relationGraph: relationGraph) {
-                insertAfterIndex = index
-            }
-        }
-        return insertAfterIndex + 1
-    }
-
-    /// If the opener is in a split with a partner at a higher index, return the
-    /// partner's index so new tabs land after the whole split rather than between
-    /// the two split panes.
-    private static func splitAdjustedAnchorIndex(
-        openerTabId: Int,
-        openerIndex: Int,
-        visibleNormalTabIds: [Int],
-        splitPartnerByTabId: [Int: Int]
-    ) -> Int {
-        guard let partnerId = splitPartnerByTabId[openerTabId],
-              let partnerIndex = visibleNormalTabIds.firstIndex(of: partnerId),
-              partnerIndex > openerIndex else {
-            return openerIndex
-        }
-        return partnerIndex
-    }
-
     private static func directionalMatch(
         around index: Int,
         visibleNormalTabIds: [Int],
@@ -605,23 +494,5 @@ enum NativeTabDecisionEngine {
         }
 
         return nil
-    }
-
-    private static func isDescendant(
-        _ tabId: Int,
-        of ancestorTabId: Int,
-        relationGraph: NativeTabRelationGraph
-    ) -> Bool {
-        var current = relationGraph.openerByTabId[tabId]
-        var visited = Set<Int>()
-
-        while let opener = current, visited.insert(opener).inserted {
-            if opener == ancestorTabId {
-                return true
-            }
-            current = relationGraph.openerByTabId[opener]
-        }
-
-        return false
     }
 }

@@ -42,7 +42,7 @@ final class ExtensionSidePanelView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
 
         // Card looks aligned with the AI Chat panel (see
-        // EmbeddedChatViewController.viewDidLoad): rounded continuous
+        // MistChatPanelViewController.viewDidLoad): rounded continuous
         // corners, 1pt themed border, themed background.
         wantsLayer = true
         layer?.cornerCurve = .continuous

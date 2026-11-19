@@ -124,6 +124,38 @@ final class OmniBoxPresentationTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
+    func testNewRowsStartAtTheTopSoAppRowsAboveTheDefaultShow() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        // The list is collapsed when its first rows arrive; its height follows them.
+        let view = OmniBoxSuggestionView(frame: NSRect(x: 0, y: 0, width: 600, height: 0))
+        window.contentView?.addSubview(view)
+        var app = OmniBoxSuggestion(type: .app, title: "Drifter", url: "", index: -1, stringToFill: "Drifter", swapContentsAndDescription: false)
+        app.app = .drifter
+        app.allowedToBeDefault = false
+        let rows = [app] + (0..<8).map {
+            OmniBoxSuggestion(type: .searchSuggest, title: "dr \($0)", url: "https://example.com/\($0)", index: $0,
+                              stringToFill: "dr \($0)", swapContentsAndDescription: false)
+        }
+        view.layoutSubtreeIfNeeded()
+        view.updateSuggestions(rows, selectedIndex: 1, dataSourceChanged: true)
+        view.setFrameSize(NSSize(width: 600, height: 226))
+        view.layoutSubtreeIfNeeded()
+        let table = try XCTUnwrap(tableView(in: view))
+        XCTAssertEqual(table.visibleRect.minY, 0, "The app row above the default row must show")
+        table.scrollRowToVisible(8)
+        XCTAssertGreaterThan(table.visibleRect.minY, 0)
+        view.updateSuggestions(rows, selectedIndex: 1, dataSourceChanged: true)
+        XCTAssertEqual(table.visibleRect.minY, 0, "New rows start at the top")
+        view.updateSuggestions(rows, selectedIndex: 8, dataSourceChanged: false)
+        XCTAssertTrue(table.visibleRect.contains(table.rect(ofRow: 8)), "A selected row still scrolls into view")
+    }
+
+    private func tableView(in view: NSView) -> NSTableView? {
+        view as? NSTableView ?? view.subviews.lazy.compactMap { self.tableView(in: $0) }.first
+    }
+
     private func drainUpdates() async {
         let delivered = expectation(description: "View updates delivered")
         DispatchQueue.main.async { delivered.fulfill() }

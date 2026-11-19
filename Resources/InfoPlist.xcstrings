@@ -43,12 +43,6 @@
             "value" : "Websites may use your bluetooth for features on their site."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Los sitios web pueden usar tu Bluetooth para funciones de su sitio."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -59,18 +53,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Webサイトがサイト上の機能のためにBluetoothを使用する場合があります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "웹사이트가 사이트 기능을 위해 블루투스를 사용할 수 있어요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Websites kunnen je Bluetooth gebruiken voor functies op hun site."
           }
         },
         "zh-Hans" : {
@@ -102,12 +84,6 @@
             "value" : "Websites may use your camera for features on their site."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Los sitios web pueden usar tu cámara para funciones de su sitio."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -118,18 +94,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Webサイトがサイト上の機能のためにカメラを使用する場合があります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "웹사이트가 사이트 기능을 위해 카메라를 사용할 수 있어요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Websites kunnen je camera gebruiken voor functies op hun site."
           }
         },
         "zh-Hans" : {
@@ -162,12 +126,6 @@
             "value" : "Access to \"Desktop\" is required to make files accessible from Phi."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Se requiere acceso a \"Escritorio\" para poder acceder a los archivos desde Phi."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -178,18 +136,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Phiからファイルにアクセスできるようにするには、「デスクトップ」へのアクセスが必要です。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Phi에서 파일에 접근할 수 있게 하려면 \"데스크탑\" 접근 권한이 필요해요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Toegang tot \"Bureaublad\" is vereist om bestanden toegankelijk te maken vanuit Phi."
           }
         },
         "zh-Hans" : {
@@ -222,12 +168,6 @@
             "value" : "Access to \"Downloads\" is required for downloading files from the web and to make files accessible from Phi."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Se requiere acceso a \"Descargas\" para descargar archivos de la web y poder acceder a los archivos desde Phi."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -238,18 +178,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Webからファイルをダウンロードし、Phiからファイルにアクセスできるようにするには、「ダウンロード」へのアクセスが必要です。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "웹에서 파일을 다운로드하고 Phi에서 파일에 접근할 수 있게 하려면 \"다운로드\" 접근 권한이 필요해요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Toegang tot \"Downloads\" is vereist om bestanden van internet te downloaden en om bestanden toegankelijk te maken vanuit Phi."
           }
         },
         "zh-Hans" : {
@@ -282,12 +210,6 @@
             "value" : "Copyright © 2026 Phinomenon. All rights reserved."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copyright © 2026 Phinomenon. Todos los derechos reservados."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -295,18 +217,6 @@
           }
         },
         "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copyright © 2026 Phinomenon. All rights reserved."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Copyright © 2026 Phinomenon. All rights reserved."
-          }
-        },
-        "nl" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Copyright © 2026 Phinomenon. All rights reserved."
@@ -342,12 +252,6 @@
             "value" : "Websites may use your location for features on their site."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Los sitios web pueden usar tu ubicación para funciones de su sitio."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -358,18 +262,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Webサイトがサイト上の機能のために位置情報を使用する場合があります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "웹사이트가 사이트 기능을 위해 내 위치를 사용할 수 있어요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Websites kunnen je locatie gebruiken voor functies op hun site."
           }
         },
         "zh-Hans" : {
@@ -402,12 +294,6 @@
             "value" : "Websites may use your location for features on their site."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Los sitios web pueden usar tu ubicación para funciones de su sitio."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -418,18 +304,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Webサイトがサイト上の機能のために位置情報を使用する場合があります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "웹사이트가 사이트 기능을 위해 내 위치를 사용할 수 있어요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Websites kunnen je locatie gebruiken voor functies op hun site."
           }
         },
         "zh-Hans" : {
@@ -462,12 +336,6 @@
             "value" : "Websites may use your location for features on their site."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Los sitios web pueden usar tu ubicación para funciones de su sitio."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -478,18 +346,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Webサイトがサイト上の機能のために位置情報を使用する場合があります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "웹사이트가 사이트 기능을 위해 내 위치를 사용할 수 있어요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Websites kunnen je locatie gebruiken voor functies op hun site."
           }
         },
         "zh-Hans" : {
@@ -522,12 +378,6 @@
             "value" : "Websites may use your microphone for features on their site."
           }
         },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Los sitios web pueden usar tu micrófono para funciones de su sitio."
-          }
-        },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
@@ -538,18 +388,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Webサイトがサイト上の機能のためにマイクを使用する場合があります。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "웹사이트가 사이트 기능을 위해 마이크를 사용할 수 있어요."
-          }
-        },
-        "nl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Websites kunnen je microfoon gebruiken voor functies op hun site."
           }
         },
         "zh-Hans" : {

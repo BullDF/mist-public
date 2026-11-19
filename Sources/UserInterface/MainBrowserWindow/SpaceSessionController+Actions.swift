@@ -9,6 +9,16 @@ import SwiftData
 
 extension SpaceSessionController {
     @IBAction func newBrowserTab(_ sender: Any?) {
+        newBrowserTab(openNewTabPage: PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue(),
+                      source: "newBrowserTab")
+    }
+
+    func newAlternateBrowserTab() {
+        newBrowserTab(openNewTabPage: !PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue(),
+                      source: "newAlternateBrowserTab")
+    }
+
+    private func newBrowserTab(openNewTabPage: Bool, source: String) {
         // While the agent controls this Space, the watching user can't add tabs
         // to its workspace. This is the choke point for every New Tab affordance
         // — the sidebar "+" cell and floating button, the horizontal strip, and
@@ -17,10 +27,9 @@ extension SpaceSessionController {
         if MainActor.assumeIsolated({ AgentSpaceManager.shared.isAgentOwned(browserState.spaceId) }) {
             return
         }
-        let openNewTabPage = PhiPreferences.GeneralSettings.openNewTabPageOnCmdT.loadValue()
         let focusingTabText = browserState.focusingTab?.guid ?? -1
         AppLogDebug(
-            "[NativeTab] mac newBrowserTab " +
+            "[NativeTab] mac \(source) " +
             "windowId=\(browserState.windowId) " +
             "openNewTabPage=\(openNewTabPage) " +
             "focusingTab=\(focusingTabText)"
@@ -125,10 +134,7 @@ extension SpaceSessionController {
                 }
             }
             if fromAddressBar {
-                if browserState.groupOverviewState != nil {
-                    omniBoxContainerViewController?.omniBoxController?
-                        .updateStatusForGroupOverview()
-                } else if let tab = browserState.focusingTab {
+                if let tab = browserState.focusingTab {
                     omniBoxContainerViewController?.omniBoxController?.updateStatus(
                         with: tab,
                         suppressAutomaticSearch: true
@@ -144,11 +150,7 @@ extension SpaceSessionController {
                 trigger: "address-bar-refill",
                 addressViewPresent: false
             )
-            if browserState.groupOverviewState != nil {
-                omniBoxContainerViewController?.omniBoxController?
-                    .updateStatusForGroupOverview()
-                omniBoxContainerViewController?.omniBoxController?.requestAtonce(source: .manualRefresh)
-            } else if let tab = browserState.focusingTab {
+            if let tab = browserState.focusingTab {
                 omniBoxContainerViewController?.omniBoxController?.updateStatus(
                     with: tab,
                     suppressAutomaticSearch: true
@@ -219,9 +221,9 @@ extension SpaceSessionController {
         guard let tab = state.pageCommandTarget,
               let url = tab.url, !url.isEmpty else { return }
 
-        // When the focused tab is one half of a split, bookmark the whole pair
-        // (matching the right-click "Add Split to Bookmark"), keyed off the
-        // split's primary pane so the toggle round-trips with `openBookmark`.
+        // When the focused tab is one half of a split, bookmark the whole pair,
+        // keyed off the split's primary pane so the toggle round-trips with
+        // `openBookmark`.
         if let group = state.splitGroup(forTabId: tab.guid),
            let primaryTab = state.tabs.first(where: { $0.guid == group.primaryTabId }),
            let primaryURL = primaryTab.url, !primaryURL.isEmpty {
@@ -342,7 +344,7 @@ extension BrowserState {
         }
 
         let pinnedCount = pinnedTabs.count
-        let bookmarkCount = visibleBookmarkTabs.count
+        let bookmarkCount = (layoutMode.isTraditional || bookmarksAreLaunchers) ? 0 : visibleBookmarkTabs.count
         let normalCount = normalTabs.count
 
         if index < pinnedCount {
@@ -392,7 +394,7 @@ extension BrowserState {
         }
 
         // 2) visible bookmarks (opened or not) ordered by sidebar visibility
-        for bookmark in visibleBookmarkTabs {
+        for bookmark in (layoutMode.isTraditional || bookmarksAreLaunchers) ? [] : visibleBookmarkTabs {
             candidates.append(.init(
                 focus: { [weak self] in self?.openBookmark(bookmark) },
                 matchesCurrent: { current in
@@ -438,10 +440,6 @@ extension BrowserState {
 
 extension SpaceSessionController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if SpaceSessionControllersManager.shared
-            .isGuestTransitionInteractionBlocked {
-            return false
-        }
         if menuItem.action == #selector(closeOther(_:)) {
             guard let tab = menuItem.representedObject as? Tab else {
                 return false
@@ -488,6 +486,7 @@ extension SpaceSessionController: NSMenuItemValidation {
         }
 
         if !liveTabs.isEmpty {
+            if browserState.applyLastTabClosePolicy(to: liveTabs, intent: .tabDriven) { return }
             // Close inactive panes first so the IDC_CLOSE_TAB path in
             // `Tab.close()` lands on whichever pane is still focused.
             for pane in liveTabs where !pane.isActive {
@@ -536,70 +535,11 @@ extension SpaceSessionController: NSMenuItemValidation {
     }
     
     
-    @discardableResult
-    func showFeedbackWindow(
-        crashContextTab: Tab? = nil,
-        previousSessionCrash: PreviousSessionCrashContext? = nil
-    ) -> Bool {
-        let identifier = NSUserInterfaceItemIdentifier("Phi Feedback Window")
-        // Check if about window already exists
-        if let existingWindow = NSApp.windows.first(where: { $0.identifier == identifier }) {
-            // The feedback window is app-global; rebind it to the window now
-            // reopening it so the report's window-scoped context (Chromium system
-            // logs, focusingTab fallback) follows the current window, then refresh
-            // the crash context (else it keeps the previously-shown tab's url/title).
-            if let fvc = existingWindow.contentViewController as? FeedbackViewController {
-                if let previousSessionCrash {
-                    guard !existingWindow.isVisible, !existingWindow.isMiniaturized,
-                          fvc.setPreviousSessionCrash(previousSessionCrash) else { return false }
-                }
-                fvc.rebindHost(self)
-                fvc.setCrashContextTab(crashContextTab)
-            }
-            existingWindow.makeKeyAndOrderFront(nil)
-            return true
-        }
-
-        let vc = FeedbackViewController(host: self)
-        if let previousSessionCrash {
-            vc.setPreviousSessionCrash(previousSessionCrash)
-        }
-        vc.setCrashContextTab(crashContextTab)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 580),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.identifier = identifier
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.title = NSLocalizedString("app.feedback.windowTitle", value: "Send Feedback to Phi", comment: "Feedback window - Window title for feedback submission")
-        window.contentViewController = vc
-        window.delegate = vc
-        window.makeKeyAndOrderFront(nil)
-        return true
-    }
     
     /// The import window is a singleton and is not released when it closes, so
     /// this identifier is how its re-invocation path finds it again.
     static let importWindowIdentifier =
         NSUserInterfaceItemIdentifier("Phi Import Data Window")
-
-    /// The import window is on screen, or an import it started is still going
-    /// with the window closed. Read by `BrowserDataActivity`, which greys the
-    /// Migration menu item out for as long as it is true. A miniaturised
-    /// window reports itself invisible but is still the user's open window, so
-    /// neither test answers this on its own.
-    @MainActor
-    static var importIsInFlight: Bool {
-        guard let window = NSApp.windows.first(where: {
-            $0.identifier == importWindowIdentifier
-        }) else { return false }
-        return window.isVisible || window.isMiniaturized
-            || (window.contentViewController
-                as? ImportFromOtherBrowserViewController)?.isImporting == true
-    }
 
     /// Stable key for associating the long-lived import view controller with its
     /// window, so a re-invocation can retarget it (see `objc_setAssociatedObject`).
@@ -627,7 +567,6 @@ extension SpaceSessionController: NSMenuItemValidation {
 
     func showImportDataWindow() {
         let identifier = Self.importWindowIdentifier
-        BrowserImportAnalytics().captureMenuPresentation()
         // The import window is a singleton. Re-invoking import from another Space
         // retargets the existing window to the current context — unless an import
         // is already running, in which case it is only brought forward so the
@@ -657,7 +596,6 @@ extension SpaceSessionController: NSMenuItemValidation {
         }
         
         let vc = ImportFromOtherBrowserViewController(
-            displayMode: .normal,
             targetProfileId: browserState.profileId,
             targetSpaceId: browserState.spaceId,
             targetWindowId: browserState.windowId

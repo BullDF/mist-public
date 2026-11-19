@@ -8,11 +8,13 @@ import AppKit
 import Security
 import SecurityInterface
 
+@MainActor
 final class WebContentAddressBarMenuPresenter {
+    @MainActor
     private final class MenuActionTarget: NSObject {
-        let action: () -> Void
+        let action: @MainActor () -> Void
 
-        init(action: @escaping () -> Void) {
+        init(action: @escaping @MainActor () -> Void) {
             self.action = action
         }
 
@@ -35,7 +37,6 @@ final class WebContentAddressBarMenuPresenter {
         let extensionManager = browserState?.extensionManager
         extensionManager?.refreshExtensions()
         let rawURLString = resolvedTab?.url ?? ""
-        let brandedURLString = URLProcessor.phiBrandEnsuredUrlString(rawURLString)
 
         var actionTargets: [MenuActionTarget] = []
         let menu = NSMenu()
@@ -47,7 +48,7 @@ final class WebContentAddressBarMenuPresenter {
             state: NSControl.StateValue = .off,
             isEnabled: Bool = true,
             image: NSImage? = nil,
-            action: (() -> Void)? = nil
+            action: (@MainActor () -> Void)? = nil
         ) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: keyEquivalent)
             item.state = state
@@ -174,14 +175,12 @@ final class WebContentAddressBarMenuPresenter {
             title: NSLocalizedString("browser.addressBarMenu.shareSubmenu.title", value: "Share", comment: "Address bar menu - Share submenu title"),
             image: menuSymbol(named: "square.and.arrow.up")
         )
-        MainActor.assumeIsolated {
-            #if compiler(>=6.4)
-            if #available(macOS 27.0, *) {
-                shareItem.preferredImageVisibility = .visible
-            }
-            #endif
-            shareItem.submenu = PageSharingPresenter.shareSubmenu(for: resolvedTab)
+        #if compiler(>=6.4)
+        if #available(macOS 27.0, *) {
+            shareItem.preferredImageVisibility = .visible
         }
+        #endif
+        shareItem.submenu = PageSharingPresenter.shareSubmenu(for: resolvedTab)
 
         menu.addItem(.separator())
 
@@ -192,12 +191,8 @@ final class WebContentAddressBarMenuPresenter {
         settingsItem.submenu = buildSettingsSubmenu(rawURLString)
 
         // The page picks up the new rule set on its next load.
-        if let contentBlocking = MainActor.assumeIsolated({
-            SiteContentBlockingToggle.current(browserState: browserState, urlString: rawURLString)
-        }) {
-            let item = MainActor.assumeIsolated {
-                contentBlocking.makeMenuItem { resolvedTab?.reload() }
-            }
+        if let contentBlocking = SiteContentBlockingToggle.current(browserState: browserState, urlString: rawURLString) {
+            let item = contentBlocking.makeMenuItem { resolvedTab?.reload() }
             item.image = menuSymbol(named: "shield.lefthalf.filled")
             menu.addItem(item)
         }
@@ -205,7 +200,7 @@ final class WebContentAddressBarMenuPresenter {
         menu.addItem(.separator())
 
         let alwaysShowURLPath = PhiPreferences.GeneralSettings.alwaysShowURLPath.loadValue()
-        addMenuItem(
+        _ = addMenuItem(
             title: NSLocalizedString("browser.addressBarMenu.showFullURLToggle", value: "Always Show URL Path", comment: "Address bar menu - Toggle URL path visibility"),
             state: alwaysShowURLPath ? .on : .off
         ) {
@@ -220,8 +215,15 @@ final class WebContentAddressBarMenuPresenter {
 
             let securityInfo = resolvedTab?.securityInfo
             let isConnectionUnsafe = !(securityInfo?.isSecure ?? false)
-            let isCertValid = certificateIsValid(from: securityInfo)
             let hasCertificates = !(securityInfo?.certificates.isEmpty ?? true)
+            let certificateAction: (@MainActor () -> Void)?
+            if hasCertificates {
+                certificateAction = {
+                    showCertificatePanel(certificates: securityInfo?.certificates ?? [])
+                }
+            } else {
+                certificateAction = nil
+            }
             let securityItem = addMenuItem(
                 title: securityStatusText(from: securityInfo),
                 isEnabled: true,
@@ -229,9 +231,7 @@ final class WebContentAddressBarMenuPresenter {
                     named: (securityInfo?.isSecure ?? false) ? "lock.fill" : "xmark.circle.fill",
                     isCritical: isConnectionUnsafe
                 ),
-                action:  hasCertificates ? {
-                    showCertificatePanel(certificates: securityInfo?.certificates ?? [])
-                } : nil
+                action: certificateAction
             )
             securityItem.indentationLevel = 0
             applyStatusColor(to: securityItem, isCritical: isConnectionUnsafe)
@@ -247,52 +247,6 @@ final class WebContentAddressBarMenuPresenter {
         _ = actionTargets
     }
 
-    @MainActor
-    static func presentMemoryMenu(
-        browserState: BrowserState?,
-        currentTab: Tab?,
-        anchorView: NSView?,
-        onPresentationChanged: (Bool) -> Void
-    ) {
-        guard let anchorView = anchorView ?? browserState?.windowController?.window?.contentView,
-              let actions = SiteMemoryMenuActions.current(
-                browserState: browserState,
-                urlString: (currentTab ?? browserState?.focusingTab)?.url ?? ""
-              ) else { return }
-
-        let menu = makeMemoryMenu(actions: actions, window: anchorView.window)
-        onPresentationChanged(true)
-        defer { onPresentationChanged(false) }
-        anchorView.effectiveAppearance.performAsCurrentDrawingAppearance {
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -6), in: anchorView)
-        }
-    }
-
-    @MainActor
-    static func makeMemoryMenu(actions: SiteMemoryMenuActions, window: NSWindow?) -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-
-        func addItem(title: String, state: NSControl.StateValue = .off,
-                     isEnabled: Bool, image: NSImage? = nil, action: SiteMemoryMenuActions.Action) {
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            item.state = state
-            item.isEnabled = isEnabled
-            item.image = image
-            let target = MenuActionTarget { actions.perform(action, window: window) }
-            item.representedObject = target
-            item.target = target
-            item.action = #selector(MenuActionTarget.performAction(_:))
-            menu.addItem(item)
-        }
-
-        addItem(title: SiteMemoryMenuActions.collectionTitle, state: actions.collectionState,
-                isEnabled: actions.collectionEnabled != nil, action: .toggleCollection)
-        addItem(title: SiteMemoryMenuActions.removalTitle, isEnabled: actions.canRemoveMemories,
-                action: .removeMemories)
-        return menu
-    }
-
     private static func securityStatusText(from info: TabSecurityInfo?) -> String {
         guard let info else {
             return NSLocalizedString("browser.addressBarMenu.security.unknownStatus", value: "Unknown", comment: "Address bar menu - Website security unknown")
@@ -303,12 +257,6 @@ final class WebContentAddressBarMenuPresenter {
         return isSecure
             ? NSLocalizedString("browser.addressBarMenu.security.secureStatus", value: "Connection is secure", comment: "Address bar menu - Website security secure")
             : NSLocalizedString("browser.addressBarMenu.security.notSecureStatus", value: "Connection is not secure", comment: "Address bar menu - Website security not secure")
-    }
-
-    private static func certificateStatusText(from info: TabSecurityInfo?) -> String {
-        return certificateIsValid(from: info)
-            ? NSLocalizedString("browser.addressBarMenu.security.validCertificateStatus", value: "Certificate is valid", comment: "Address bar menu - Certificate validity status")
-            : NSLocalizedString("browser.addressBarMenu.security.invalidCertificateStatus", value: "Certificate is invalid", comment: "Address bar menu - Certificate validity status")
     }
 
     private static func certificateIsValid(from info: TabSecurityInfo?) -> Bool {

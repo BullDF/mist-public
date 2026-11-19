@@ -19,7 +19,7 @@ label.textColor = isDark ? .white : .black
 NotificationCenter.addObserver(...) { label.textColor = isDark ? .white : .black }
 
 // Phi approach
-label.phi.setTextColor(.black <> .white)
+label.phi.textColor = .black <> .white
 ```
 
 ## Core Concepts
@@ -172,7 +172,6 @@ struct ThemedForegroundModifier: ViewModifier {
 - Works in both AppKit and SwiftUI.
 - Persistent user preference.
 - Concise `<>` mapper operator.
-- Dynamic image tinting based on theme/appearance.
 
 ## Quick Start
 
@@ -187,11 +186,6 @@ label.phi.textColor = 0x333333 <> 0xFFFFFF
 
 // Recommended: set APIs with ThemedColor
 label.phi.setTextColor(.textPrimary)
-label.phi.setBackgroundColor(.windowBackground)
-
-// set APIs also accept Mapper
-label.phi.setTextColor(.red <> .white)
-label.phi.setBackgroundColor(0xF5F5F5 <> 0x1C1C1E)
 
 // Layer styling
 view.wantsLayer = true
@@ -199,7 +193,6 @@ view.phiLayer?.setBackgroundColor(.windowBackground)
 view.phiLayer?.setBorderColor(.border)
 
 // Button
-button.phi.title = "Light Mode" <> "Dark Mode"
 button.phi.setContentTintColor(.themeColor)
 ```
 
@@ -217,8 +210,6 @@ Rectangle()
 RoundedRectangle(cornerRadius: 8)
     .themedStroke(.border, lineWidth: 1)
 
-VStack { ... }
-    .themedShadow(.primary, radius: 10, y: 5)
 ```
 
 ## User Appearance Preference
@@ -297,7 +288,7 @@ popupButton.selectItem(at: ThemeManager.shared.userAppearanceChoice.rawValue)
 
 ## Theme Management
 
-### Create and Switch Shared Theme
+### Register a Theme
 
 ```swift
 let myTheme = Theme(id: "ocean", name: "Ocean")
@@ -306,7 +297,6 @@ myTheme.setColor(light: .teal, dark: .mint, for: .secondary)
 myTheme.setColor(light: .black, dark: .white, for: .textPrimary)
 
 ThemeManager.shared.registerTheme(myTheme)
-ThemeManager.shared.switchTheme(to: "ocean")
 ```
 
 ### Apply Theme to a Specific Browser Window
@@ -356,42 +346,7 @@ ThemedColor.pressed
 ThemedColor.disabled
 ```
 
-## Dynamic Image Tinting
-
-### NSImage Extensions
-
-```swift
-imageView.phi.image = icon.themed(tint: .primary)
-imageView.phi.image = icon.themed(tint: .red <> .blue)
-imageView.phi.image = lightIcon.themed(dark: darkIcon)
-```
-
-### `ThemedImage`
-
-```swift
-let themedIcon = ThemedImage(icon, tint: .primary)
-imageView.phi.image = themedIcon.mapper
-
-let coloredIcon = ThemedImage(icon, tint: .red <> .blue)
-button.phi.image = coloredIcon.mapper
-
-let switchIcon = ThemedImage(light: sunIcon, dark: moonIcon)
-imageView.phi.image = switchIcon.mapper
-```
-
-### SwiftUI
-
-```swift
-Image(systemName: "star.fill")
-    .themedTint(.primary)
-
-ThemedImageView(icon, tint: .accent)
-    .frame(width: 32, height: 32)
-
-ThemedImageView(light: sunImage, dark: moonImage)
-```
-
-### Direct NSImage Tint
+## Direct NSImage Tint
 
 ```swift
 let tintedImage = originalImage.tinted(with: .red)
@@ -406,9 +361,8 @@ Two equivalent styles are available:
 label.phi.textColor = .red <> .white
 view.phiLayer?.backgroundColor = 0xF5F5F5 <> 0x2C2C2E
 
-// set APIs with ThemedColor or Mapper
+// set APIs with ThemedColor
 label.phi.setTextColor(.textPrimary)
-label.phi.setTextColor(.red <> .white)
 view.phiLayer?.setBackgroundColor(.windowBackground)
 ```
 
@@ -436,14 +390,6 @@ NotificationCenter.default.addObserver(
     object: nil,
     queue: .main
 ) { _ in
-    // Handle change
-}
-```
-
-Use `phiSubscribe` for the shared fallback source:
-
-```swift
-view.phiSubscribe { theme, appearance in
     // Handle change
 }
 ```
@@ -496,7 +442,6 @@ Sources/Utilities/Theme/
 ├── ThemedColor.swift
 ├── ThemedColors.swift
 ├── ThemedImage.swift
-├── ThemeExample.swift
 ├── ThemeManager.swift
 └── README.md
 ```
@@ -554,7 +499,6 @@ Add the following keys in `Localizable.xcstrings`:
 | `userAppearanceChoice` | Shared default appearance mode |
 | `setUserAppearanceChoice(_:)` | Set the shared default appearance mode |
 | `registerTheme(_:)` | Register a theme |
-| `switchTheme(to:)` | Switch the shared default theme |
 
 ### `UserAppearanceChoice`
 
@@ -570,67 +514,32 @@ Add the following keys in `Localizable.xcstrings`:
 
 | Method / Property | Description |
 |---|---|
-| `setTextColor(_:)` | Set text color (`ThemedColor` or `Mapper`) |
-| `setBackgroundColor(_:)` | Set background color (`ThemedColor` or `Mapper`) |
+| `setTextColor(_:)` | Set text color (`ThemedColor`) |
 | `textColor` | Text color mapper property |
-| `backgroundColor` | Background color mapper property |
 
 #### `NSButton`
 
 | Method / Property | Description |
 |---|---|
-| `setContentTintColor(_:)` | Set content tint (`ThemedColor` or `Mapper`) |
-| `title` | Button title |
-| `attributedTitle` | Attributed title |
-| `contentTintColor` | Content tint mapper property |
+| `setContentTintColor(_:)` | Set content tint (`ThemedColor`) |
 
 #### `NSImageView`
 
 | Method / Property | Description |
 |---|---|
-| `setContentTintColor(_:)` | Set content tint (`ThemedColor` or `Mapper`) |
-| `image` | Image |
-| `contentTintColor` | Content tint mapper property |
-
-#### `NSView`
-
-| Property | Description |
-|---|---|
-| `isHidden` | Visibility |
-| `alphaValue` | Opacity |
+| `setContentTintColor(_:)` | Set content tint (`ThemedColor`) |
 
 #### `CALayer` (via `phiLayer`)
 
 | Method / Property | Description |
 |---|---|
-| `setBackgroundColor(_:)` | Set background color (`ThemedColor` or `Mapper`) |
-| `setBorderColor(_:)` | Set border color (`ThemedColor` or `Mapper`) |
-| `setShadowColor(_:)` | Set shadow color (`ThemedColor` or `Mapper`) |
+| `setBackgroundColor(_:)` | Set background color (`ThemedColor`) |
+| `setBorderColor(_:)` | Set border color (`ThemedColor`) |
 | `backgroundColor` | Background mapper property |
 | `borderColor` | Border mapper property |
-| `shadowColor` | Shadow mapper property |
-
-### `ThemedImage`
-
-| Method / Property | Description |
-|---|---|
-| `init(_ image:, tint: ThemedColor)` | Theme color tint |
-| `init(_ image:, tint: Mapper<NSColor>)` | Mapper tint |
-| `init(light:, dark:)` | Appearance-based image switch |
-| `.mapper` | Convert to `Mapper<NSImage?>` |
-| `.resolved()` | Resolve with current theme/appearance |
 
 ### `NSImage` Extensions
 
 | Method | Description |
 |---|---|
 | `tinted(with: NSColor)` | Tint image with fixed color |
-| `themed(tint: ThemedColor)` | Create theme-tinted image mapper |
-| `themed(tint: Mapper<NSColor>)` | Create mapper-tinted image |
-| `themed(dark: NSImage?)` | Create light/dark image switch |
-
-### SwiftUI `Image` Extension
-
-| Method | Description |
-|---|---|
-| `themedTint(_ color: ThemedColor)` | Apply theme tint |

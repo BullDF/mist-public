@@ -27,7 +27,6 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         }
         stores.removeAll()
         await settleAsyncWork()
-        clearPinnedTabScopeMirrorDefaults()
         for directory in tempDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -88,11 +87,24 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         let otherSpace = BrowserState(windowId: 2, localStore: store,
                                       profileId: "Default", spaceId: "space-b")
         let otherPinned = try XCTUnwrap(otherSpace.pinnedTabs.first)
+        let wrapper = PinnedEditWebContentWrapperSpy(urlString: "https://old.example")
+        wrapper.title = "Page title"
+        let liveTab = Tab(guid: 21, url: wrapper.urlString, isActive: false, index: 0,
+                          webContentView: wrapper, customGuid: "pinned-guid")
+        otherSpace.tabs = [liveTab]
+        otherPinned.isOpenned = true
+        otherPinned.setWebContentsWrapper(wrapper: wrapper)
 
-        store.updateTabTitle("pinned-guid", title: "Renamed")
+        store.updatePinnedTab(resolving: "pinned-guid", profileId: "Default", spaceId: "space-b",
+                              url: URL(string: "https://old.example")!, title: nil, overrideTitle: .some("Renamed"))
 
         try waitUntil(otherSpace, describing: "title edit reaches the other Space") {
-            otherPinned.storedTitle == "Renamed" && otherPinned.title == "Renamed"
+            otherPinned.storedTitle == "Renamed" && otherPinned.title == "Renamed" && liveTab.title == "Renamed"
+        }
+        store.updatePinnedTab(resolving: "pinned-guid", profileId: "Default", spaceId: "space-b",
+                              url: URL(string: "https://old.example")!, title: nil, overrideTitle: .some(nil))
+        try waitUntil(otherSpace, describing: "cleared name restores the page title") {
+            otherPinned.title == "Page title" && liveTab.title == "Page title"
         }
     }
 
@@ -533,7 +545,8 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
 
         let active = try XCTUnwrap(store.getTab(by: reboundGuid))
         XCTAssertEqual(active.url.absoluteString, "https://new.example")
-        XCTAssertEqual(active.title, "Renamed")
+        XCTAssertEqual(active.title, "Pinned")
+        XCTAssertEqual(active.overrideTitle, "Renamed")
 
         let inactiveBackup = try XCTUnwrap(store.getTab(by: "pinned-guid"))
         XCTAssertEqual(inactiveBackup.url.absoluteString, "https://old.example")

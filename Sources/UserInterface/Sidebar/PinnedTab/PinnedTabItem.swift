@@ -152,7 +152,28 @@ private final class PinnedItemRootView: PinnedGridItemView {
     }
 }
 
+enum MailUnreadPill {
+    static func text(for count: Int) -> String? { count <= 0 ? nil : (count > 99 ? "99+" : String(count)) }
+}
+
+private struct AppBadgeCornerOverlay: View {
+    let count: Int
+    let iconSize: CGFloat
+    var body: some View {
+        Color.clear.overlay {
+            Color.clear.frame(width: iconSize, height: iconSize)
+                .overlay(alignment: .bottomTrailing) {
+                    if let text = MailUnreadPill.text(for: count) {
+                        IconBadgePill(text: text, backgroundColor: .systemRed, textColor: .white)
+                            .offset(x: 4, y: 4)
+                    }
+                }
+        }.allowsHitTesting(false)
+    }
+}
+
 class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
+    private let renameEditor = TabRenameEditor()
     static var reuseIdentifier: NSUserInterfaceItemIdentifier { .init(rawValue: "\(Self.self)") }
     /// Identifier stamped on every visible sidebar pinned-grid item (solo
     /// tab or pinned split — see also `PinnedSplitItem`).
@@ -165,6 +186,9 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
     private var peekBadge: PinnedPeekBadgeView!
     private var discardedOutlineHost: TabDecorativeHostingView!
     private var statusBadgeHost: TabDecorativeHostingView!
+    private var appBadgeHost: BadgeHostingView<AppBadgeCornerOverlay>!
+    private var appBadgeSubscription: AnyCancellable?
+    private var badgeAppID: MistAppID?
     private let statusModel = TabStatusModel()
     private var tab: Tab?
     private weak var browserState: BrowserState?
@@ -172,6 +196,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
     /// Reset whenever the attached peek changes; feeds the badge favicon.
     private var peekFaviconCancellables = Set<AnyCancellable>()
     private var faviconLoadHandle: ProfileScopedFaviconLoadHandle?
+    private var appFavicon: MistAppIcon?
     private let tabPreviewRegistration = TabPreviewRegistration()
     private var showsTabPreview = false
 
@@ -198,8 +223,12 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        renameEditor.reset()
         populateContextMenu = nil
         cancellables.removeAll()
+        appBadgeSubscription = nil
+        appBadgeHost.isHidden = true
+        appBadgeHost.rootView = AppBadgeCornerOverlay(count: 0, iconSize: Self.faviconSize)
         peekFaviconCancellables.removeAll()
         faviconLoadHandle?.cancel()
         faviconLoadHandle = nil
@@ -318,6 +347,11 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
             ))
         }
 
+        appBadgeHost = BadgeHostingView(rootView: AppBadgeCornerOverlay(count: 0, iconSize: Self.faviconSize))
+        appBadgeHost.isHidden = true
+        view.addSubview(appBadgeHost)
+        appBadgeHost.snp.makeConstraints { $0.edges.equalTo(backgroundView) }
+
         // Peek badge: straddling the top-right corner, above everything
         // else. On `view`, not `backgroundView` — the latter clips.
         peekBadge = PinnedPeekBadgeView()
@@ -345,15 +379,26 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
     ) {
         self.tab = tab
         self.browserState = browserState
+        renameEditor.configure(tab: tab, state: browserState, anchor: view, titleRect: { nil })
         cancellables.removeAll()
+        appBadgeSubscription = nil
+        updateAppBadge()
         peekFaviconCancellables.removeAll()
         faviconLoadHandle?.cancel()
         faviconLoadHandle = nil
-        statusModel.configure(with: tab, in: browserState)
+        statusModel.configure(with: tab)
         updateStatusBadge(isSuppressed: false)
 
         setupFavicon()
         updateOpenIndicatorOpacity()
+        AgentChatStore.shared.objectWillChange.receive(on: DispatchQueue.main)
+            .sink { [weak self, weak tab] in
+                guard let self, let tab,
+                      let address = MistApps.address(tab.isOpenned ? tab.url : tab.pinnedUrl ?? tab.url),
+                      address.app == .drifter,
+                      self.appFavicon != MistApps.app(address.app)?.icon(address.instance) else { return }
+                self.setupFavicon()
+            }.store(in: &cancellables)
         if let browserState {
             tabPreviewRegistration.configure(
                 anchorView: view,
@@ -375,6 +420,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
 
         // Selection state is driven by the view controller.
         self.isSelected = tab.isActive
+
         if let menu = view.menu {
             if let populateContextMenu { populateContextMenu(menu) }
             else { tab.makeContextMenu(on: menu) }
@@ -399,6 +445,7 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.setupFavicon()
+                self?.updateAppBadge()
             }
             .store(in: &cancellables)
         
@@ -457,6 +504,24 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
             updatePeekBadge(peeksByOpener: [:])
         }
 
+    }
+
+    private func updateAppBadge() {
+        let address = tab.flatMap { tab in
+            browserState?.isIncognito == true ? nil : MistApps.address(tab.isOpenned ? tab.url : tab.pinnedUrl ?? tab.url)
+        }
+        guard let address, let publisher = MistApps.app(address.app)?.badge else {
+            appBadgeSubscription = nil; badgeAppID = nil; appBadgeHost.isHidden = true
+            appBadgeHost.rootView = AppBadgeCornerOverlay(count: 0, iconSize: Self.faviconSize)
+            return
+        }
+        guard appBadgeSubscription == nil || badgeAppID != address.app else { return }
+        badgeAppID = address.app
+        appBadgeSubscription = publisher.receive(on: DispatchQueue.main).sink { [weak self] count in
+            guard let self else { return }
+            appBadgeHost.rootView = AppBadgeCornerOverlay(count: count, iconSize: Self.faviconSize)
+            appBadgeHost.isHidden = MailUnreadPill.text(for: count) == nil
+        }
     }
 
     /// Shows the corner badge when a live Peek belongs to this pinned
@@ -524,6 +589,18 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         faviconLoadHandle = nil
         self.isSelected = tab.isActive
 
+        if browserState?.isIncognito != true,
+           let address = MistApps.address(tab.isOpenned ? tab.url : tab.pinnedUrl ?? tab.url),
+           let app = MistApps.app(address.app) {
+            let icon = app.icon(address.instance)
+            appFavicon = icon
+            let image = NSImage(named: icon.asset)?.copy() as? NSImage
+            image?.isTemplate = icon.isTemplate
+            iconImageView.image = image
+            return
+        }
+
+        appFavicon = nil
         if let liveFaviconData = tab.liveFaviconData,
            let image = NSImage(data: liveFaviconData) {
             iconImageView.image = image
@@ -560,13 +637,6 @@ class PinnedTabItem: NSCollectionViewItem, NSMenuDelegate {
         tabPreviewRegistration.cancelForInteraction()
     }
 
-    private func setDefaultIcon() {
-        if let defaultIcon = NSImage(systemSymbolName: "globe", accessibilityDescription: nil) {
-            let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
-            iconImageView.image = defaultIcon.withSymbolConfiguration(config)
-        }
-    }
-    
     func menuNeedsUpdate(_ menu: NSMenu) {
         tabPreviewRegistration.cancelForInteraction()
         if let populateContextMenu { populateContextMenu(menu) }

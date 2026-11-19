@@ -59,7 +59,7 @@ extension DeeplinkHandler {
         static let key = "page"
     }
     enum SettingsPage: String {
-        case account, general, aisetting, imchannels, shortcus, profiles
+        case general, shortcus, profiles
 
         static let key = "section"
     }
@@ -97,7 +97,7 @@ extension DeeplinkHandler {
         
         switch pageName {
         case "settings":
-            var settingsPage: SettingsPage = .account
+            var settingsPage: SettingsPage = .general
             if let sectionName = sectionName, let page = SettingsPage(rawValue: sectionName) {
                 settingsPage = page
             }

@@ -253,7 +253,10 @@ final class ScreenshotCropTests: XCTestCase {
         let outside = canvas.convert(CGPoint(x: 280, y: 280), to: nil)
         canvas.mouseDragged(with: event(.leftMouseDragged, window: window, point: outside))
         let initial = scroll.contentView.bounds.origin
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.14))
+        let continued = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            scroll.contentView.bounds.minX < initial.x && scroll.contentView.bounds.minY < initial.y
+        }, object: nil)
+        wait(for: [continued], timeout: 2)
         XCTAssertLessThan(scroll.contentView.bounds.minX, initial.x); XCTAssertLessThan(scroll.contentView.bounds.minY, initial.y)
         let rect = try XCTUnwrap(m.cropRect)
         XCTAssertEqual(rect.maxX, anchor.x / 2); XCTAssertEqual(rect.maxY, anchor.y / 2)

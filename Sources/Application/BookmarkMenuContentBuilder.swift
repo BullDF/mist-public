@@ -156,12 +156,15 @@ struct BookmarkMenuContentBuilder {
         if let urlString = bookmark.url,
            let url = URL(string: urlString) {
             let provider = FaviconDataProvider(pageURL: url)
-            let options: KingfisherOptionsInfo = [.cacheOriginalImage]
+            let options: KingfisherOptionsInfo = [.cacheOriginalImage, .callbackQueue(.mainAsync)]
+            let updateImage: @MainActor (NSImage) -> Void = { image in
+                menuItem.image = sizedBookmarkMenuImage(from: image)
+            }
 
             KingfisherManager.shared.retrieveImage(with: .provider(provider), options: options) { result in
                 guard case let .success(value) = result else { return }
-                DispatchQueue.main.async {
-                    menuItem.image = sizedBookmarkMenuImage(from: value.image)
+                MainActor.assumeIsolated {
+                    updateImage(value.image)
                 }
             }
         }

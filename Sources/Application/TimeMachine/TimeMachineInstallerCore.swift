@@ -25,14 +25,13 @@ enum TimeMachineInstallerCoreError: Error, LocalizedError {
         case .missingStagedApp(let url):
             return "Missing Time Machine staged app at \(url.path)."
         case .hostProcessDidNotExit(let pid):
-            return "Phi host process \(pid) did not exit before restore."
+            return "Mist host process \(pid) did not exit before restore."
         }
     }
 }
 
 struct TimeMachineInstallerCore {
     typealias HostWaiter = (Int32) throws -> Void
-    typealias SentinelTerminator = (String) throws -> Void
     typealias AppOpener = (URL) throws -> Void
     typealias PhaseObserver = (TimeMachineRestorePhase) throws -> Void
     typealias Logger = (String) -> Void
@@ -51,7 +50,6 @@ struct TimeMachineInstallerCore {
     private let fileCloner: TimeMachineFileCloner
     private let fileManager: FileManager
     private let hostWaiter: HostWaiter
-    private let sentinelTerminator: SentinelTerminator
     private let appOpener: AppOpener
     private let dateProvider: () -> Date
     private let phaseObserver: PhaseObserver
@@ -64,7 +62,6 @@ struct TimeMachineInstallerCore {
         fileCloner: TimeMachineFileCloner = TimeMachineFileCloner(),
         fileManager: FileManager = .default,
         hostWaiter: @escaping HostWaiter = Self.waitForHostExit,
-        sentinelTerminator: @escaping SentinelTerminator = Self.terminateSentinelBestEffort,
         appOpener: @escaping AppOpener = Self.openApp,
         dateProvider: @escaping () -> Date = Date.init,
         phaseObserver: @escaping PhaseObserver = { _ in },
@@ -80,7 +77,6 @@ struct TimeMachineInstallerCore {
         self.fileCloner = fileCloner
         self.fileManager = fileManager
         self.hostWaiter = hostWaiter
-        self.sentinelTerminator = sentinelTerminator
         self.appOpener = appOpener
         self.dateProvider = dateProvider
         self.phaseObserver = phaseObserver
@@ -90,7 +86,7 @@ struct TimeMachineInstallerCore {
     func restore(planURL: URL) throws {
         logger("[TimeMachineInstaller] Restore requested with plan \(planURL.path).")
         let plan = try Self.loadPlan(at: planURL, fileManager: fileManager)
-        guard var journal = try journalStore.load(operationID: plan.operationID) else {
+        guard let journal = try journalStore.load(operationID: plan.operationID) else {
             throw TimeMachineInstallerCoreError.missingJournal(plan.operationID)
         }
         var context = RestoreContext(plan: plan, journal: journal, paths: paths)
@@ -100,7 +96,7 @@ struct TimeMachineInstallerCore {
 
     func recover(operationID: UUID) throws {
         logger("[TimeMachineInstaller] Recovery requested for operation \(operationID.uuidString).")
-        guard var journal = try journalStore.load(operationID: operationID) else {
+        guard let journal = try journalStore.load(operationID: operationID) else {
             throw TimeMachineInstallerCoreError.missingJournal(operationID)
         }
         let planURL = paths.url(forRelativePath: journal.planRelativePath)
@@ -139,15 +135,12 @@ struct TimeMachineInstallerCore {
                     log("Waiting for host pid \(context.plan.hostPID) to exit.", context: context)
                     try hostWaiter(context.plan.hostPID)
                     log("Host process has exited.", context: context)
-                    terminateSentinel(context: context)
                     try stageData(context: context)
                     try advancePhase(.dataStaged, context: &context)
                 case .dataStaged:
-                    terminateSentinel(context: context)
                     try backupData(context: context)
                     try advancePhase(.dataBackedUp, context: &context)
                 case .dataBackedUp:
-                    terminateSentinel(context: context)
                     try advancePhase(.dataSwapStarted, context: &context)
                 case .dataSwapStarted:
                     try swapData(context: context)
@@ -174,15 +167,6 @@ struct TimeMachineInstallerCore {
             log("Restore transaction failed in phase \(context.journal.phase.rawValue): \(error.localizedDescription)", context: context)
             try handleFailure(context: &context)
             throw error
-        }
-    }
-
-    private func terminateSentinel(context: RestoreContext) {
-        do {
-            try sentinelTerminator(context.plan.bundleIdentifier)
-            log("Requested best-effort Sentinel termination.", context: context)
-        } catch {
-            log("Best-effort Sentinel termination failed: \(error.localizedDescription)", context: context)
         }
     }
 
@@ -434,29 +418,6 @@ struct TimeMachineInstallerCore {
             return true
         }
         return errno == EPERM
-    }
-
-    private static func terminateSentinelBestEffort(browserBundleIdentifier: String) {
-        let sentinelBundleIdentifier = expectedSentinelBundleIdentifier(forBrowserBundleIdentifier: browserBundleIdentifier)
-        for app in NSWorkspace.shared.runningApplications {
-            guard let bundleID = app.bundleIdentifier,
-                  bundleID.caseInsensitiveCompare(sentinelBundleIdentifier) == .orderedSame,
-                  !app.isTerminated else {
-                continue
-            }
-            app.terminate()
-        }
-    }
-
-    private static func expectedSentinelBundleIdentifier(forBrowserBundleIdentifier bundleIdentifier: String) -> String {
-        let lowercased = bundleIdentifier.lowercased()
-        if lowercased.contains(".canary.") || lowercased.contains("canary") {
-            return "com.phibrowser.canary.Sentinel"
-        }
-        if lowercased.contains(".dev.") {
-            return "com.phibrowser.dev.Sentinel"
-        }
-        return "com.phibrowser.Sentinel"
     }
 
     private static func openApp(_ appURL: URL) throws {

@@ -8,7 +8,7 @@ import XCTest
 @testable import Phi
 
 /// `BrowserState.pageCommandTarget`: the page a page-scoped command
-/// (Reload, Bookmark, Share, Save to Folio, Copy URL, screenshot) acts on.
+/// (Reload, Bookmark, Share, Copy URL, screenshot) acts on.
 /// A peek's tab is never the focused strip tab — its opener stays focused
 /// beneath the panel — so the target is the peek on screen when one is up,
 /// else the focused tab.

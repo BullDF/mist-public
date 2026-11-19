@@ -65,8 +65,6 @@ protocol SpaceSwitchBandSurface: NSViewController {
 }
 
 extension SpaceSwitchBandSurface {
-    func prepareSpaceSwitchBand() { prepareSpaceSwitchBand(timing: nil) }
-
     /// The band region in this surface's root view coordinate space.
     var spaceSwitchBandFrame: NSRect {
         let rects = spaceSwitchBandViews.compactMap { bandView -> NSRect? in
@@ -112,73 +110,4 @@ extension SpaceSwitchBandSurface {
         }
     }
 
-    /// Rubber-band nudge on the per-Space content band, played when a
-    /// swipe-to-switch can't proceed because the active Space is already the
-    /// first or last one. The band (pinned strip + tab list) shifts a short
-    /// distance in the swipe's push direction and springs back — the same
-    /// horizontal motion as the push-in swap, minus the Space change — so the
-    /// gesture still resolves with feedback the user can feel. `forward`
-    /// follows the swap convention: next-Space swipes push the band left,
-    /// previous-Space swipes push it right.
-    func bounceSpaceSwitchBand(forward: Bool) {
-        let offset: CGFloat = forward ? -22 : 22
-        let container = spaceSwitchBandContainer
-
-        // Clip the nudge to the surface so the shifted band reveals the
-        // background on the trailing edge instead of poking over the web
-        // content; restored once the bounce settles.
-        container.wantsLayer = true
-        let priorMasksToBounds = container.layer?.masksToBounds ?? false
-        container.layer?.masksToBounds = true
-
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak container] in
-            container?.layer?.masksToBounds = priorMasksToBounds
-        }
-        for bandView in spaceSwitchBandViews {
-            bandView.wantsLayer = true
-            guard let layer = bandView.layer else { continue }
-            let bounce = CAKeyframeAnimation(keyPath: "transform.translation.x")
-            bounce.values = [0, offset, 0]
-            bounce.keyTimes = [0, 0.4, 1]
-            bounce.timingFunctions = [
-                CAMediaTimingFunction(name: .easeInEaseOut),
-                CAMediaTimingFunction(name: .easeInEaseOut)
-            ]
-            bounce.duration = 0.3
-            layer.add(bounce, forKey: "spaceSwitchEdgeBounce")
-        }
-        CATransaction.commit()
-    }
-
-    /// Switches this window's active Space by `step`, clamped at the
-    /// first/last Space (no wrap-around) so the push-in animation direction
-    /// always matches the swipe. At a clamp edge the switch can't proceed, so
-    /// a rubber-band end effect plays instead of the swipe being swallowed.
-    /// Vertical layouts only.
-    ///
-    /// Incognito windows are excluded: they expose no Spaces (the strip is
-    /// suppressed and the window never joins a slot), and without the guard
-    /// the `keySlot` fallback below would switch the Space of a DIFFERENT
-    /// (normal) window from a swipe in the incognito sidebar.
-    func activateAdjacentSpace(by step: Int, state: BrowserState) {
-        guard !PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional,
-              PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
-              state.participatesInSpaces else { return }
-        guard let slot = state.windowController?.slot ?? SpaceManager.shared.keySlot else { return }
-        // The slot's own list: agent Spaces hosted by other windows are not
-        // swiped through here (`SpaceWindowSlot.presents`).
-        let spaces = slot.presentedSpaces
-        guard let currentId = slot.activeSpaceId,
-              let currentIdx = spaces.firstIndex(where: { $0.spaceId == currentId }) else { return }
-        let targetIdx = currentIdx + step
-        guard spaces.indices.contains(targetIdx) else {
-            // Already at the first/last Space (or only one exists) — there's
-            // nowhere to switch, so play the rubber-band end effect instead of
-            // silently swallowing the swipe.
-            bounceSpaceSwitchBand(forward: step > 0)
-            return
-        }
-        slot.activate(spaceId: spaces[targetIdx].spaceId, userInitiated: true)
-    }
 }

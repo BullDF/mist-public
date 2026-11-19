@@ -265,8 +265,106 @@ private final class SidebarTabHoverDeadZoneView: NSView {
     }
 }
 
+/// Sits over the favicon only while it offers a return action. The favicon
+/// remains visible underneath, including any recording or discard indicator.
+private final class GroupedTabStartPageButton: NSButton {
+    static let size: CGFloat = 24
+
+    private let shade = NSView()
+    private var hoverRegion: NSTrackingArea?
+    private var stateSubscription: AnyCancellable?
+    private var onReturn: (() -> Void)?
+
+    init() {
+        super.init(frame: .zero)
+        isBordered = false
+        title = ""
+        target = self
+        action = #selector(returnToStartPage)
+        setAccessibilityLabel(NSLocalizedString(
+            "sidebar.tabCell.favicon.returnToStartPageAccessibilityLabel", value: "Return to Start Page",
+            comment: "Grouped tab favicon button - Navigate the tab to its start page"
+        ))
+
+        shade.wantsLayer = true
+        shade.layer?.cornerRadius = 4
+        shade.layer?.cornerCurve = .continuous
+        shade.phiLayer?.setBackgroundColor(.hover)
+        shade.isHidden = true
+        addSubview(shade)
+        shade.snp.makeConstraints { $0.edges.equalToSuperview() }
+
+        let marker = NSImageView()
+        marker.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 6, weight: .bold))
+        marker.imageScaling = .scaleNone
+        marker.phi.setContentTintColor(.textPrimary)
+        marker.wantsLayer = true
+        marker.layer?.cornerRadius = 5
+        marker.phiLayer?.setBackgroundColor(.windowBackground)
+        marker.setAccessibilityElement(false)
+        addSubview(marker)
+        marker.snp.makeConstraints {
+            $0.trailing.bottom.equalToSuperview().inset(1)
+            $0.size.equalTo(10)
+        }
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func bind(to tab: Tab?, onReturn: (() -> Void)? = nil) {
+        stateSubscription = nil
+        self.onReturn = onReturn
+        setReturnAvailable(tab?.canReturnToGroupStartPage == true)
+        guard let tab else { return }
+        stateSubscription = tab.$groupStartPage.combineLatest(tab.$url, tab.$isPinned)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak tab] _ in
+                self?.setReturnAvailable(tab?.canReturnToGroupStartPage == true)
+            }
+    }
+
+    private func setReturnAvailable(_ available: Bool) {
+        guard isHidden == available else { return }
+        isHidden = !available
+        setCustomTooltip(available ? NSLocalizedString(
+            "sidebar.tabCell.favicon.returnToStartPageHint", value: "Back to Start Page",
+            comment: "Grouped tab favicon hover hint - Navigate the tab to its start page"
+        ) : nil)
+        syncHover()
+    }
+
+    func containsWindowPoint(_ point: NSPoint) -> Bool {
+        !isHiddenOrHasHiddenAncestor && bounds.intersection(visibleRect).contains(convert(point, from: nil))
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        super.hitTest(point) == nil ? nil : self
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverRegion { removeTrackingArea(hoverRegion) }
+        let area = NSTrackingArea(rect: .zero, options: [.activeInActiveApp, .inVisibleRect, .mouseEnteredAndExited], owner: self)
+        addTrackingArea(area)
+        hoverRegion = area
+        syncHover()
+    }
+
+    override func mouseEntered(with event: NSEvent) { syncHover() }
+    override func mouseExited(with event: NSEvent) { shade.isHidden = true }
+
+    private func syncHover() {
+        shade.isHidden = window.map { !containsWindowPoint($0.mouseLocationOutsideOfEventStream) } ?? true
+    }
+
+    @objc func returnToStartPage() { onReturn?() }
+}
+
 // MARK: - Tab Cell View (reused from existing)
 class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
+    private let renameEditor = TabRenameEditor()
     private var hostingView: ThemedHostingView!
     private let hoverRegionView = SidebarTabHoverRegionView()
     private let hoverDeadZoneView = SidebarTabHoverDeadZoneView()
@@ -275,8 +373,8 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
     /// to this row's tab.
     private let peekTabViewModel = TabViewModel()
     private let tabPreviewRegistration = TabPreviewRegistration()
-    private weak var configuredTab: Tab?
-    private var activeSuppressed = false
+    private var startPageButton: GroupedTabStartPageButton?
+    var showsGroupStartPageAction = false
     weak var delegate: TabCellDelegate?
 
 
@@ -292,13 +390,15 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
     
     override func prepareForReuse() {
         super.prepareForReuse()
+        startPageButton?.bind(to: nil)
+        renameEditor.reset()
         // Only cancel subscriptions and reset interaction state.
         // Visual state (title, favicon, etc.) is preserved until configure()
         // overwrites it, avoiding a blank-frame flicker between prepareForReuse
         // and the next SwiftUI render cycle.
         viewModel.cancelSubscriptions()
         viewModel.setHoverSuppressed(false)
-        viewModel.setActiveSuppressed(false, activeValue: false)
+        viewModel.isActive = false
         viewModel.setHovered(false)
         viewModel.isPressed = false
         // Peek attachment is tab identity, not preservable visual state — a
@@ -306,14 +406,13 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
         viewModel.showsPeek = false
         peekTabViewModel.prepareForReuse()
         tabPreviewRegistration.invalidate()
-        configuredTab = nil
-        activeSuppressed = false
     }
 
     /// Cancel Combine subscriptions without resetting visual state.
     /// Used before reloadData to prevent orphan events while keeping
     /// the current frame on screen (avoids blank-frame flicker).
     func invalidateSubscriptions() {
+        startPageButton?.bind(to: nil)
         viewModel.cancelSubscriptions()
         peekTabViewModel.cancelSubscriptions()
         cancellables.forEach { $0.cancel() }
@@ -336,11 +435,6 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
         tabPreviewRegistration.cancelForInteraction()
     }
 
-    func setActiveSuppressed(_ suppressed: Bool) {
-        activeSuppressed = suppressed
-        viewModel.setActiveSuppressed(suppressed, activeValue: configuredTab?.isActive ?? false)
-    }
-    
     private func setupViews() {
         wantsLayer = true
         layer?.masksToBounds = false
@@ -423,13 +517,27 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
 
     override func configureAppearance() {
         guard let tab = item as? Tab else { return }
-        configuredTab = tab
         cancellables.forEach { $0.cancel() }
         cancellables.removeAll()
 
         let state = SpaceSessionControllersManager.shared
             .controller(for: tab.windowId)?.browserState
         viewModel.configure(with: tab, in: state)
+        if showsGroupStartPageAction {
+            let button = startPageButton ?? addStartPageButton()
+            button.bind(to: tab) { [weak self, weak state, weak tab] in
+                guard let tab else { return }
+                self?.cancelTabPreviewForInteraction()
+                state?.navigateGroupedTabToStartPage(tab)
+            }
+        }
+        renameEditor.configure(tab: tab, state: state, anchor: self) { [weak self] in
+            guard let self else { return nil }
+            let leading = WebContentConstant.edgesSpacing + 30
+                + (self.viewModel.isCurrentlyAudible || self.viewModel.isMuted ? 24 : 0)
+            return NSRect(x: leading, y: (self.bounds.height - 20) / 2,
+                          width: max(0, self.bounds.width - leading - 30), height: 20)
+        }
         if let state {
             tabPreviewRegistration.configure(
                 anchorView: self,
@@ -453,7 +561,6 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
         } else {
             tabPreviewRegistration.invalidate()
         }
-        viewModel.setActiveSuppressed(activeSuppressed, activeValue: tab.isActive)
         viewModel.onToggleMute = { [weak tab] in
             guard let tab else { return }
             tab.toggleAudioMuted()
@@ -471,6 +578,28 @@ class SidebarTabCellView: SidebarCellView, TabPreviewInteractionCancelling {
         } else {
             updatePeekIndicator(peekTab: nil, browserState: nil)
         }
+    }
+
+    override func layout() {
+        super.layout()
+        renameEditor.layout()
+    }
+
+    private func addStartPageButton() -> GroupedTabStartPageButton {
+        let button = GroupedTabStartPageButton()
+        addSubview(button)
+        button.snp.makeConstraints {
+            $0.leading.equalToSuperview().offset(WebContentConstant.edgesSpacing + SideTabView.leadingContentInset - 4)
+            $0.centerY.equalToSuperview()
+            $0.size.equalTo(GroupedTabStartPageButton.size)
+        }
+        startPageButton = button
+        return button
+    }
+
+    func startPageTabID(at windowPoint: NSPoint) -> Int? {
+        guard startPageButton?.containsWindowPoint(windowPoint) == true else { return nil }
+        return (item as? Tab)?.guid
     }
 
     /// Shows the trailing peek indicator when a live Peek belongs to this
@@ -515,6 +644,9 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
     private lazy var rightIconView = TabFaviconImageView(
         model: rightStatusModel, cornerRadius: Self.faviconCornerRadius
     )
+    private var leftStartPageButton: GroupedTabStartPageButton?
+    private var rightStartPageButton: GroupedTabStartPageButton?
+    var showsGroupStartPageAction = false
     private var leftDiscardedOutlineHost: TabDecorativeHostingView!
     private var rightDiscardedOutlineHost: TabDecorativeHostingView!
     private var statusBadgeHost: TabDecorativeHostingView!
@@ -522,6 +654,9 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
     private let rightStatusModel = TabStatusModel()
     private let leftTitleLabel = TrailingFadeTextField()
     private let rightTitleLabel = TrailingFadeTextField()
+    private let leftAgentStatusHost = TabDecorativeHostingView(rootView: AgentSidebarStatusView(status: .none))
+    private let rightAgentStatusHost = TabDecorativeHostingView(rootView: AgentSidebarStatusView(status: .none))
+    private var agentStatuses: [Int: (AgentSidebarStatus, Bool)] = [:]
     private var leftCloseHost: ZeroSafeAreaHostingView<AnyView>!
     private var rightCloseHost: ZeroSafeAreaHostingView<AnyView>!
     private var leftMuteHost: ZeroSafeAreaHostingView<AnyView>!
@@ -543,7 +678,6 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
     private var rightFaviconHandle: ProfileScopedFaviconLoadHandle?
     private weak var configuredLeftTab: Tab?
     private weak var configuredRightTab: Tab?
-    private var configuredSplitId: String?
     private let splitTabPreviewRegistration = SplitTabPreviewRegistration()
     private var showsSplitTabPreview = false
     /// Owning window's BrowserState. Lets the cell re-resolve which pane
@@ -562,7 +696,7 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
     }
     /// Controller that owns the outline view. Routed through so a click
     /// on either half triggers the same selection flow as a normal tab
-    /// click (clears group overview, updates lastSelectedItem, etc.).
+    /// click (updates lastSelectedItem, etc.).
     weak var owner: SidebarTabListItemOwner?
 
     override init(frame frameRect: NSRect) {
@@ -577,6 +711,8 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        leftStartPageButton?.bind(to: nil)
+        rightStartPageButton?.bind(to: nil)
         leftFaviconHandle?.cancel()
         leftFaviconHandle = nil
         rightFaviconHandle?.cancel()
@@ -587,6 +723,9 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
         rightIconView.alphaValue = 1
         leftStatusModel.prepareForReuse()
         rightStatusModel.prepareForReuse()
+        agentStatuses.removeAll()
+        updateAgentStatus(isLeft: true, marker: .none, ended: false)
+        updateAgentStatus(isLeft: false, marker: .none, ended: false)
         leftTitleLabel.stringValue = ""
         rightTitleLabel.stringValue = ""
         leftTitleLabel.toolTip = nil
@@ -594,7 +733,6 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
         toolTip = nil
         configuredLeftTab = nil
         configuredRightTab = nil
-        configuredSplitId = nil
         splitTabPreviewRegistration.invalidate()
         outerBackground.isSelected = false
         isCellHovered = false
@@ -702,6 +840,16 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
                                        close: rightCloseHost,
                                        paneTrailing: &rightTitlePaneTrailing,
                                        closeTrailing: &rightTitleCloseTrailing)
+        for (pane, label, host) in [(leftPane, leftTitleLabel, leftAgentStatusHost),
+                                    (rightPane, rightTitleLabel, rightAgentStatusHost)] {
+            pane.addSubview(host)
+            host.isHidden = true
+            host.snp.makeConstraints { make in
+                make.leading.equalTo(label.snp.trailing).offset(4)
+                make.centerY.equalToSuperview()
+                make.size.equalTo(AgentSidebarStatusView.spinnerSize)
+            }
+        }
         outerBackground.addSubview(leftPane)
         outerBackground.addSubview(rightPane)
 
@@ -981,10 +1129,13 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
         cancellables.removeAll()
         configuredLeftTab = pair.leftTab
         configuredRightTab = pair.rightTab
-        configuredSplitId = pair.groupId
+        agentStatuses.removeAll()
+        updateAgentStatus(isLeft: true, marker: .none, ended: false)
+        updateAgentStatus(isLeft: false, marker: .none, ended: false)
         let state = browserState ?? pair.browserState
-        leftStatusModel.configure(with: pair.leftTab, in: state)
-        rightStatusModel.configure(with: pair.rightTab, in: state)
+        bindStartPageButtons()
+        leftStatusModel.configure(with: pair.leftTab)
+        rightStatusModel.configure(with: pair.rightTab)
         if let state,
            let target = SplitTabPreviewTarget.make(representing: pair.leftTab, in: state) {
             splitTabPreviewRegistration.configure(
@@ -1024,6 +1175,17 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
         // mapping changes via `reresolvePairOrderIfNeeded` without re-creating
         // these subscriptions. Same pattern as the title binding above.
         for tab in [pair.leftTab, pair.rightTab] {
+            TabViewModel.agentSidebarStatusPublisher(for: tab)
+                .sink { [weak self, weak tab] marker, ended in
+                    guard let self, let tab else { return }
+                    self.agentStatuses[tab.guid] = (marker, ended)
+                    if tab === self.configuredLeftTab {
+                        self.updateAgentStatus(isLeft: true, marker: marker, ended: ended)
+                    } else if tab === self.configuredRightTab {
+                        self.updateAgentStatus(isLeft: false, marker: marker, ended: ended)
+                    }
+                }
+                .store(in: &cancellables)
             tab.$isCurrentlyAudible
                 .combineLatest(tab.audioMutePublisher)
                 .removeDuplicates { $0 == $1 }
@@ -1127,6 +1289,17 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
         updatePaneTitle(isLeft: false, title: rightTitle)
     }
 
+    private func updateAgentStatus(isLeft: Bool, marker: AgentSidebarStatus, ended: Bool) {
+        let host = isLeft ? leftAgentStatusHost : rightAgentStatusHost
+        host.setThemedContent(AgentSidebarStatusView(status: marker))
+        host.isHidden = marker == .none
+        let label = isLeft ? leftTitleLabel : rightTitleLabel
+        label.phi.setTextColor(ended ? .textTertiary : .textPrimary)
+        let spacing = Self.titleTrailingSpacing + (marker == .none ? 0 : AgentSidebarStatusView.spinnerSize + 4)
+        (isLeft ? leftTitlePaneTrailing : rightTitlePaneTrailing)?.update(offset: -spacing)
+        (isLeft ? leftTitleCloseTrailing : rightTitleCloseTrailing)?.update(offset: -spacing)
+    }
+
     private func updatePaneTitle(isLeft: Bool, title: String) {
         let label = isLeft ? leftTitleLabel : rightTitleLabel
         label.stringValue = title
@@ -1140,6 +1313,37 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
 
     func cancelTabPreviewForInteraction() {
         splitTabPreviewRegistration.cancelForInteraction()
+    }
+
+    func startPageTabID(at windowPoint: NSPoint) -> Int? {
+        if leftStartPageButton?.containsWindowPoint(windowPoint) == true { return configuredLeftTab?.guid }
+        if rightStartPageButton?.containsWindowPoint(windowPoint) == true { return configuredRightTab?.guid }
+        return nil
+    }
+
+    private func bindStartPageButtons() {
+        guard showsGroupStartPageAction else { return }
+        let left = leftStartPageButton ?? addStartPageButton(to: leftPane, over: leftIconView)
+        let right = rightStartPageButton ?? addStartPageButton(to: rightPane, over: rightIconView)
+        leftStartPageButton = left
+        rightStartPageButton = right
+        for (button, tab) in [(left, configuredLeftTab), (right, configuredRightTab)] {
+            button.bind(to: tab) { [weak self, weak tab] in
+                guard let tab else { return }
+                self?.cancelTabPreviewForInteraction()
+                self?.browserState?.navigateGroupedTabToStartPage(tab)
+            }
+        }
+    }
+
+    private func addStartPageButton(to pane: NSView, over icon: NSView) -> GroupedTabStartPageButton {
+        let button = GroupedTabStartPageButton()
+        pane.addSubview(button)
+        button.snp.makeConstraints {
+            $0.center.equalTo(icon)
+            $0.size.equalTo(GroupedTabStartPageButton.size)
+        }
+        return button
     }
 
     private func refreshFaviconForTab(_ tab: Tab) {
@@ -1267,8 +1471,13 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
             pair.rightTab = oldLeft
             configuredLeftTab = pair.leftTab
             configuredRightTab = pair.rightTab
-            leftStatusModel.configure(with: pair.leftTab, in: pair.browserState)
-            rightStatusModel.configure(with: pair.rightTab, in: pair.browserState)
+            bindStartPageButtons()
+            leftStatusModel.configure(with: pair.leftTab)
+            rightStatusModel.configure(with: pair.rightTab)
+            let leftAgentStatus = agentStatuses[pair.leftTab.guid] ?? (.none, false)
+            let rightAgentStatus = agentStatuses[pair.rightTab.guid] ?? (.none, false)
+            updateAgentStatus(isLeft: true, marker: leftAgentStatus.0, ended: leftAgentStatus.1)
+            updateAgentStatus(isLeft: false, marker: rightAgentStatus.0, ended: rightAgentStatus.1)
             updatePaneTitles(leftTitle: pair.leftTab.title, rightTitle: pair.rightTab.title)
             refreshFavicon(into: leftIconView, for: pair.leftTab, handle: &leftFaviconHandle)
             refreshFavicon(into: rightIconView, for: pair.rightTab, handle: &rightFaviconHandle)
@@ -1285,295 +1494,9 @@ class SidebarSplitPairCellView: SidebarCellView, TabPreviewInteractionCancelling
     }
 }
 
-// MARK: - Farringdon Organize Completion
-
-extension Notification.Name {
-    /// Posted (main thread) when a Farringdon "organize tabs" run is triggered by
-    /// the keyboard shortcut (the broom button starts its own animation directly),
-    /// so the broom button can show its in-progress animation.
-    static let farringdonOrganizeDidStart = Notification.Name("farringdonOrganizeDidStart")
-
-    /// Posted (main thread) when the Kensington extension reports that a
-    /// Farringdon "organize tabs" run has finished, so the broom button can stop
-    /// its in-progress animation. Carries no payload — the only animating button
-    /// is the one in the window the user clicked.
-    static let farringdonOrganizeDidFinish = Notification.Name("farringdonOrganizeDidFinish")
-}
-
-/// Single entry point for triggering a Farringdon "organize tabs" run. Posts the
-/// start notification (so any visible broom button animates) and broadcasts the
-/// request to the Kensington extension, which resolves the focused window itself.
-/// Used by the sidebar broom, the horizontal-tab broom, and the keyboard shortcut.
-enum FarringdonOrganizer {
-    /// Organizing a handful of pages isn't worth a Farringdon run, so the broom
-    /// only appears once the current Space has more eligible pages than this.
-    static let minimumEligibleTabCount = 7
-
-    static func isTabCountEligible(_ tabCount: Int) -> Bool {
-        tabCount > minimumEligibleTabCount
-    }
-
-    static func eligibleTabCount(in tabs: [Tab]) -> Int {
-        tabs.lazy.filter { !$0.isLocalPage }.count
-    }
-
-    static func canOrganizeTabs(phiAIEnabled: Bool,
-                                isIncognito: Bool,
-                                eligibleTabCount: Int) -> Bool {
-        phiAIEnabled && !isIncognito && isTabCountEligible(eligibleTabCount)
-    }
-
-    static func canOrganizeTabs(in browserState: BrowserState) -> Bool {
-        canOrganizeTabs(
-            phiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue(),
-            isIncognito: browserState.isIncognito,
-            eligibleTabCount: eligibleTabCount(in: browserState.normalTabs)
-        )
-    }
-
-    @MainActor
-    static func organizeFocusedWindow(eligibleTabCount: Int? = nil) {
-        // Buttons and shortcuts share the same eligibility gate; this is the
-        // backstop for hidden UI and direct command dispatch.
-        guard let state = SpaceSessionControllersManager.shared.getActiveWindowState() else {
-            return
-        }
-        let count = eligibleTabCount ?? Self.eligibleTabCount(in: state.normalTabs)
-        guard canOrganizeTabs(
-            phiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue(),
-            isIncognito: state.isIncognito,
-            eligibleTabCount: count
-        ) else { return }
-        NotificationCenter.default.post(name: .farringdonOrganizeDidStart, object: nil)
-        ExtensionMessaging.shared.broadcast(type: "farringdon.toggleTabs", payload: "{}")
-    }
-}
-
-enum BroomAnimation {
-    static let minimumPlaybackDuration =
-        LottieAnimation.named(
-            "broom",
-            bundle: .main,
-            subdirectory: "LottieFiles"
-        )?.duration ?? 1.5
-}
-
-// MARK: - Broom Button
-
-/// The "organize tabs with AI" (Farringdon) button shown at the trailing edge of
-/// the New Tab row. Owns its own hover feedback (tint + subtle fill) and a
-/// looping Lottie animation that plays while a run is in progress.
-final class BroomButton: NSButton {
-    private var trackingArea: NSTrackingArea?
-    private var isHovering = false { didSet { updateAppearance() } }
-    private(set) var isOrganizing = false
-    private var organizeStartedAt: Date?
-    private var safetyTimer: Timer?
-
-    // Matches the 24x24 frame used by `UnifiedTabCloseButton` in `SideTabView`.
-    static let buttonSize: CGFloat = 24
-
-    private static let cornerRadius: CGFloat = 4
-    private static let safetyTimeout: TimeInterval = 8.0
-
-    private lazy var animationView: LottieAnimationNSView = {
-        let config = LottieAnimationViewConfig(
-            animationName: "broom",
-            size: CGSize(width: Self.buttonSize, height: Self.buttonSize),
-            animationTrigger: .manual,
-            themedTintColor: .custom(light: .black, dark: .white),
-            loopMode: .loop,
-            allowsHitTesting: false
-        )
-        return LottieAnimationNSView(config: config)
-    }()
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        configure()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        configure()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-        safetyTimer?.invalidate()
-    }
-
-    private func configure() {
-        isBordered = false
-        bezelStyle = .shadowlessSquare
-        title = ""
-        attributedTitle = NSAttributedString(string: "")
-        alternateTitle = ""
-        setButtonType(.momentaryChange)
-        wantsLayer = true
-        layer?.cornerRadius = Self.cornerRadius
-        layer?.cornerCurve = .continuous
-        addSubview(animationView)
-        animationView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
-        toolTip = NSLocalizedString("sidebar.newTabRow.aiOrganizeTooltip", value: "Organize tabs with AI",
-            comment: "side bar new tab row - organize tabs button tooltip")
-        updateAppearance()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleOrganizeDidStart),
-            name: .farringdonOrganizeDidStart,
-            object: nil)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleOrganizeDidFinish),
-            name: .farringdonOrganizeDidFinish,
-            object: nil)
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-            owner: self,
-            userInfo: nil)
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard isEnabled, !isHidden, alphaValue > 0, bounds.contains(point) else {
-            return nil
-        }
-        return self
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-        isHovering = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        isHovering = false
-    }
-
-    private func updateAppearance() {
-        layer?.backgroundColor = isHovering
-            ? NSColor(resource: .sidebarTabHovered).cgColor
-            : NSColor.clear.cgColor
-    }
-
-    // MARK: Organizing animation
-
-    func startOrganizing() {
-        guard !isOrganizing else { return }
-        isOrganizing = true
-        organizeStartedAt = Date()
-        animationView.triggerAnimation()
-
-        // Stop even if the completion signal never arrives.
-        safetyTimer?.invalidate()
-        safetyTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.safetyTimeout, repeats: false
-        ) { [weak self] _ in
-            self?.stopOrganizing()
-        }
-    }
-
-    func stopOrganizing() {
-        guard isOrganizing else { return }
-        safetyTimer?.invalidate()
-        safetyTimer = nil
-
-        // Complete at least one full playback even when the organize run finishes immediately.
-        let elapsed = organizeStartedAt.map { Date().timeIntervalSince($0) }
-            ?? BroomAnimation.minimumPlaybackDuration
-        let remaining = max(0, BroomAnimation.minimumPlaybackDuration - elapsed)
-        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-            guard let self, self.isOrganizing else { return }
-            self.isOrganizing = false
-            self.organizeStartedAt = nil
-            self.animationView.stopAnimation()
-        }
-    }
-
-    @objc private func handleOrganizeDidStart() {
-        // Only the window that triggered the run (the key window) animates —
-        // and in it only the Space on screen: every Space's sidebar is
-        // resident, hidden, in the shared shell.
-        guard !isHiddenOrHasHiddenAncestor, window?.isKeyWindow == true else { return }
-        startOrganizing()
-    }
-
-    @objc private func handleOrganizeDidFinish() {
-        stopOrganizing()
-    }
-}
-
 // MARK: - New Tab Button Cell View
 class NewTabButtonCellView: SidebarCellView {
     var clickAction: (() -> Void)?
-    /// Triggers the Farringdon "organize tabs with AI" action. When nil, the
-    /// trailing broom button is hidden.
-    var cleanupAction: (() -> Void)? {
-        didSet { updateCleanupButtonVisibility() }
-    }
-    private var isCleanupButtonVisible = false
-    private var cleanupVisibilityGeneration = 0
-    private var iconHoverState = false
-    private var didPlayForwardAnimationForCurrentHover = false
-
-    private lazy var cleanupButton: BroomButton = {
-        let button = BroomButton(frame: .zero)
-        button.target = self
-        button.action = #selector(cleanupButtonClicked)
-        button.isHidden = true
-        button.alphaValue = 0
-        return button
-    }()
-
-    private func updateCleanupButtonVisibility() {
-        let visible = cleanupAction != nil
-        guard isCleanupButtonVisible != visible else { return }
-        isCleanupButtonVisible = visible
-        cleanupVisibilityGeneration += 1
-        let generation = cleanupVisibilityGeneration
-        let shouldAnimate = window != nil && !isHiddenOrHasHiddenAncestor
-            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-
-        guard shouldAnimate else {
-            cleanupButton.layer?.removeAllAnimations()
-            cleanupButton.alphaValue = visible ? 1 : 0
-            cleanupButton.isHidden = !visible
-            return
-        }
-
-        cleanupButton.isHidden = false
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.1
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            cleanupButton.animator().alphaValue = visible ? 1 : 0
-        }) { [weak self] in
-            // Ignore completions from a superseded hover transition or reused cell.
-            guard let self, self.cleanupVisibilityGeneration == generation else { return }
-            self.cleanupButton.isHidden = !visible
-        }
-    }
-
-    @objc private func cleanupButtonClicked() {
-        guard !cleanupButton.isOrganizing, let cleanupAction else { return }
-        // `cleanupAction` triggers the organize run, which posts
-        // `.farringdonOrganizeDidStart`; the button animates via that observer.
-        FeatureEntryAnalytics.capture(.organizeTabs, surface: .sidebar)
-        cleanupAction()
-    }
-
     private lazy var iconView: LottieAnimationNSView = {
         let config = LottieAnimationViewConfig(
             animationName: "new-tab",
@@ -1604,27 +1527,7 @@ class NewTabButtonCellView: SidebarCellView {
         setupViews()
     }
 
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        iconHoverState = false
-        didPlayForwardAnimationForCurrentHover = false
-        cleanupButton.stopOrganizing()
-    }
-
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // Let the trailing broom button claim its own clicks before the cell
-        // swallows the whole row (used by the floating new-tab variant where
-        // `clickAction` opens a new tab).
-        if cleanupAction != nil, !cleanupButton.isHidden {
-            let backgroundPoint = backgoundView.convert(point, from: self)
-            if cleanupButton.frame.contains(backgroundPoint) {
-                return cleanupButton
-            }
-        }
-        if let hit = super.hitTest(point),
-           hit == cleanupButton || hit.isDescendant(of: cleanupButton) {
-            return hit
-        }
         guard clickAction != nil, bounds.contains(point) else {
             return super.hitTest(point)
         }
@@ -1639,13 +1542,6 @@ class NewTabButtonCellView: SidebarCellView {
 
         let point = convert(event.locationInWindow, from: nil)
         guard bounds.contains(point) else { return }
-        if cleanupAction != nil, !cleanupButton.isHidden {
-            let backgroundPoint = backgoundView.convert(point, from: self)
-            if cleanupButton.frame.contains(backgroundPoint) {
-                cleanupButtonClicked()
-                return
-            }
-        }
         clickAction()
     }
     
@@ -1661,28 +1557,9 @@ class NewTabButtonCellView: SidebarCellView {
         backgoundView.layer?.cornerCurve = .continuous
         backgoundView.backgroundColor = .clear
         backgoundView.hoveredColor = NSColor(resource: .sidebarTabHovered)
-        backgoundView.hoverStateChanged = { [weak self] hovered in
-            guard let self else { return }
-            AppLogDebug("hover changed: \(hovered) - \(self.backgoundView.responseToHoverAnimation)")
-            let shouldAnimate = self.backgoundView.responseToHoverAnimation
-            let hoverChanged = hovered != self.iconHoverState
-            self.iconHoverState = hovered
 
-            guard shouldAnimate, hoverChanged else {
-                return
-            }
-            if hovered {
-                self.didPlayForwardAnimationForCurrentHover = true
-                self.iconView.triggerAnimation()
-            } else if self.didPlayForwardAnimationForCurrentHover {
-                self.didPlayForwardAnimationForCurrentHover = false
-                self.iconView.triggerReverseAnimation()
-            }
-        }
-       
         backgoundView.addSubview(iconView)
         backgoundView.addSubview(titleLabel)
-        backgoundView.addSubview(cleanupButton)
 
         iconView.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(6)
@@ -1690,15 +1567,9 @@ class NewTabButtonCellView: SidebarCellView {
             make.size.equalTo(16)
         }
 
-        cleanupButton.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().inset(4)
-            make.centerY.equalToSuperview()
-            make.size.equalTo(BroomButton.buttonSize)
-        }
-
         titleLabel.snp.makeConstraints { make in
             make.leading.equalTo(iconView.snp.trailing).offset(8)
-            make.trailing.lessThanOrEqualTo(cleanupButton.snp.leading).offset(-8)
+            make.trailing.lessThanOrEqualToSuperview().inset(8)
             make.centerY.equalToSuperview()
         }
     }

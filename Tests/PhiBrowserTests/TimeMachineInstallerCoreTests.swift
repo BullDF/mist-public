@@ -205,73 +205,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
         XCTAssertEqual(journal.phase, .reverted)
     }
 
-    func testSentinelTerminationRunsBeforeDataStagingAndDoesNotAbortRestore() throws {
-        let fixture = try makeFixture(includeChromiumData: true)
-        var didRequestSentinelTermination = false
-        let core = makeCore(
-            fixture: fixture,
-            sentinelTerminator: { bundleIdentifier in
-                XCTAssertEqual(bundleIdentifier, "com.phibrowser.Mac")
-                didRequestSentinelTermination = true
-                throw CocoaError(.userCancelled)
-            }
-        ) { phase in
-            if phase == .dataStaged {
-                XCTAssertTrue(didRequestSentinelTermination)
-            }
-        }
-
-        try core.restore(planURL: fixture.planURL)
-
-        XCTAssertTrue(didRequestSentinelTermination)
-        XCTAssertEqual(try readText(fixture.currentAppURL.appendingPathComponent("Contents/build.txt")), "rollback-app")
-    }
-
-    func testRecoveryFromDataStagedRequestsSentinelTerminationBeforeBackupData() throws {
-        let fixture = try makeFixture(includeChromiumData: true)
-        try stageDataForRecovery(fixture: fixture)
-        try writeJournalPhase(.dataStaged, fixture: fixture)
-        var didRequestSentinelTermination = false
-        let core = makeCore(
-            fixture: fixture,
-            sentinelTerminator: { _ in
-                didRequestSentinelTermination = true
-            }
-        ) { phase in
-            if phase == .dataBackedUp {
-                XCTAssertTrue(didRequestSentinelTermination)
-                throw CocoaError(.userCancelled)
-            }
-        }
-
-        XCTAssertThrowsError(try core.recover(operationID: fixture.operationID))
-
-        XCTAssertTrue(didRequestSentinelTermination)
-    }
-
-    func testRecoveryFromDataBackedUpRequestsSentinelTerminationBeforeDataSwapStarts() throws {
-        let fixture = try makeFixture(includeChromiumData: true)
-        try stageDataForRecovery(fixture: fixture)
-        try backupDataForRecovery(fixture: fixture)
-        try writeJournalPhase(.dataBackedUp, fixture: fixture)
-        var didRequestSentinelTermination = false
-        let core = makeCore(
-            fixture: fixture,
-            sentinelTerminator: { _ in
-                didRequestSentinelTermination = true
-            }
-        ) { phase in
-            if phase == .dataSwapStarted {
-                XCTAssertTrue(didRequestSentinelTermination)
-                throw CocoaError(.userCancelled)
-            }
-        }
-
-        XCTAssertThrowsError(try core.recover(operationID: fixture.operationID))
-
-        XCTAssertTrue(didRequestSentinelTermination)
-    }
-
     func testAppSwapHappensAfterDataSwap() throws {
         let fixture = try makeFixture(includeChromiumData: true)
         var phases: [TimeMachineRestorePhase] = []
@@ -444,7 +377,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
 
     private func makeCore(
         fixture: Fixture,
-        sentinelTerminator: @escaping TimeMachineInstallerCore.SentinelTerminator = { _ in },
         appOpener: @escaping TimeMachineInstallerCore.AppOpener = { _ in },
         logger: @escaping TimeMachineInstallerCore.Logger = { _ in },
         phaseObserver: @escaping TimeMachineInstallerCore.PhaseObserver
@@ -453,7 +385,6 @@ final class TimeMachineInstallerCoreTests: XCTestCase {
             paths: fixture.paths,
             journalStore: TimeMachineRestoreJournalStore(paths: fixture.paths),
             hostWaiter: { _ in },
-            sentinelTerminator: sentinelTerminator,
             appOpener: appOpener,
             dateProvider: { Date(timeIntervalSince1970: 1_781_020_801) },
             phaseObserver: phaseObserver,

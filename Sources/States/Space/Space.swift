@@ -30,8 +30,6 @@ final class Space: ObservableObject, Identifiable {
     var iconName: String { content.iconName }
     var sortOrder: Int { content.sortOrder }
     var createdDate: Date { content.createdDate }
-    var updatedDate: Date { content.updatedDate }
-
     init(spaceId: String = UUID().uuidString,
          profileId: String,
          name: String,

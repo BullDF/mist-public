@@ -11,7 +11,7 @@ import XCTest
 /// `BookmarkManager.didApplyFirstStoreDelivery` is what the sidebar's restore
 /// gate waits on before painting a restored window's tab list. These pin the
 /// two properties that make it usable as a gate: it always resolves, and when
-/// it fires the bookmark-backed tabs are already out of `normalTabs`.
+/// it fires Mist's bookmark launchers have left their pages in `normalTabs`.
 @MainActor
 final class BookmarkStoreFirstDeliveryTests: XCTestCase {
     private var tempDirectories: [URL] = []
@@ -20,8 +20,7 @@ final class BookmarkStoreFirstDeliveryTests: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         originalLayoutRawValue = UserDefaults.standard.string(forKey: PhiPreferences.GeneralSettings.layoutModeKey)
-        // Traditional layout keeps bookmark-backed tabs in the tab list, so
-        // the absorption these tests are about only exists outside it.
+        // Mist keeps launched bookmark pages in the tab list in every layout.
         PhiPreferences.GeneralSettings.saveLayoutMode(.performance)
     }
 
@@ -64,11 +63,9 @@ final class BookmarkStoreFirstDeliveryTests: XCTestCase {
         XCTAssertTrue(state.bookmarkManager.didApplyFirstStoreDelivery)
     }
 
-    /// The ordering contract the gate rests on: at signal time the delivery
-    /// has already re-projected `normalTabs`, so a consumer that paints on
-    /// the signal shows the post-absorption list instead of the one it
-    /// replaces.
-    func testFirstDeliveryFiresAfterBookmarkBackedTabLeavesNormalTabs() throws {
+    /// The first delivery must preserve normal tabs even when their legacy
+    /// custom GUID matches a bookmark. Bookmarks are launchers, not open tabs.
+    func testFirstDeliveryKeepsBookmarkLaunchedTabInNormalTabs() throws {
         let store = try makeStore()
         let bookmarkGuid = "bookmark-first-delivery"
 
@@ -98,9 +95,7 @@ final class BookmarkStoreFirstDeliveryTests: XCTestCase {
         state.tabs = [tab]
         state.updateNormalTabs()
 
-        // Before the delivery the window cannot know this tab is a bookmark,
-        // and projects it as an ordinary one. This is the state the gate
-        // exists to keep off screen.
+        // Both before and after the delivery this page is an ordinary tab.
         XCTAssertFalse(state.bookmarkManager.didApplyFirstStoreDelivery)
         XCTAssertEqual(state.normalTabs.map(\.guid), [301])
 
@@ -112,8 +107,8 @@ final class BookmarkStoreFirstDeliveryTests: XCTestCase {
         defer { cancellable.cancel() }
 
         XCTAssertTrue(waitUntil { normalTabsAtSignal != nil })
-        XCTAssertEqual(try XCTUnwrap(normalTabsAtSignal), [])
-        XCTAssertTrue(try XCTUnwrap(state.bookmarkManager.bookmark(withGuid: bookmarkGuid)).isOpened)
+        XCTAssertEqual(try XCTUnwrap(normalTabsAtSignal), [301])
+        XCTAssertFalse(try XCTUnwrap(state.bookmarkManager.bookmark(withGuid: bookmarkGuid)).isOpened)
     }
 
     private func makeStore() throws -> LocalStore {

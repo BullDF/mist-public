@@ -148,23 +148,6 @@ final class WebContentMountGeometryTests: XCTestCase {
         XCTAssertNotNil(fixture.webViews[1].window)
     }
 
-    /// While AI Chat expands and collapses, the page's web view follows the
-    /// page area on every frame instead of keeping its old size and jumping
-    /// at the end, so its card's corners stay on it.
-    func testAIChatSlidesResizeThePageOnEveryFrame() throws {
-        let restorePreferences = pinAIChatPreferences()
-        defer { restorePreferences() }
-        let fixture = try makeFixture()
-        fixture.state.aiChatTabCreationGateOverrideForTesting = false
-        let tab = fixture.tabs[0]
-        let webView = fixture.webViews[0]
-
-        fixture.state.setAIChatCollapsed(for: tab, collapsed: false)
-        assertFollowsPageArea(webView, in: fixture, "expand")
-        fixture.state.setAIChatCollapsed(for: tab, collapsed: true)
-        assertFollowsPageArea(webView, in: fixture, "collapse")
-    }
-
     /// A collapse that replaces an expand still in flight keeps the page card
     /// separated until the collapse itself ends. AppKit also runs the
     /// completion of the replaced expand, which must not end the newer
@@ -173,7 +156,6 @@ final class WebContentMountGeometryTests: XCTestCase {
         let restorePreferences = pinAIChatPreferences()
         defer { restorePreferences() }
         let fixture = try makeFixture()
-        fixture.state.aiChatTabCreationGateOverrideForTesting = false
         let tab = fixture.tabs[0]
         let webView = fixture.webViews[0]
         let pageArea = try XCTUnwrap(webView.superview as? WebContentHostView)
@@ -227,51 +209,11 @@ final class WebContentMountGeometryTests: XCTestCase {
         XCTAssertEqual(controller.tabStripPageColorPresentation.appearance, .dark)
     }
 
-    /// AI Chat taking over from the extension side panel: the panel slides
-    /// out while the chat slides in, each on its own timing, so the pane
-    /// between them widens and narrows again. The page card, and the header
-    /// and page in it, only move toward their settled width.
-    func testAIChatReplacingExtensionSidePanelResizesThePageOneWay() throws {
-        try assertAIChatReplacingExtensionSidePanel(chatWidth: nil, shape: .oneWay)
-    }
-
-    /// A chat wider than the panel it replaces narrows the page as it slides
-    /// in, not all at once at the end.
-    func testWiderAIChatReplacingExtensionSidePanelNarrowsThePageAsItComes() throws {
-        try assertAIChatReplacingExtensionSidePanel(chatWidth: 500, shape: .narrowsGradually)
-    }
-
     /// The extension side panel taking over from AI Chat: the chat leaves at
     /// once under its sliding snapshot, and the page card does not fill its
     /// place only to give it back to the incoming panel.
     func testExtensionSidePanelReplacingAIChatResizesThePageOneWay() throws {
-        try assertExtensionSidePanelReplacingAIChat(chatWidth: nil, shape: .oneWay)
-    }
-
-    /// The panel replacing a wider chat widens the page at once, under the
-    /// outgoing chat's snapshot, not when the panel has slid in.
-    func testExtensionSidePanelReplacingWiderAIChatWidensThePageAtOnce() throws {
-        try assertExtensionSidePanelReplacingAIChat(chatWidth: 500, shape: .settlesAtOnce)
-    }
-
-    /// Reopening the chat while the panel that replaced it still slides in:
-    /// the page card ends filling its pane, no width cap left behind.
-    func testReversingAHandoffMidwayLeavesThePageCardOnItsPane() throws {
-        let (fixture, controller, panel) = try makeHandoffFixture(chatExpanded: true)
-        defer { withExtendedLifetime(panel) {} }
-        fixture.state.extensionSidePanelCloseRequestOverrideForTesting = { [weak state = fixture.state] in
-            state?.updateExtensionSidePanel(nil)
-        }
-        fixture.state.updateExtensionSidePanel(panel.state)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
-
-        fixture.state.toggleAIChat(false)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
-
-        // Precondition: the chat took the place back.
-        XCTAssertNil(fixture.state.extensionSidePanel)
-        XCTAssertFalse(try chatItem(of: controller).isCollapsed)
-        try assertPageCardFillsItsPane(controller, in: fixture)
+        try assertExtensionSidePanelReplacingAIChat()
     }
 
     /// A window resize in the middle of a handoff changes where it settles;
@@ -330,66 +272,6 @@ final class WebContentMountGeometryTests: XCTestCase {
         try assertPageCardFillsItsPane(controller, in: fixture)
     }
 
-    /// The AI Chat ↔ extension side panel mutex closes the panel before the
-    /// chat expands. The tab strip stays on the browser color through the
-    /// handoff instead of flashing the page color.
-    func testAIChatReplacingExtensionSidePanelKeepsTheTabStripInherited() throws {
-        let restorePreferences = pinAIChatPreferences()
-        defer { restorePreferences() }
-        let fixture = try makeFixture()
-        fixture.state.aiChatTabCreationGateOverrideForTesting = false
-        let controller = try showPageColor(in: fixture)
-        let panel = makePanel()
-        defer { withExtendedLifetime(panel) {} }
-        fixture.state.updateExtensionSidePanel(panel.state)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
-        fixture.state.extensionSidePanelCloseRequestOverrideForTesting = { [weak state = fixture.state] in
-            state?.updateExtensionSidePanel(nil)
-        }
-        var presentations: [WebContentHeaderPageColorPresentation] = []
-        let subscription = controller.tabStripPageColorPresentationPublisher
-            .sink { presentations.append($0) }
-        defer { subscription.cancel() }
-
-        fixture.state.toggleAIChat(false)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
-
-        // Precondition: the chat took over from the panel.
-        XCTAssertNil(fixture.state.extensionSidePanel)
-        XCTAssertFalse(try chatItem(of: controller).isCollapsed)
-        XCTAssertEqual(presentations, [.inherited])
-    }
-
-    /// Opening the panel over an expanded chat collapses the chat's split
-    /// item synchronously in the container's panel sink. Combine may run
-    /// that sink before the tab strip sees the panel; the tab strip stays on
-    /// the browser color in between.
-    func testExtensionSidePanelReplacingAIChatKeepsTheTabStripInherited() throws {
-        let restorePreferences = pinAIChatPreferences()
-        defer { restorePreferences() }
-        let fixture = try makeFixture()
-        fixture.state.aiChatTabCreationGateOverrideForTesting = false
-        let controller = try showPageColor(in: fixture)
-        fixture.state.toggleAIChat(false)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
-        XCTAssertFalse(try chatItem(of: controller).isCollapsed)
-        let panel = makePanel()
-        defer { withExtendedLifetime(panel) {} }
-        var presentations: [WebContentHeaderPageColorPresentation] = []
-        let subscription = controller.tabStripPageColorPresentationPublisher
-            .sink { presentations.append($0) }
-        defer { subscription.cancel() }
-
-        // The container's sink, run first.
-        _ = controller.collapseAIChatForPanelTransition(ghostIn: fixture.container.view)
-        fixture.state.updateExtensionSidePanel(panel.state)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
-
-        // Precondition: the panel took over from the chat.
-        XCTAssertTrue(fixture.tabs[0].aiChatCollapsed)
-        XCTAssertEqual(presentations, [.inherited])
-    }
-
     // MARK: - Helpers
 
     /// An extension side panel and the page view it shows, which the caller
@@ -408,9 +290,12 @@ final class WebContentMountGeometryTests: XCTestCase {
     private func showPageColor(in fixture: Fixture) throws -> WebContentViewController {
         try XCTUnwrap(fixture.tabs[0].webContentWrapper as? PageColorTestWebContentWrapper)
             .pageColor = .black
-        RunLoop.main.run(until: Date().addingTimeInterval(0.25))
         let controller = try XCTUnwrap(fixture.container.children
             .compactMap { $0 as? WebContentViewController }.first)
+        let delivered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            controller.tabStripPageColorPresentation.appearance == .dark
+        }, object: nil)
+        wait(for: [delivered], timeout: 3)
         XCTAssertEqual(controller.tabStripPageColorPresentation.appearance, .dark)
         return controller
     }
@@ -426,7 +311,6 @@ final class WebContentMountGeometryTests: XCTestCase {
     private func pinAIChatPreferences() -> () -> Void {
         let pins: [(key: String, value: Any)] = [
             (PhiPreferences.GeneralSettings.layoutModeKey, LayoutMode.comfortable.rawValue),
-            (PhiPreferences.AISettings.phiAIEnabled.rawValue, true),
         ]
         let originals = pins.map { UserDefaults.standard.object(forKey: $0.key) }
         for pin in pins {
@@ -505,30 +389,15 @@ final class WebContentMountGeometryTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.25))
     }
 
-    private enum HandoffShape {
-        /// Only ever narrows or only ever widens.
-        case oneWay
-        /// One way, its first step already its last.
-        case settlesAtOnce
-        /// One way, over several steps.
-        case narrowsGradually
-    }
-
-    /// A page with AI Chat expanded or collapsed (at `chatWidth` once it
-    /// expands, when given) and an extension side panel to open, which the
-    /// caller holds.
+    /// A page with AI Chat expanded or collapsed and an extension side panel
+    /// to open, which the caller holds.
     private func makeHandoffFixture(
-        chatExpanded: Bool,
-        chatWidth: CGFloat? = nil
+        chatExpanded: Bool
     ) throws -> (Fixture, WebContentViewController, (state: BrowserState.ExtensionSidePanelState, view: NSView)) {
         let restorePreferences = pinAIChatPreferences()
         addTeardownBlock { restorePreferences() }
         let fixture = try makeFixture()
-        fixture.state.aiChatTabCreationGateOverrideForTesting = false
         let controller = try showPageColor(in: fixture)
-        if let chatWidth {
-            controller.applyAIChatWidthFromPartner(chatWidth)
-        }
         if chatExpanded {
             fixture.state.toggleAIChat(false)
             RunLoop.main.run(until: Date().addingTimeInterval(0.5))
@@ -536,42 +405,13 @@ final class WebContentMountGeometryTests: XCTestCase {
         return (fixture, controller, makePanel())
     }
 
-    private func assertAIChatReplacingExtensionSidePanel(chatWidth: CGFloat?, shape: HandoffShape,
-                                                         file: StaticString = #filePath,
-                                                         line: UInt = #line) throws {
-        let (fixture, controller, panel) = try makeHandoffFixture(chatExpanded: false, chatWidth: chatWidth)
+    private func assertExtensionSidePanelReplacingAIChat(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let (fixture, controller, panel) = try makeHandoffFixture(chatExpanded: true)
         defer { withExtendedLifetime(panel) {} }
-        fixture.state.updateExtensionSidePanel(panel.state)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
-        fixture.state.extensionSidePanelCloseRequestOverrideForTesting = { [weak state = fixture.state] in
-            state?.updateExtensionSidePanel(nil)
-        }
-
-        try assertHandoffResizesThePage(fixture, controller: controller, shape: shape, file: file, line: line) {
-            fixture.state.toggleAIChat(false)
-        } checks: {
-            // The chat took over from the panel, at its width.
-            XCTAssertNil(fixture.state.extensionSidePanel, file: file, line: line)
-            let chat = try chatItem(of: controller)
-            XCTAssertFalse(chat.isCollapsed, file: file, line: line)
-            if let chatWidth {
-                XCTAssertEqual(chat.viewController.view.frame.width, chatWidth, accuracy: 0.5,
-                               file: file, line: line)
-            }
-        }
-    }
-
-    private func assertExtensionSidePanelReplacingAIChat(chatWidth: CGFloat?, shape: HandoffShape,
-                                                         file: StaticString = #filePath,
-                                                         line: UInt = #line) throws {
-        let (fixture, controller, panel) = try makeHandoffFixture(chatExpanded: true, chatWidth: chatWidth)
-        defer { withExtendedLifetime(panel) {} }
-        if let chatWidth {
-            XCTAssertEqual(try chatItem(of: controller).viewController.view.frame.width, chatWidth,
-                           accuracy: 0.5, "precondition: the chat's width", file: file, line: line)
-        }
-
-        try assertHandoffResizesThePage(fixture, controller: controller, shape: shape, file: file, line: line) {
+        try assertHandoffResizesThePage(fixture, controller: controller, file: file, line: line) {
             fixture.state.updateExtensionSidePanel(panel.state)
         } checks: {
             // The panel took over from the chat, at its own width.
@@ -585,11 +425,10 @@ final class WebContentMountGeometryTests: XCTestCase {
 
     /// Starts a handoff and follows it for 0.6 seconds, past its end: the
     /// web view fills its page area on every turn, the page card and the web
-    /// view in it move in `shape`, and the card ends filling its pane.
+    /// view in it only narrow or only widen, and the card ends filling its pane.
     private func assertHandoffResizesThePage(
         _ fixture: Fixture,
         controller: WebContentViewController,
-        shape: HandoffShape,
         file: StaticString,
         line: UInt,
         handoff: () -> Void,
@@ -620,15 +459,6 @@ final class WebContentMountGeometryTests: XCTestCase {
         XCTAssertTrue(oneWay(cardWidths), "card widths \(cardWidths)", file: file, line: line)
         XCTAssertTrue(oneWay(webWidths), "web view widths \(webWidths)", file: file, line: line)
         XCTAssertEqual(offPageArea, [], "the web view left its page area", file: file, line: line)
-        switch shape {
-        case .oneWay:
-            break
-        case .settlesAtOnce:
-            XCTAssertEqual(cardWidths.count, 2, "card widths \(cardWidths)", file: file, line: line)
-        case .narrowsGradually:
-            XCTAssertLessThan(cardWidths.last ?? 0, cardWidths.first ?? 0, file: file, line: line)
-            XCTAssertGreaterThan(cardWidths.count, 3, "card widths \(cardWidths)", file: file, line: line)
-        }
         try assertPageCardFillsItsPane(controller, in: fixture, file: file, line: line)
     }
 

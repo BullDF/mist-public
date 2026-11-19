@@ -56,21 +56,21 @@ final class TimeMachineSnapshotTests: XCTestCase {
         XCTAssertTrue(fileExists(snapshotURL.appendingPathComponent("Preferences/com.phibrowser.Mac.plist")))
     }
 
-    func testReleaseSnapshotSkipsWhenVersionDoesNotMatchPolicy() throws {
+    func testSnapshotMatchesBuildRegardlessOfVersion() throws {
         let fixture = try makeFixture(includePreferences: true)
         try writePolicy(fixture: fixture, includeChromiumData: true)
-        let manager = makeManager(fixture: fixture, backupTriggerMode: .version)
+        let manager = makeManager(fixture: fixture)
 
         let record = try manager.prepareBackupIfNeeded(currentVersion: "2.0.1", currentBuild: 600)
 
-        XCTAssertNil(record)
-        XCTAssertTrue(try TimeMachineCatalogStore(paths: fixture.paths).load().backups.isEmpty)
+        XCTAssertNotNil(record)
+        XCTAssertEqual(try TimeMachineCatalogStore(paths: fixture.paths).load().completedBackups.count, 1)
     }
 
-    func testNightlySnapshotSkipsWhenBuildDoesNotMatchPolicy() throws {
+    func testSnapshotSkipsWhenBuildDoesNotMatchPolicy() throws {
         let fixture = try makeFixture(includePreferences: true)
         try writePolicy(fixture: fixture, includeChromiumData: true)
-        let manager = makeManager(fixture: fixture, backupTriggerMode: .build)
+        let manager = makeManager(fixture: fixture)
 
         let record = try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 601)
 
@@ -78,42 +78,29 @@ final class TimeMachineSnapshotTests: XCTestCase {
         XCTAssertTrue(try TimeMachineCatalogStore(paths: fixture.paths).load().backups.isEmpty)
     }
 
-    func testReleaseSnapshotDoesNotCreateDuplicateForSameTriggerVersion() throws {
+    func testSnapshotDoesNotCreateDuplicateForSameTriggerBuild() throws {
         let fixture = try makeFixture(includePreferences: true)
         try writePolicy(fixture: fixture, includeChromiumData: true)
-        let manager = makeManager(fixture: fixture, backupTriggerMode: .version)
+        let manager = makeManager(fixture: fixture)
 
         let first = try XCTUnwrap(try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600))
-        let second = try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 601)
+        let second = try manager.prepareBackupIfNeeded(currentVersion: "2.1", currentBuild: 600)
 
         XCTAssertNil(second)
         let catalog = try TimeMachineCatalogStore(paths: fixture.paths).load()
         XCTAssertEqual(catalog.completedBackups.map(\.id), [first.id])
     }
 
-    func testNightlySnapshotDoesNotCreateDuplicateForSameTriggerBuild() throws {
+    func testSnapshotDoesNotRecreateUserDeletedTrigger() throws {
         let fixture = try makeFixture(includePreferences: true)
         try writePolicy(fixture: fixture, includeChromiumData: true)
-        let manager = makeManager(fixture: fixture, backupTriggerMode: .build)
-
-        let first = try XCTUnwrap(try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600))
-        let second = try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600)
-
-        XCTAssertNil(second)
-        let catalog = try TimeMachineCatalogStore(paths: fixture.paths).load()
-        XCTAssertEqual(catalog.completedBackups.map(\.id), [first.id])
-    }
-
-    func testReleaseSnapshotDoesNotRecreateUserDeletedTrigger() throws {
-        let fixture = try makeFixture(includePreferences: true)
-        try writePolicy(fixture: fixture, includeChromiumData: true)
-        let manager = makeManager(fixture: fixture, backupTriggerMode: .version)
+        let manager = makeManager(fixture: fixture)
         let store = TimeMachineCatalogStore(paths: fixture.paths)
 
         let first = try XCTUnwrap(try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600))
         XCTAssertEqual(try store.deleteBackupAtUserRequest(id: first.id), first)
 
-        let second = try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 601)
+        let second = try manager.prepareBackupIfNeeded(currentVersion: "2.1", currentBuild: 600)
 
         XCTAssertNil(second)
         let catalog = try store.load()
@@ -149,16 +136,10 @@ final class TimeMachineSnapshotTests: XCTestCase {
         XCTAssertTrue(try TimeMachineCatalogStore(paths: fixture.paths).load().completedBackups.isEmpty)
     }
 
-    func testSnapshotReportsBackupSizeAndDuration() throws {
+    func testSnapshotStoresBackupSize() throws {
         let fixture = try makeFixture(includePreferences: true)
         try writePolicy(fixture: fixture, includeChromiumData: true)
-        let uptime = UptimeSequence([10, 12.5])
-        var traces: [TimeMachineBackupTrace] = []
-        let manager = makeManager(
-            fixture: fixture,
-            uptimeProvider: uptime.next,
-            backupTraceReporter: { traces.append($0) }
-        )
+        let manager = makeManager(fixture: fixture)
 
         let record = try XCTUnwrap(try manager.prepareBackupIfNeeded(currentVersion: "2.0", currentBuild: 600))
 
@@ -166,16 +147,10 @@ final class TimeMachineSnapshotTests: XCTestCase {
         let storedRecord = try XCTUnwrap(
             TimeMachineCatalogStore(paths: fixture.paths).load().completedBackups.first
         )
-        let trace = try XCTUnwrap(traces.first)
-        XCTAssertEqual(traces.count, 1)
-        XCTAssertEqual(trace.result, .succeeded)
-        XCTAssertEqual(trace.backupID, record.id)
-        XCTAssertEqual(trace.bundleIdentifier, "com.phibrowser.Mac")
-        XCTAssertEqual(trace.duration, 2.5)
-        XCTAssertEqual(trace.snapshotSizeBytes, TimeMachineFileMetrics.sizeBytes(at: snapshotURL))
-        XCTAssertEqual(record.snapshotSizeBytes, trace.snapshotSizeBytes)
-        XCTAssertEqual(storedRecord.snapshotSizeBytes, trace.snapshotSizeBytes)
-        XCTAssertGreaterThan(trace.snapshotSizeBytes ?? 0, 0)
+        let expectedSize = try XCTUnwrap(TimeMachineFileMetrics.sizeBytes(at: snapshotURL))
+        XCTAssertEqual(record.snapshotSizeBytes, expectedSize)
+        XCTAssertEqual(storedRecord.snapshotSizeBytes, expectedSize)
+        XCTAssertGreaterThan(expectedSize, 0)
     }
 
     func testSnapshotRemainsCommittedWhenSizeMetadataUpdateFails() throws {
@@ -267,24 +242,18 @@ final class TimeMachineSnapshotTests: XCTestCase {
 
     private func makeManager(
         fixture: Fixture,
-        backupTriggerMode: TimeMachineBackupTriggerMode = .current,
-        catalogStore: TimeMachineCatalogStore? = nil,
-        uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        backupTraceReporter: @escaping TimeMachineSnapshotManager.BackupTraceReporter = { _ in }
+        catalogStore: TimeMachineCatalogStore? = nil
     ) -> TimeMachineSnapshotManager {
         TimeMachineSnapshotManager(
             paths: fixture.paths,
             policyLoader: TimeMachineRollbackPolicyLoader(policyURLProvider: { fixture.policyURL }),
-            backupTriggerMode: backupTriggerMode,
             catalogStore: catalogStore ?? TimeMachineCatalogStore(paths: fixture.paths),
             applicationSupportURLProvider: { fixture.applicationSupportURL },
             phiDataURLProvider: { fixture.phiDataURL },
             preferencesURLProvider: { fixture.preferencesURL },
             dateProvider: { Date(timeIntervalSince1970: 1_781_020_800) },
-            uptimeProvider: uptimeProvider,
             idProvider: { UUID(uuidString: "00000000-0000-0000-0000-000000000700")! },
-            fileCloner: TimeMachineFileCloner(),
-            backupTraceReporter: backupTraceReporter
+            fileCloner: TimeMachineFileCloner()
         )
     }
 
@@ -310,16 +279,4 @@ final class TimeMachineSnapshotTests: XCTestCase {
 
 private enum TimeMachineSnapshotTestError: Error {
     case sizeMetadataWriteFailed
-}
-
-private final class UptimeSequence {
-    private var values: [TimeInterval]
-
-    init(_ values: [TimeInterval]) {
-        self.values = values
-    }
-
-    func next() -> TimeInterval {
-        values.removeFirst()
-    }
 }

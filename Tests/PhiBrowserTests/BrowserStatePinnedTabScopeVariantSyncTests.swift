@@ -15,7 +15,6 @@ final class BrowserStatePinnedTabScopeVariantSyncTests: XCTestCase {
     override func tearDownWithError() throws {
         // This class runs real scope migrations, whose success path writes UserDefaults.standard.
         // In hosted tests, that is Phi's own preferences domain.
-        clearPinnedTabScopeMirrorDefaults()
         for directory in tempDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -429,6 +428,7 @@ final class BrowserStatePinnedTabScopeVariantSyncTests: XCTestCase {
             updatedDate: Date()
         )
         model.dataType = .pinnedTab
+        model.overrideTitle = title
         model.profileId = profile.profileId
         model.pinLineageId = lineageId
         model.splitPartnerGuid = splitPartnerGuid
@@ -464,7 +464,11 @@ final class BrowserStatePinnedTabScopeVariantSyncTests: XCTestCase {
     ) async throws {
         store.updateTabURL(model.guid, url: try XCTUnwrap(URL(string: url)))
         store.updateTabTitle(model.guid, title: title)
-        await store.performBackgroundWriteAndWait { _ in }
+        let guid = model.guid
+        try await store.performBackgroundWriteAndWaitThrowing { context in
+            let descriptor = FetchDescriptor<TabDataModel>(predicate: #Predicate { $0.guid == guid })
+            try XCTUnwrap(context.fetch(descriptor).first).overrideTitle = title
+        }
         drainMainQueue()
     }
 
@@ -510,7 +514,7 @@ final class BrowserStatePinnedTabScopeVariantSyncTests: XCTestCase {
         )
         XCTAssertEqual(runtimeTab.guidInLocalDB, target.guid, file: file, line: line)
         XCTAssertEqual(runtimeTab.pinnedUrl, target.url.absoluteString, file: file, line: line)
-        XCTAssertEqual(runtimeTab.storedTitle, target.title, file: file, line: line)
+        XCTAssertEqual(runtimeTab.storedTitle, target.overrideTitle, file: file, line: line)
         XCTAssertEqual(runtimeTab.splitPartnerGuid, target.splitPartnerGuid, file: file, line: line)
         XCTAssertEqual(liveBinding.liveTab.guidInLocalDB, target.guid, file: file, line: line)
         XCTAssertTrue(liveBinding.wrapper.navigatedURLs.isEmpty, file: file, line: line)

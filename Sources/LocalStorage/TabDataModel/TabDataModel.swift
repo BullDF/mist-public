@@ -252,21 +252,10 @@ enum TabDataType: Int {
     case bookmarkFolder = 3
 }
 
-enum TabSource: Int {
-    case phi = 0
-    case chromium = 1
-    case safari = 2
-    case arc = 3
-}
-
 extension TabDataModel {
     var dataType: TabDataType {
         get { TabDataType(rawValue: type) ?? .tab }
         set { type = newValue.rawValue }
     }
 
-    var tabSource: TabSource {
-        get { TabSource(rawValue: source) ?? .phi }
-        set { source = newValue.rawValue }
-    }
 }

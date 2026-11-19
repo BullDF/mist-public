@@ -11,11 +11,13 @@ enum SearchTabsSource: Equatable {
 }
 
 enum SearchTabsKind: Equatable {
+    case app
     case openedtab
     case closedtab
     case pin
     case bookmark
     case bookmarkRoot
+    case history
 }
 
 enum SearchTabsDisplayMode: Equatable {
@@ -32,14 +34,19 @@ enum SearchTabsMatchedField: Hashable {
     case secondaryURL
 }
 
+/// Case order is the on-screen section order (and keyboard order).
 enum SearchTabsSectionKind: CaseIterable, Hashable {
+    case apps
+    case bookmarks
     case openTabs
     case pinnedTabs
-    case bookmarks
     case recentlyClosed
+    case history
 
     init?(item: SearchTabsItem) {
         switch item.kind {
+        case .app:
+            self = .apps
         case .openedtab:
             self = .openTabs
         case .pin:
@@ -48,6 +55,8 @@ enum SearchTabsSectionKind: CaseIterable, Hashable {
             self = .bookmarks
         case .closedtab:
             self = .recentlyClosed
+        case .history:
+            self = .history
         case .bookmarkRoot:
             return nil
         }
@@ -106,11 +115,13 @@ struct SearchTabsSplitRelation: Equatable {
 }
 
 enum SearchTabsActionTarget: Equatable {
+    case openApp(MistAppID)
     case activateChromiumTab(tabId: Int, windowId: Int)
     case restoreClosedTab(sessionId: Int, sourceEntrySessionId: Int, sourceEntryType: String)
     case openPinned(localGuid: String, preferredPaneGuid: String?)
     case openBookmark(localGuid: String, preferredPaneGuid: String?)
     case showBookmarkMenuRoot(profileId: String)
+    case openHistoryURL(url: String)
 }
 
 struct SearchTabsItem: Equatable {

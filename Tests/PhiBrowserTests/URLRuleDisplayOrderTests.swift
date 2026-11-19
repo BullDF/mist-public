@@ -45,7 +45,6 @@ final class URLRuleDisplayOrderTests: XCTestCase {
     func testNonSpaceTargetsGoLastInAFixedOrder() {
         let rules = [
             rule("unknown", "missing-space", 0),
-            rule("kiosk", SpaceManager.kioskRuleTargetId, 0),
             rule("staleIncognito", SpaceManager.incognitoSpaceIdPrefix + ".runtime-1", 0),
             rule("incognito", SpaceManager.incognitoRuleTargetId, 0),
             rule("space", "s1", 0),
@@ -53,7 +52,7 @@ final class URLRuleDisplayOrderTests: XCTestCase {
         // A live Incognito Space in the strip does not pull rules ahead of user Spaces.
         let strip = ["s1", SpaceManager.incognitoSpaceIdPrefix + ".runtime-1"]
         XCTAssertEqual(ordered(rules, strip),
-                       ["space", "incognito", "kiosk", "unknown", "staleIncognito"])
+                       ["space", "incognito", "unknown", "staleIncognito"])
     }
 
     func testDevicesWithDifferentLocalSpaceIdsShowTheSameOrder() {

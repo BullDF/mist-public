@@ -153,23 +153,7 @@
                 NSMutableArray<NSString *> *arguments = [NSMutableArray array];
                 [arguments addObject:@"Phi"];
 
-                // Set the channel default before forwarding explicit launch overrides.
-#if NIGHTLY_BUILD
-                [arguments addObject:@"--sync-url=https://sync.stag.phibrowser.com/chromium-sync"];
-#else
-                [arguments addObject:@"--sync-url=https://sync.phibrowser.com/chromium-sync"];
-#endif
-
-#if DEBUG || NIGHTLY_BUILD
-                [arguments addObject:@"--phi-ai-debug"];
                 [arguments addObject:@"--phi-no-embed-extensions"];
-                // Chromium defaults to production; Canary uses the staging
-                // highlight-link endpoint to match its authentication setup.
-                [arguments addObject:@"--phi-highlight-link-url=https://stag.phi.to/api/v1/links"];
-#endif
-#if DEBUG
-                [arguments addObject:@"--no-sandbox"];
-#endif
 
                 // The retired PhiRemoteDebuggingPort default used to feed
                 // --remote-debugging-port here, silently disabling the agent
@@ -229,7 +213,7 @@
     }
 }
 
-- (void)launchChromiumWithArgc:(int)argc argv:(const char **)argv {
+- (void)launchChromiumWithArgc:(int)argc argv:(const char * _Nullable * _Nonnull)argv {
     self.bridge = [NSClassFromString(@"PhiChromiumBridge") sharedInstance];
     if ([self.bridge conformsToProtocol:@protocol(PhiChromiumBridgeProtocol)]) {
         self.bridge.delegate = [PhiChromiumCoordinator shared];

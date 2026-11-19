@@ -36,7 +36,7 @@ final class ShortcutMenuRebuildIntegrationTests: XCTestCase {
     }
 
     private func controller() throws -> NSObject {
-        let type = try XCTUnwrap(NSClassFromString("PhiAppController"))
+        let type: AnyClass = try XCTUnwrap(NSClassFromString("PhiAppController"))
         let selector = NSSelectorFromString("sharedController")
         let method = try XCTUnwrap(class_getClassMethod(type, selector))
         typealias Invoke = @convention(c) (AnyObject, Selector) -> Unmanaged<AnyObject>

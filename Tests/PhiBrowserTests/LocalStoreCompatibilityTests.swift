@@ -439,8 +439,8 @@ final class LocalStoreCompatibilityTests: XCTestCase {
             LocalStoreCompatibilityManifest(activeStoreFormatVersion: 12, backups: []),
             to: directory
         )
-        // Derive the downgrade build from the production configuration, current - 1.
-        let olderBuildVersion = LocalStore.compatibilityConfiguration.currentStoreFormatVersion - 1
+        // This fixture models V11 even after the production schema advances.
+        let olderBuildVersion = 11
         let olderBuildController = makeController(
             currentStoreFormatVersion: olderBuildVersion,
             readableStoreFormatVersions: 1...olderBuildVersion,

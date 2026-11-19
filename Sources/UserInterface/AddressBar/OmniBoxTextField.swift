@@ -35,8 +35,7 @@ protocol OmniBoxTextFieldDelegate: AnyObject {
     func omniBoxTextFieldDidReceiveMoveDownEvent(_ textField: OmniBoxTextField) -> Bool
     func omniBoxTextFieldDidReceiveMoveUpEvent(_ textField: OmniBoxTextField) -> Bool
     func omniBoxTextFieldDidReceiveEnterEvent(_ textField: OmniBoxTextField, commandKeyPressed: Bool) -> Bool
-    func omniBoxTextFieldDidReceiveTabEvent(_ textField: OmniBoxTextField) -> Bool
-    func omniBoxTextFieldDidReceiveEmptyBackspaceEvent(_ textField: OmniBoxTextField) -> Bool
+    func omniBoxTextFieldDidReceiveTabEvent(_ textField: OmniBoxTextField, backward: Bool) -> Bool
 }
 
 class OmniBoxTextField: NSView {
@@ -94,12 +93,7 @@ class OmniBoxTextField: NSView {
         textFiled.cell?.wraps = false
         textFiled.delegate = self
 
-        let placeholder = NSMutableAttributedString(string: NSLocalizedString("addressBar.input.placeholder", value: "Search or Enter URL", comment: "Address bar - Text field placeholder prompting the user to search or enter a URL"))
-        placeholder.addAttributes([
-            .foregroundColor: NSColor.placeholderTextColor,
-            .font: NSFont.systemFont(ofSize: 16)
-        ], range: NSRange(location: 0, length: placeholder.length))
-        textFiled.placeholderAttributedString = placeholder
+        setPlaceholder(NSLocalizedString("addressBar.input.placeholder", value: "Search or Enter URL", comment: "Address bar - Text field placeholder prompting the user to search or enter a URL"))
         addSubview(textFiled)
         
         textFiled.snp.makeConstraints { make in
@@ -113,6 +107,13 @@ class OmniBoxTextField: NSView {
     }
     
     
+    func setPlaceholder(_ text: String) {
+        textFiled.placeholderAttributedString = NSAttributedString(string: text, attributes: [
+            .foregroundColor: NSColor.placeholderTextColor,
+            .font: NSFont.systemFont(ofSize: 16)
+        ])
+    }
+
     func updateDisplayText(_ text: String, isURL: Bool = false) {
         self.originalText = text
         self.inlineCompletionSelection = nil
@@ -120,28 +121,6 @@ class OmniBoxTextField: NSView {
         self.stringValue = text
     }
 
-    func updateSearchPlaceholder(engineName: String?) {
-        let placeholder = engineName == nil
-            ? NSLocalizedString("addressBar.input.placeholder", value: "Search or Enter URL", comment: "Address bar - Text field placeholder prompting the user to search or enter a URL")
-            : NSLocalizedString("addressBar.keywordSearch.queryPlaceholder", value: "Search…", comment: "Address bar - Empty query placeholder beside the selected search engine badge")
-        textFiled.placeholderAttributedString = NSAttributedString(string: placeholder, attributes: [
-            .foregroundColor: NSColor.placeholderTextColor,
-            .font: NSFont.systemFont(ofSize: 16)
-        ])
-    }
-    
-    func selectAll() {
-        if let fieldEditor = window?.fieldEditor(true, for: self) {
-            fieldEditor.selectAll(nil)
-        }
-    }
-    
-    func selectToEnd() {
-        if let fieldEditor = window?.fieldEditor(true, for: self) {
-            let length = (textFiled.stringValue as NSString).length
-            fieldEditor.selectedRange = NSRange(location: length, length: 0)
-        }
-    }
 }
 
 // MARK: - Suggestion Handling
@@ -311,11 +290,10 @@ extension OmniBoxTextField: NSTextFieldDelegate {
         guard !textView.hasMarkedText() else { return false }
 
         if commandSelector == #selector(NSTextView.insertTab(_:)) {
-            return omniBoxDelegate?.omniBoxTextFieldDidReceiveTabEvent(self) ?? false
+            return omniBoxDelegate?.omniBoxTextFieldDidReceiveTabEvent(self, backward: false) ?? true
         }
-        if commandSelector == #selector(NSTextView.deleteBackward(_:)), textView.string.isEmpty,
-           omniBoxDelegate?.omniBoxTextFieldDidReceiveEmptyBackspaceEvent(self) == true {
-            return true
+        if commandSelector == #selector(NSTextView.insertBacktab(_:)) {
+            return omniBoxDelegate?.omniBoxTextFieldDidReceiveTabEvent(self, backward: true) ?? false
         }
         
         let hasInlineCompletion = (inlineCompletionSelection?.length ?? 0) > 0

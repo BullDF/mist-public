@@ -23,11 +23,7 @@
 #import <Phi-Swift.h>
 
 // Set default log level for Objective-C (should match Swift DDDefaultLogLevel)
-#ifdef DEBUG
-    static const DDLogLevel ddLogLevel = DDLogLevelAll;
-#else
-    static const DDLogLevel ddLogLevel = DDLogLevelWarning;
-#endif
+static const DDLogLevel ddLogLevel = DDLogLevelAll;
 
 /**
  * Basic logging macros that capture file, line, and function information automatically.
@@ -68,7 +64,7 @@
 /**
  * Log a debug message
  * @param format NSString format string, followed by format arguments
- * @discussion Use for debugging information (filtered out in release builds)
+ * @discussion Use for debugging information
  * Example: AppLogDebug(@"Processing item %ld of %ld", current, total);
  */
 #define AppLogDebug(format, ...) \
@@ -77,7 +73,7 @@
 /**
  * Log a verbose message
  * @param format NSString format string, followed by format arguments
- * @discussion Use for detailed debugging information (filtered out in release builds)
+ * @discussion Use for detailed debugging information
  * Example: AppLogVerbose(@"Internal state: %@", internalState);
  */
 #define AppLogVerbose(format, ...) \

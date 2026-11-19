@@ -20,25 +20,33 @@ final class TabGroupSidebarItem: SidebarItem {
     /// menu-action dispatch but the windowId stays valid because window
     /// teardown also tears down the sidebar/menu.
     let windowId: Int
+    let isAgentSectionFolder: Bool
 
-    init(group: WebContentGroupInfo, browserState: BrowserState) {
+    init(group: WebContentGroupInfo, browserState: BrowserState, isAgentSectionFolder: Bool = false) {
         self.group = group
         self.browserState = browserState
         self.windowId = browserState.windowId
+        self.isAgentSectionFolder = isAgentSectionFolder
+    }
+
+    var showsOnlyActiveMember: Bool {
+        isAgentSectionFolder && !MistSidebarAgentSections.isExpanded()
+    }
+
+    var isCollapsed: Bool { group.isCollapsed && !showsOnlyActiveMember }
+
+    func visibleMembers(from tabs: [Tab]) -> [Tab] {
+        tabs.filter { $0.groupToken == group.token && (!showsOnlyActiveMember || $0.guid == browserState?.focusingTab?.guid) }
     }
 
     var id: AnyHashable { group.token }
-    var title: String { group.displayTitle(memberCount: members.count) }
+    var title: String { group.displayTitle }
     var url: String? { nil }
-    var iconName: String? { nil }
-    var faviconUrl: String? { nil }
     /// `false` because the group renders as a self-contained
     /// `TabGroupCellView` leaf in the outer outline view: the cell
     /// hosts its own inner table for member rows. The outer outline
     /// no longer descends into a separate child branch per member.
     var isExpandable: Bool { false }
-    var hasChildren: Bool { false }
-
     /// Live member resolution: filters `normalTabs` by `groupToken`.
     /// Used by `TabGroupCellView.applyMembers` callers and other
     /// non-outline consumers (context menu, etc.).
@@ -46,10 +54,9 @@ final class TabGroupSidebarItem: SidebarItem {
 
     private var members: [Tab] {
         guard let state = browserState else { return [] }
-        return state.normalTabs.filter { $0.groupToken == group.token }
+        return visibleMembers(from: state.normalTabs)
     }
 
-    var depth: Int { 0 }
     var itemType: SidebarItemType { .tabGroup }
     var isActive: Bool { false }
     var isSelectable: Bool { false }
@@ -74,8 +81,7 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
             title: NSLocalizedString("sidebar.tabGroupContextMenu.newTabAction", value: "New Tab in Group",
                 comment: "Tab group context menu - Open a new tab inside this group"),
             action: #selector(newTabInGroup),
-            keyEquivalent: "c")
-        newTabItem.keyEquivalentModifierMask = [.command, .control]
+            keyEquivalent: "")
         newTabItem.target = self
         menu.addItem(newTabItem)
 
@@ -124,6 +130,14 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
 
         menu.addItem(.separator())
 
+        let moveToNewWindowItem = NSMenuItem(
+            title: NSLocalizedString("sidebar.tabGroupContextMenu.moveToNewWindowAction", value: "Move Group to New Window",
+                comment: "Tab group context menu - Move the whole group into a newly created window, keeping it a group"),
+            action: #selector(moveToNewWindow),
+            keyEquivalent: "")
+        moveToNewWindowItem.target = self
+        menu.addItem(moveToNewWindowItem)
+
         let ungroupItem = NSMenuItem(
             title: NSLocalizedString("sidebar.tabGroupContextMenu.ungroupAction", value: "Ungroup",
                 comment: "Tab group context menu - Dissolve the group, keeping the tabs"),
@@ -136,8 +150,7 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
             title: NSLocalizedString("sidebar.tabGroupContextMenu.closeGroupAction", value: "Close Group",
                 comment: "Tab group context menu - Close the group and all its tabs"),
             action: #selector(closeGroup),
-            keyEquivalent: "w")
-        closeItem.keyEquivalentModifierMask = [.command, .control]
+            keyEquivalent: "")
         closeItem.target = self
         menu.addItem(closeItem)
     }
@@ -167,7 +180,7 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
 
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         field.stringValue = group.title
-        field.placeholderString = group.displayTitle(memberCount: members.count)
+        field.placeholderString = group.color.localizedName
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
 
@@ -183,7 +196,8 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
             )
             return
         }
-        let newTitle = field.stringValue
+        let newTitle = field.stringValue.replacingOccurrences(of: BrowserAgentFolderState.titleMarker, with: "")
+            + (BrowserAgentFolderState.isAgentFolderTitle(group.title) ? BrowserAgentFolderState.titleMarker : "")
         AppLogDebug(
             "[TAB_GROUPS] renameGroup windowId=\(windowId) " +
             "token=\(group.token) title='\(newTitle)'"
@@ -230,14 +244,29 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
                                     tabIds: ids)
     }
 
+    /// Tears the whole group off into a new window, as dragging its header
+    /// out of the window does. Chromium carries the group itself (title,
+    /// color, collapsed state, member order), and both windows' tab lists and
+    /// group models follow its callbacks.
+    @MainActor
+    @objc private func moveToNewWindow() {
+        guard let browserState else { return }
+        let memberIds = members.map(\.guid)
+        guard !memberIds.isEmpty else { return }
+        AppLogDebug(
+            "[TAB_GROUPS] moveToNewWindow windowId=\(windowId) " +
+            "token=\(group.token) members=\(memberIds)"
+        )
+        browserState.moveGroupSliceToNewWindow(memberIds: memberIds, dropScreenLocation: nil)
+    }
+
     @MainActor
     @objc private func closeGroup() {
         AppLogDebug(
             "[TAB_GROUPS] closeGroup windowId=\(windowId) " +
             "token=\(group.token)"
         )
-        bridge?.closeGroup(withWindowId: Int64(windowId),
-                           tokenHex: group.token)
+        browserState?.closeTabGroup(token: group.token, intent: .tabDriven)
     }
 
     @MainActor

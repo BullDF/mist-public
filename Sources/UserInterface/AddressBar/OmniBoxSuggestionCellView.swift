@@ -4,367 +4,189 @@
 // found in the LICENSE file.
 
 import Cocoa
-import SnapKit
-import Kingfisher
 protocol OmniBoxSuggestionCellViewDelegate: AnyObject {
     func suggestionCellView(_ cellView: OmniBoxSuggestionCellView, didClick suggestion: OmniBoxSuggestion, at index: Int)
     func suggestionCellView(_ cellView: OmniBoxSuggestionCellView, didRequestDelete suggestion: OmniBoxSuggestion, at index: Int)
 }
 
+/// A suggestion as a kit list row, laid out like the composer's `@` tab rows: its icon, its title over a secondary
+/// line, and on the trailing edge the switch-to-tab hint and, while the row is under the pointer or selected, a delete
+/// button. Its row view (`OmniBoxSuggestionRowView`) draws the kit's hover and gray selected fills.
 class OmniBoxSuggestionCellView: NSTableCellView {
+    /// From the row's fill to the icon and to the trailing controls.
+    private static let padding: CGFloat = 10
+    private static let iconSide: CGFloat = 16
+
     weak var delegate: OmniBoxSuggestionCellViewDelegate?
-    
+
     private var suggestion: OmniBoxSuggestion?
     private var index: Int = 0
     private let showsSwitchToTabHint: Bool
-    private var isHovered: Bool = false {
-        didSet {
-            updateAppearance()
-        }
+    private let switchesToOpenTabByDefault: Bool
+    /// The pointer is over the row; its row view reports it.
+    var isHovered = false {
+        didSet { if isHovered != oldValue { updateAppearance() } }
     }
-    
-    private lazy var hoverableBg: HoverableView = {
-        let bg = HoverableView()
-        bg.wantsLayer = true
-        bg.layer?.cornerRadius = 8
-        bg.layer?.cornerCurve = .continuous
-        bg.backgroundColor = .clear
-        
-        bg.hoverStateChanged = { [weak self] hovered in
-            self?.isHovered = hovered
-        }
-        return bg
-    }()
-    
-    private lazy var iconImageView: NSImageView = {
+
+    private let iconImageView: NSImageView = {
         let imageView = NSImageView()
         imageView.imageScaling = .scaleProportionallyUpOrDown
+        // Only template images (symbols, app glyphs) take the tint; favicons keep their own colors.
+        imageView.phi.setContentTintColor(.textSecondary)
         return imageView
     }()
-    
-    private lazy var titleLabel: NSTextField = {
-        let label = NSTextField()
-        label.isEditable = false
-        label.isBordered = false
-        label.backgroundColor = NSColor.clear
-        label.font = NSFont.systemFont(ofSize: 13, weight: .regular)
-        label.textColor = NSColor.labelColor.withAlphaComponent(0.9)
-        label.phi.textColor = NSColor.black.withAlphaComponent(0.85) <> NSColor.white.withAlphaComponent(0.85)
-        label.lineBreakMode = .byTruncatingTail
-        label.cell?.truncatesLastVisibleLine = true
-        label.maximumNumberOfLines = 1
-        label.cell?.wraps = false
-        label.usesSingleLineMode = true
-        return label
-    }()
-    
-    private lazy var subtitleLabel: NSTextField = {
-        let label = NSTextField()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.isEditable = false
-        label.isBordered = false
-        label.backgroundColor = NSColor.clear
-        label.font = NSFont.systemFont(ofSize: 12, weight: .regular)
-        label.phi.textColor = NSColor.black.withAlphaComponent(0.3) <> NSColor.white.withAlphaComponent(0.3)
+
+    private let titleLabel = NSTextField.mistLabel(style: .rowHeadline)
+
+    private let subtitleLabel: NSTextField = {
+        let label = NSTextField.mistLabel(style: .secondary)
         label.lineBreakMode = .byTruncatingMiddle
-        label.cell?.truncatesLastVisibleLine = true
-        label.maximumNumberOfLines = 1
-        label.cell?.wraps = false
-        label.usesSingleLineMode = true
         return label
     }()
-    
-    private lazy var deleteButton: NSButton = {
-        let button = NSButton()
-        button.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Delete")
-        button.isBordered = false
-        button.bezelStyle = .regularSquare
-        button.imageScaling = .scaleProportionallyDown
-        button.target = self
-        button.action = #selector(deleteButtonClicked)
+
+    private lazy var deleteButton: MistIconButton = {
+        let button = MistIconButton(symbol: "xmark", title: "Delete")
+        // The row's delete button never had a tooltip, and its label isn't a catalog string.
+        button.setCustomTooltip(nil)
+        button.onClick = { [weak self] in self?.deleteButtonClicked() }
         return button
     }()
-    
+
     private lazy var switchToTabView: SwitchToTabView = {
         let view = SwitchToTabView()
-        view.wantsLayer = true
+        view.switchesByDefault = switchesToOpenTabByDefault
         return view
     }()
-    
-    private var subTitleTrailingConstraintToSwitchTabView: Constraint?
-    private var subTitleTrailingConstraintToSuperView: Constraint?
-    private var subTitleTrailingConstraintToCloseButton: Constraint?
-    private var switchTabTrailingConstraintToCloseButton: Constraint?
-    private var switchTabTrailingConstraintToSuperView: Constraint?
-    
+
     init(
         suggestion: OmniBoxSuggestion,
         index: Int,
-        showsSwitchToTabHint: Bool
+        showsSwitchToTabHint: Bool,
+        switchesToOpenTabByDefault: Bool = false
     ) {
         self.showsSwitchToTabHint = showsSwitchToTabHint
+        self.switchesToOpenTabByDefault = switchesToOpenTabByDefault
         super.init(frame: .zero)
         self.suggestion = suggestion
         self.index = index
-        setupViews()
+        [iconImageView, titleLabel, subtitleLabel, switchToTabView, deleteButton].forEach { addSubview($0) }
+        updateAppearance()
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    var isSwitchToTabViewHiddenForTesting: Bool {
-        switchToTabView.isHidden
-    }
-    
-    private func setupViews() {
-        wantsLayer = true
-        addSubview(hoverableBg)
-        hoverableBg.addSubview(iconImageView)
-        hoverableBg.addSubview(titleLabel)
-        hoverableBg.addSubview(subtitleLabel)
-        hoverableBg.addSubview(deleteButton)
-        hoverableBg.addSubview(switchToTabView)
-        
-        hoverableBg.snp.makeConstraints { make in
-            make.leading.trailing.top.bottom.equalToSuperview()
-        }
-        
-        iconImageView.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(12)
-            make.centerY.equalToSuperview()
-            make.width.height.equalTo(14)
-        }
-        
-        titleLabel.snp.makeConstraints { make in
-            make.leading.equalTo(iconImageView.snp.trailing).offset(5)
-            make.centerY.equalToSuperview()
-            make.width.lessThanOrEqualToSuperview().multipliedBy(0.4)
-        }
-        
-        titleLabel.setContentHuggingPriority(.required, for: .horizontal)
-        titleLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        
-        subtitleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        
-        deleteButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        deleteButton.setContentHuggingPriority(.required, for: .horizontal)
-        deleteButton.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().offset(-12)
-            make.centerY.equalToSuperview()
-            make.width.height.equalTo(16)
-        }
-        
-        switchToTabView.snp.makeConstraints { make in
-            make.centerY.equalToSuperview()
-            self.switchTabTrailingConstraintToCloseButton = make.trailing.equalTo(deleteButton.snp.leading).offset(-5).constraint
-            self.switchTabTrailingConstraintToSuperView = make.trailing.equalToSuperview().offset(-5).constraint
-            make.height.equalTo(26)
-            make.width.equalTo(128)
-        }
-        
-        subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        subtitleLabel.snp.makeConstraints { make in
-            make.leading.equalTo(titleLabel.snp.trailing).offset(2)
-            make.centerY.equalToSuperview()
-            self.subTitleTrailingConstraintToSuperView = make.trailing.equalToSuperview().offset(-5).constraint
-            self.subTitleTrailingConstraintToCloseButton = make.trailing.equalTo(deleteButton.snp.leading).offset(-5).constraint
-            self.subTitleTrailingConstraintToSwitchTabView = make.trailing.equalTo(switchToTabView.snp.leading).offset(-5).constraint
-        }
-        
-        updateAppearance()
-    }
-    
-    private func updateConstraint(canDelete: Bool, canSwitch: Bool, hovered: Bool, selected: Bool) {
-        let canShowDelete = hovered || selected
-        let showDeleteBtn = canShowDelete && canDelete
-        
-        if showDeleteBtn && canSwitch {
-            updateTrailingConstraints(toSuperViewEnabled: false, closeButtonEnabled: false, canShowDeleteBtn: showDeleteBtn, switchViewEnabled: true)
-        } else if showDeleteBtn && !canSwitch {
-            updateTrailingConstraints(toSuperViewEnabled: false, closeButtonEnabled: true, canShowDeleteBtn: showDeleteBtn, switchViewEnabled: false)
-        }
-        else if !showDeleteBtn && canSwitch {
-            updateTrailingConstraints(toSuperViewEnabled: false, closeButtonEnabled: false, canShowDeleteBtn: false, switchViewEnabled: true)
-        } else {
-            updateTrailingConstraints(toSuperViewEnabled: true, closeButtonEnabled: false, canShowDeleteBtn: showDeleteBtn, switchViewEnabled: false)
-        }
-    }
-    
-    private func updateTrailingConstraints(toSuperViewEnabled superViewEnabled: Bool, closeButtonEnabled: Bool, canShowDeleteBtn: Bool, switchViewEnabled: Bool) {
-        AppLogDebug("title: \(titleLabel.stringValue) superViewEnabled: \(superViewEnabled), close: \(closeButtonEnabled), switch: \(switchViewEnabled)")
-        
-        subTitleTrailingConstraintToSuperView?.isActive = superViewEnabled
-        subTitleTrailingConstraintToCloseButton?.isActive = closeButtonEnabled
-        subTitleTrailingConstraintToSwitchTabView?.isActive = switchViewEnabled
-        switchTabTrailingConstraintToSuperView?.isActive = !canShowDeleteBtn
-        switchTabTrailingConstraintToCloseButton?.isActive = canShowDeleteBtn
-        
-        deleteButton.isHidden = !canShowDeleteBtn
-        switchToTabView.isHidden = !switchViewEnabled
-        
-        hoverableBg.layoutSubtreeIfNeeded()
-    }
-    
     func configure(with suggestion: OmniBoxSuggestion, index: Int) {
         self.suggestion = suggestion
         self.index = index
-        
+
         let title = suggestion.swapContentsAndDescription ? suggestion.subtitle : suggestion.title
         let subtitle = suggestion.swapContentsAndDescription ? suggestion.title : suggestion.subtitle
         titleLabel.stringValue = title ?? ""
-        
-        let titleSize = titleLabel.sizeThatFits(NSSize(width: CGFloat.greatestFiniteMagnitude, height: titleLabel.frame.height))
-        let maxTitleWidth: CGFloat = 200
-        
-        titleLabel.snp.remakeConstraints { make in
-            make.leading.equalTo(iconImageView.snp.trailing).offset(5)
-            make.centerY.equalToSuperview()
-            if titleSize.width > maxTitleWidth {
-                make.width.equalTo(maxTitleWidth)
-            }
-        }
-        
-        if let subtitle, !subtitle.isEmpty {
-            subtitleLabel.stringValue = "- \(subtitle)"
-            subtitleLabel.isHidden = false
-        } else {
-            subtitleLabel.stringValue = ""
-            subtitleLabel.isHidden = true
-        }
-        
-        deleteButton.isHidden = !suggestion.canDelete
-        
+        subtitleLabel.stringValue = subtitle ?? ""
+        subtitleLabel.isHidden = subtitle?.isEmpty ?? true
+
         OmniSuggestionIconProvier.updateImage(for: iconImageView, with: suggestion)
-        
+
         updateAppearance()
     }
-    
-    // MARK: - Actions
-    
-    @objc private func viewClicked() {
-        guard let suggestion = suggestion else { return }
-        delegate?.suggestionCellView(self, didClick: suggestion, at: index)
+
+    // MARK: - Layout
+
+    override func layout() {
+        super.layout()
+        let height = bounds.height
+        let inset = OmniBoxSuggestionRowView.insets.width + Self.padding
+        iconImageView.frame = NSRect(x: inset, y: (height - Self.iconSide) / 2, width: Self.iconSide, height: Self.iconSide)
+
+        var trailing = bounds.width - inset
+        if !deleteButton.isHidden {
+            let side = MistIconButton.side
+            deleteButton.frame = NSRect(x: trailing - side, y: (height - side) / 2, width: side, height: side)
+            trailing = deleteButton.frame.minX - 6
+        }
+        if !switchToTabView.isHidden {
+            let size = switchToTabView.intrinsicContentSize
+            switchToTabView.frame = NSRect(x: trailing - size.width, y: (height - size.height) / 2,
+                                           width: size.width, height: size.height)
+            trailing = switchToTabView.frame.minX - 8
+        }
+
+        let textX = iconImageView.frame.maxX + Self.padding
+        let textWidth = max(0, trailing - textX)
+        if subtitleLabel.isHidden {
+            titleLabel.frame = NSRect(x: textX, y: (height - 17) / 2, width: textWidth, height: 17)
+        } else {
+            titleLabel.frame = NSRect(x: textX, y: height / 2 + 1, width: textWidth, height: 17)
+            subtitleLabel.frame = NSRect(x: textX, y: height / 2 - 17, width: textWidth, height: 16)
+        }
     }
-    
-    @objc private func deleteButtonClicked() {
+
+    // MARK: - Actions
+
+    private func deleteButtonClicked() {
         guard let suggestion = suggestion else { return }
         delegate?.suggestionCellView(self, didRequestDelete: suggestion, at: index)
     }
-    
+
     // MARK: - Appearance
-    
+
     func updateAppearance() {
-        let engine = suggestion?.keywordSearchEngine
-        let accent = engine?.accentColor ?? .themeColor
-        hoverableBg.phi.selectedColor = accent.mapper
-        hoverableBg.phi.hoveredColor = accent.opacity(0.16).mapper
-        let rowView = superview as? NSTableRowView
-        let isSelected = rowView?.isSelected ?? false
-        let canShowSwitchToTab = showsSwitchToTabHint
-            && (suggestion?.hasTabMatch ?? false)
-        hoverableBg.isSelected = isSelected
-        updateConstraint(
-            canDelete: suggestion?.canDelete ?? false,
-            canSwitch: canShowSwitchToTab,
-            hovered: isHovered,
-            selected: isSelected
-        )
-        if canShowSwitchToTab {
-            switchToTabView.setEmphasized(isSelected || isHovered)
-        }
-        
-        let isLightMode = (currentAppearance == .light)
-        
-        let isBuiltInIcon: Bool = {
-            guard let suggestion else { return false }
-            if suggestion.faviconPageURL != nil || suggestion.keywordSearchFaviconURL != nil { return false }
-            return suggestion.iconName != nil || suggestion.iconURL == nil || (suggestion.iconURL?.isEmpty ?? false)
-        }()
-        if !isBuiltInIcon { iconImageView.contentTintColor = nil }
-        
-        if isSelected, engine?.brandColor != nil {
-            // Spotify's bright green needs dark text; other brand fills use white.
-            let foreground: NSColor = engine?.keyword.lowercased() == "spotify.com" ? .black : .white
-            titleLabel.phi.textColor = ThemedColor(foreground).nsColorMapper
-            subtitleLabel.phi.textColor = ThemedColor(foreground.withAlphaComponent(0.85)).nsColorMapper
-            deleteButton.contentTintColor = foreground
-            if isBuiltInIcon {
-                iconImageView.contentTintColor = foreground
-            }
-        } else if isSelected && isLightMode {
-            titleLabel.phi.textColor = ThemedColor(.white.withAlphaComponent(0.85)).nsColorMapper
-            subtitleLabel.phi.textColor = ThemedColor(.white.withAlphaComponent(0.4)).nsColorMapper
-            deleteButton.contentTintColor = .white
-            if isBuiltInIcon {
-                iconImageView.contentTintColor = .white
-            }
-        } else {
-            titleLabel.phi.textColor = NSColor.black.withAlphaComponent(0.85) <> NSColor.white.withAlphaComponent(0.85)
-            subtitleLabel.phi.textColor = NSColor.black.withAlphaComponent(0.3) <> NSColor.white.withAlphaComponent(0.3)
-            deleteButton.contentTintColor = .labelColor
-            if isBuiltInIcon {
-                iconImageView.contentTintColor = .labelColor
-            }
-        }
+        let isSelected = (superview as? NSTableRowView)?.isSelected ?? false
+        let canSwitch = showsSwitchToTabHint && (suggestion?.hasTabMatch ?? false)
+        deleteButton.isHidden = !((isHovered || isSelected) && (suggestion?.canDelete ?? false))
+        switchToTabView.isHidden = !canSwitch
+        switchToTabView.setEmphasized(isSelected || isHovered)
+        needsLayout = true
     }
-    
+
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         updateAppearance()
     }
 }
 
+/// The trailing hint on a suggestion that can switch to an open tab, in the kit's detail style; it brightens while its
+/// row is under the pointer or selected.
 class SwitchToTabView: NSView {
-    private lazy var label: NSTextField = {
-        let l = NSTextField()
-        l.isEditable = false
-        l.isBordered = false
-        l.drawsBackground = false
-        l.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        l.textColor = .tertiaryLabelColor
-        l.lineBreakMode = .byTruncatingTail
-        l.usesSingleLineMode = true
-        l.stringValue = NSLocalizedString("addressBar.suggestions.switchToOpenTabHint", value: "Hold ⌘ to switch →", comment: "Omnibox suggestion - Hint shown for suggestions that can switch to an open tab")
-        l.alignment = .center
-        return l
-    }()
+    private let label = NSTextField.mistLabel(style: .detail)
+
+    /// Under Cmd+T, Enter switches to the open tab and Cmd opens a new one,
+    /// so the hint names the Cmd action there instead.
+    var switchesByDefault = false {
+        didSet { label.stringValue = Self.hintText(switchesByDefault: switchesByDefault) }
+    }
+
+    private static func hintText(switchesByDefault: Bool) -> String {
+        switchesByDefault
+            ? NSLocalizedString("addressBar.suggestions.openInNewTabHint", value: "Hold ⌘ for new tab →", comment: "Omnibox suggestion - Hint shown in a new-tab omnibox for suggestions that switch to an open tab unless ⌘ is held, which opens a new tab instead")
+            : NSLocalizedString("addressBar.suggestions.switchToOpenTabHint", value: "Hold ⌘ to switch →", comment: "Omnibox suggestion - Hint shown for suggestions that can switch to an open tab")
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        setupViews()
+        label.stringValue = Self.hintText(switchesByDefault: false)
+        addSubview(label)
     }
 
     required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setupViews()
+        fatalError("init(coder:) has not been implemented")
     }
 
-    private func setupViews() {
-        wantsLayer = true
-        layer?.cornerRadius = 6
-        layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.clear.cgColor
+    /// The drawn hint plus the text cell's 2 pt padding on each side; the label's intrinsic width comes out short and
+    /// truncated the arrow.
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: ceil(label.attributedStringValue.size().width) + 4, height: label.intrinsicContentSize.height)
+    }
 
-        addSubview(label)
-
-        label.snp.makeConstraints { make in
-            make.leading.trailing.equalToSuperview()
-            make.centerY.equalToSuperview()
-        }
-
-        label.setContentHuggingPriority(.required, for: .horizontal)
-        label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+    override func layout() {
+        super.layout()
+        label.frame = bounds
     }
 
     func setEmphasized(_ emphasized: Bool) {
-        let isLightMode = (currentAppearance == .light)
-        if isLightMode && emphasized {
-            label.textColor = NSColor.white.withAlphaComponent(0.85)
-        } else if emphasized {
-            label.textColor = .labelColor
-        } else {
-            label.textColor = .secondaryLabelColor
-        }
+        let field: NSTextField = label
+        field.phi.setTextColor(emphasized ? .textSecondary : MistTextStyle.detail.color)
     }
 }

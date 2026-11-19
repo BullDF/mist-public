@@ -19,9 +19,6 @@ struct AdvancedSettingsView: View {
     @AppStorage(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue)
     private var showUnloadedTabIndicators = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.defaultValue
 
-    @AppStorage(PhiPreferences.GeneralSettings.shortHighlightLinksEnabled.rawValue)
-    private var shortHighlightLinksEnabled: Bool = PhiPreferences.GeneralSettings.shortHighlightLinksEnabled.defaultValue
-
     @AppStorage(PhiPreferences.GeneralSettings.autoPictureInPictureModeKey)
     private var autoPictureInPictureModeRawValue: String = PhiPreferences.GeneralSettings.loadAutoPictureInPictureMode().rawValue
 
@@ -30,6 +27,12 @@ struct AdvancedSettingsView: View {
 
     @AppStorage(PhiPreferences.GeneralSettings.sidebarMediaPresentationModeKey)
     private var presentationModeRawValue = SidebarMediaPresentationMode.dynamic.rawValue
+
+    @AppStorage(PhiPreferences.GeneralSettings.peekViewEnabled.rawValue)
+    private var peekViewEnabled: Bool = PhiPreferences.GeneralSettings.peekViewEnabled.defaultValue
+
+    @AppStorage(PhiPreferences.GeneralSettings.autoPeekViewEnabled.rawValue)
+    private var autoPeekViewEnabled: Bool = PhiPreferences.GeneralSettings.autoPeekViewEnabled.defaultValue
 
     // Backed by Chromium local state through the bridge, not @AppStorage: the
     // cold-start path reads the same pref, so it is the single source of truth.
@@ -78,11 +81,21 @@ struct AdvancedSettingsView: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 24) {
-                pageCard
-                browsingCard
-                mediaCard
-                DeveloperModeSectionView()
-                additionalSettingsCard
+                peekSection
+                AdvancedSettingsSection(title: NSLocalizedString("settings.advanced.tabs.sectionTitle", value: "Tabs and address bar", comment: "Advanced settings - Section title for the tab and address bar options")) {
+                    pageCard
+                }
+                AdvancedSettingsSection(title: NSLocalizedString("settings.advanced.startup.sectionTitle", value: "On startup", comment: "Advanced settings - Section title for the restore-last-session option")) {
+                    browsingCard
+                }
+                AdvancedSettingsSection(title: NSLocalizedString("settings.advanced.media.sectionTitle", value: "Media", comment: "Advanced settings - Section title for the Mini Player and picture-in-picture options")) {
+                    mediaCard
+                }
+                AgentControlSectionView()
+                urlRulesSection
+                AdvancedSettingsSection(title: NSLocalizedString("settings.advanced.other.sectionTitle", value: "Other", comment: "Advanced settings - Section title for the link to the additional browser settings")) {
+                    additionalSettingsCard
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 36)
@@ -90,6 +103,70 @@ struct AdvancedSettingsView: View {
         }
         .themedBackground(PhiPreferences.fixedWindowBackground)
         .frame(width: 680, height: 561)
+    }
+
+    private var peekSection: some View {
+        AdvancedSettingsSection(
+            title: NSLocalizedString("settings.navigations.peek.sectionTitle", value: "Peek", comment: "Navigations settings - Peek section title"),
+            description: NSLocalizedString("settings.navigations.peek.sectionDescription", value: "Preview a link without opening it in a new tab.", comment: "Navigations settings - Description of the Peek feature")
+        ) {
+            SettingsDetailCard {
+                AdvancedSettingsToggleRow(
+                    title: NSLocalizedString("settings.navigations.peek.enableToggle.title", value: "Enable Peek View", comment: "Navigations settings - Toggle title for enabling Peek View"),
+                    description: NSLocalizedString("settings.navigations.peek.enableToggle.description", value: "Shift-click a link, or choose “Open Link in Peek View”, to preview it in a floating panel over the page. Not available in the Comfortable layout.", comment: "Navigations settings - Explanation of the Peek View toggle"),
+                    isOn: $peekViewEnabled,
+                    onChange: { enabled in
+                        // The automatic sub-toggle follows the master's
+                        // transitions: enabling Peek View re-enables it,
+                        // disabling Peek View switches it off.
+                        autoPeekViewEnabled = enabled
+                    }
+                )
+
+                SettingsRowDivider()
+
+                AdvancedSettingsToggleRow(
+                    title: NSLocalizedString("settings.navigations.peek.autoToggle.title", value: "Automatically peek from pinned tabs and bookmarks", comment: "Navigations settings - Toggle title for automatically opening cross-site links from pinned tabs and bookmarks in Peek View"),
+                    description: NSLocalizedString("settings.navigations.peek.autoToggle.description", value: "Links that leave a pinned tab’s or bookmark’s site open in a Peek panel instead of a new tab.", comment: "Navigations settings - Explanation of the automatic Peek View toggle for pinned tabs and bookmarks"),
+                    isOn: $autoPeekViewEnabled,
+                    onChange: { _ in }
+                )
+                .disabled(!peekViewEnabled)
+                .opacity(peekViewEnabled ? 1.0 : 0.4)
+            }
+        }
+    }
+
+    private var urlRulesSection: some View {
+        AdvancedSettingsSection(
+            title: NSLocalizedString("settings.navigations.urlRules.sectionTitle", value: "URL Rules", comment: "Navigations settings - URL Rules section title")
+        ) {
+            SettingsDetailCard {
+                Button {
+                    AppController.shared?.openURLRulesEditor(nil)
+                } label: {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(NSLocalizedString("settings.navigations.urlRules.openButton", value: "Manage URL Rules\u{2026}", comment: "Navigations settings - Title of the row that opens the URL Rules editor"))
+                                .font(.system(size: 13))
+                                .themedForeground(.textPrimary)
+                            Text(NSLocalizedString("settings.navigations.urlRules.sectionDescription", value: "Route matching domains or URLs to a Space or Incognito.", comment: "Navigations settings - Description below the URL Rules editor row title"))
+                                .font(.system(size: 11))
+                                .themedForeground(.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 12)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .themedForeground(.textSecondary)
+                    }
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private var pageCard: some View {
@@ -182,28 +259,6 @@ struct AdvancedSettingsView: View {
             .onChange(of: restoreLastSessionEnabled) { _, newValue in
                 SessionRestorePreference.isEnabled = newValue
             }
-
-            Divider()
-
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(NSLocalizedString("settings.advanced.highlightLinks.useShortLinksToggle", value: "Shorten links to selected text", comment: "Advanced settings - Toggle that controls whether Copy Link to Highlight generates a short link"))
-                        .font(.system(size: 13))
-                        .themedForeground(.textPrimary)
-                    Text(NSLocalizedString("settings.advanced.highlightLinks.shortLinksDescription", value: "Applies to “Copy Link to Highlight” in the right-click menu. Turn off to copy the full link.", comment: "Advanced settings - Explains where the short-link toggle applies and that disabling it copies the full link to the selected text"))
-                        .font(.system(size: 11))
-                        .themedForeground(.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 12)
-                Toggle("", isOn: $shortHighlightLinksEnabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .themedTint(.themeColor)
-            }
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -299,49 +354,106 @@ struct AdvancedSettingsView: View {
     }
 }
 
-/// The "Developer mode" master toggle. Turning it OFF is a kill-switch, not
-/// just UI hiding: the Developer settings tab disappears and the features it
-/// governs shut off with it — agent CDP access and the agent password manager
-/// (see `AppController.setDeveloperModeEnabled`). Turning it back on reveals
-/// the tab again but re-enables nothing automatically.
-private struct DeveloperModeSectionView: View {
-    @State private var developerModeEnabled = PhiPreferences.AgentSpaces.developerModeEnabled
+private struct AdvancedSettingsSection<Content: View>: View {
+    let title: String
+    var description: String? = nil
+    @ViewBuilder var content: Content
 
     var body: some View {
-        SettingsDetailCard {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(NSLocalizedString("settings.advanced.developerMode.enableToggle", value: "Developer mode", comment: "Advanced settings - Toggle title for developer mode; turning it off also disables agent access and the agent password manager"))
-                        .font(.system(size: 13))
-                        .themedForeground(.textPrimary)
-                    hintText
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 12))
+                    .themedForeground(.textSecondary)
+                if let description {
+                    Text(description)
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 12)
-                Toggle("", isOn: $developerModeEnabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .themedTint(.themeColor)
             }
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            content
         }
-        .onChange(of: developerModeEnabled) { _, newValue in
-            // Deferred: applying the change rebuilds the settings window,
-            // which closes the window hosting this very view — that must not
-            // happen mid view-update.
-            DispatchQueue.main.async {
-                AppController.shared?.setDeveloperModeEnabled(newValue)
-            }
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct AdvancedSettingsToggleRow: View {
+    let title: String
+    let description: String?
+    @Binding var isOn: Bool
+    let onChange: (Bool) -> Void
+
+    init(
+        title: String,
+        description: String? = nil,
+        isOn: Binding<Bool>,
+        onChange: @escaping (Bool) -> Void
+    ) {
+        self.title = title
+        self.description = description
+        self._isOn = isOn
+        self.onChange = onChange
     }
 
-    private var hintText: some View {
-        Text(developerModeEnabled
-            ? NSLocalizedString("settings.advanced.developerMode.enabledHint", value: "Agent access, permissions, and the password manager live in the Developer tab.", comment: "Advanced settings - Hint under the developer mode toggle pointing at the Developer settings pane")
-            : NSLocalizedString("settings.advanced.developerMode.disabledHint", value: "Turning developer mode off turns off agent access and the agent password manager, and revokes every allowed agent and credential approval. An agent that connects later can ask you to turn it back on.", comment: "Advanced settings - Hint under the developer mode toggle explaining the kill-switch behavior, the revoked approvals, and that an agent may request it back"))
-            .font(.system(size: 11))
-            .themedForeground(.textTertiary)
-            .fixedSize(horizontal: false, vertical: true)
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 13))
+                    .themedForeground(.textPrimary)
+                if let description {
+                    Text(description)
+                        .font(.system(size: 11))
+                        .themedForeground(.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .themedTint(.themeColor)
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: isOn) { _, newValue in
+            onChange(newValue)
+        }
+    }
+}
+
+private struct AgentControlSectionView: View {
+    @State private var enabled = PhiPreferences.AgentSpaces.cdpAgentAccessEnabled
+
+    var body: some View {
+        AdvancedSettingsSection(title: NSLocalizedString("settings.advanced.agentControl.sectionTitle", value: "Agent control", comment: "Advanced settings - Section title for the agent control switch")) {
+            SettingsDetailCard {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(NSLocalizedString("settings.developer.agentControl.enableToggle", value: "Allow agents to control Phi (CDP)", comment: "Advanced settings - Agent control toggle title"))
+                            .font(.system(size: 13))
+                            .themedForeground(.textPrimary)
+                        Text(NSLocalizedString("settings.advanced.agentControl.description", value: "Lets agent tools on this Mac (Claude Code, Codex) drive Phi over the DevTools Protocol through a private socket, without asking. Turning this off disconnects them right away. Drifter works either way.", comment: "Advanced settings - Explains local agent control and its switch"))
+                            .font(.system(size: 11))
+                            .themedForeground(.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("", isOn: $enabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .themedTint(.themeColor)
+                }
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .onChange(of: enabled) { _, newValue in
+            AgentCDPListener.shared.setEnabled(newValue)
+        }
     }
 }

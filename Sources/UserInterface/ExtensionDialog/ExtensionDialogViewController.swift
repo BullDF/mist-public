@@ -58,11 +58,9 @@ final class ExtensionDialogViewController: NSViewController {
         webView = WKWebView(frame: NSRect(origin: .zero, size: preferredContentSize), configuration: configuration)
         webView.navigationDelegate = self
 
-        #if DEBUG || NIGHTLY_BUILD
         if #available(macOS 13.3, *) {
             webView.isInspectable = true
         }
-        #endif
 
         view = webView
     }

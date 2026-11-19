@@ -10,7 +10,6 @@ import sys
 root, output = map(Path, sys.argv[1:])
 host = (root / 'Sources/UserInterface/Sidebar/Bottom/SidebarMediaPlayerView.swift').read_text()
 host = host[:host.index('/// Shared feedback')]
-host = host.replace('import PostHog\n', '')
 host = host.replace('import SwiftUI', 'import SwiftUI\ntypealias ThemedHostingView = NSHostingView<AnyView>')
 (output / 'MediaHost.swift').write_text(host)
 tracker = (root / 'Sources/UserInterface/Sidebar/Spaces/SpacesStripView.swift').read_text()

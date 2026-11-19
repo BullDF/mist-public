@@ -28,7 +28,6 @@ struct PhiProgressView: View {
                 progress: progress,
                 progressColor: progressColor,
                 trackColor: trackColor,
-                lineWidth: lineWidth,
                 showGradientFade: showGradientFade
             )
         case .circular:
@@ -48,7 +47,6 @@ struct LinearProgressView: View {
     var progress: Double
     var progressColor: Color
     var trackColor: Color
-    var lineWidth: CGFloat
     var showGradientFade: Bool
     
     var body: some View {
@@ -131,7 +129,6 @@ struct CircularProgressView: View {
 struct PhiLinearProgressViewStyle: ProgressViewStyle {
     var progressColor: Color = .phiPrimary
     var trackColor: Color = Color.phiPrimary.opacity(0.15)
-    var lineWidth: CGFloat = 3
     var showGradientFade: Bool = true
     
     func makeBody(configuration: Configuration) -> some View {
@@ -139,7 +136,6 @@ struct PhiLinearProgressViewStyle: ProgressViewStyle {
             progress: configuration.fractionCompleted ?? 0,
             progressColor: progressColor,
             trackColor: trackColor,
-            lineWidth: lineWidth,
             showGradientFade: showGradientFade
         )
     }
@@ -170,7 +166,6 @@ extension ProgressViewStyle where Self == PhiLinearProgressViewStyle {
         PhiLinearProgressViewStyle(
             progressColor: progressColor,
             trackColor: trackColor,
-            lineWidth: lineWidth,
             showGradientFade: showGradientFade
         )
     }
@@ -192,7 +187,6 @@ extension ProgressViewStyle where Self == PhiCircularProgressViewStyle {
 
 // MARK: - Preview
 
-#if DEBUG
 struct ProgressView_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 40) {
@@ -250,4 +244,3 @@ struct ProgressView_Previews: PreviewProvider {
         .background(Color(NSColor.windowBackgroundColor))
     }
 }
-#endif

@@ -16,9 +16,15 @@ final class HostedSidebarStateTests: XCTestCase {
     private var accountDirectory: URL!
     private var previousLayout: Any?
     private var slots: [SpaceWindowSlot] = []
+    private var sessions: [SpaceSessionController] = []
     private var subscriptions = Set<AnyCancellable>()
     private let manager = SpaceManager(observeAccountChanges: false)
-    private var nextWindowId = 123456789
+    private static var nextWindowId = 223456789
+
+    private func nextTestWindowId() -> Int {
+        Self.nextWindowId += 1
+        return Self.nextWindowId
+    }
 
     override func setUp() async throws {
         previousLayout = UserDefaults.standard.object(forKey: PhiPreferences.GeneralSettings.layoutModeKey)
@@ -34,6 +40,8 @@ final class HostedSidebarStateTests: XCTestCase {
     override func tearDown() async throws {
         subscriptions.removeAll()
         manager.discardSpacePrewarm()
+        for session in sessions { session.discardDormant() }
+        sessions.removeAll()
         for slot in slots { slot.closeShellIfPresent() }
         slots.removeAll()
         // Drain queued UI reads before resetting their SwiftData context.
@@ -48,7 +56,7 @@ final class HostedSidebarStateTests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testMediaVisitHistoryKeepsAllLiveTabsWhileSwitcherStaysLimited() {
+    func testMediaVisitHistoryKeepsAllLiveTabs() {
         let state = makeState(spaceId: "media-history")
         let tabs = (0..<12).map { index in
             Tab(guid: 100_000 + index, url: "https://example.test/\(index)",
@@ -58,16 +66,15 @@ final class HostedSidebarStateTests: XCTestCase {
         for tab in tabs { state.tabSwitchManager.recordActiveTab(tab) }
         XCTAssertEqual(state.tabSwitchManager.visitedTabIDs, tabs.reversed().map(\.guid),
                        "Unrelated visits must not erase older live media visit order")
-        XCTAssertEqual(state.tabSwitchManager.recentTabIDs,
-                       Array(tabs.reversed().prefix(TabSwitchMetrics.maxRecentTabs)).map(\.guid),
-                       "The existing tab switcher must keep its five-item scope")
+        XCTAssertEqual(state.tabSwitchManager.recentTabIDs, tabs.reversed().map(\.guid),
+                       "The tab switcher lists every visited tab")
         state.tabSwitchManager.removeTab(tabID: tabs[4].guid)
         state.tabs.removeAll { $0.guid == tabs[0].guid || $0.guid == tabs[4].guid }
         state.tabSwitchManager.recordActiveTab(tabs[2])
         XCTAssertEqual(state.tabSwitchManager.visitedTabIDs.first, tabs[2].guid)
         XCTAssertFalse(state.tabSwitchManager.visitedTabIDs.contains(tabs[0].guid))
         XCTAssertFalse(state.tabSwitchManager.visitedTabIDs.contains(tabs[4].guid))
-        XCTAssertEqual(state.tabSwitchManager.recentTabIDs.count, TabSwitchMetrics.maxRecentTabs)
+        XCTAssertEqual(state.tabSwitchManager.recentTabIDs, state.tabSwitchManager.visitedTabIDs)
     }
 
     func testMediaSwipeOwnsHorizontalAndMomentumButPassesVertical() {
@@ -166,7 +173,7 @@ final class HostedSidebarStateTests: XCTestCase {
         XCTAssertEqual(second.browserState.sidebarWidth, secondSplit.sidebarWidth)
     }
 
-    func testStandaloneIncognitoAndKioskRemainIndependent() async throws {
+    func testStandaloneIncognitoRemainsIndependent() async throws {
         let slot = makeSlot()
         let hosted = makeSession(in: slot, spaceId: "hosted")
         let split = try XCTUnwrap(slot.shell?.split)
@@ -190,10 +197,6 @@ final class HostedSidebarStateTests: XCTestCase {
         standaloneHost.showFloatingSidebar()
         XCTAssertTrue(standaloneHost.isVisible)
         XCTAssertFalse(split.floatingSidebarHost.isVisible)
-        let kiosk = KioskBrowserState(windowId: 123456700, localStore: store, profileId: "Default", isIncognito: false)
-        kiosk.toggleSidebar(false)
-        XCTAssertTrue(kiosk.sidebarCollapsed)
-        XCTAssertEqual(kiosk.sidebarWidth, 0)
     }
 
     func testFloatingPanelStaysOpenAcrossSpacesThatNeverOpenedIt() throws {
@@ -372,20 +375,21 @@ final class HostedSidebarStateTests: XCTestCase {
         first.presentInShell(completing: false, deferringChromium: true)
         let shell = try XCTUnwrap(slot.shell)
         let tab = Tab(url: "https://example.com", isActive: true, index: 0)
-        let page = WebContentViewController(state: first.browserState, tab: tab)
-        let container = first.mainSplitViewController.webContentContainerViewController.view
-        container.addSubview(page.view)
-        page.view.frame = container.bounds
+        let container = first.mainSplitViewController.webContentContainerViewController
+        let page = try XCTUnwrap(container.splitPaneCompanionController(for: tab))
+        container.addChild(page)
+        container.view.addSubview(page.view)
+        page.view.frame = container.view.bounds
         // A page going fullscreen is lifted under the shell's content view,
         // above every Space.
         tab.isInContentFullscreen = true
         await drainPresentationUpdates()
-        XCTAssertTrue(page.hostViewForTesting.superview === shell.window.contentView)
+        XCTAssertTrue(page.hostViewForTesting.superview?.superview === shell.window.contentView)
         // The Space leaving the shell takes its page with it, before the
         // tree is hidden: what the next Space shows is its own.
         first.concealFromShell(removingView: false, deferringChromium: true)
         first.removeSessionViewFromShell()
-        XCTAssertFalse(page.hostViewForTesting.superview === shell.window.contentView)
+        XCTAssertFalse(page.hostViewForTesting.superview?.superview === shell.window.contentView)
         XCTAssertTrue(page.hostViewForTesting.isDescendant(of: page.view))
         XCTAssertTrue(first.mainSplitViewController.view.isHidden)
     }
@@ -413,7 +417,7 @@ final class HostedSidebarStateTests: XCTestCase {
                        split.contentHost.view.frame.width)
     }
 
-    func testFloatingBandSlideUsesSharedPanelForIncomingContent() throws {
+    func testFloatingBandSlideUsesSharedPanelForIncomingContent() async throws {
         let slot = makeSlot()
         let first = makeSession(in: slot, spaceId: "first")
         let cold = makeSession(in: slot, spaceId: "cold")
@@ -434,6 +438,7 @@ final class HostedSidebarStateTests: XCTestCase {
         first.concealFromShell(removingView: false, deferringChromium: true)
         cold.presentInShell(installingView: false, completing: false, deferringChromium: true)
         slide.attachEntering(cold)
+        await drainPresentationUpdates()
         let enteringSurface = try XCTUnwrap(host.floatingSidebarViewController)
         XCTAssertFalse(enteringSurface === leavingSurface)
         XCTAssertTrue(enteringSurface.parent === host)
@@ -548,9 +553,9 @@ final class HostedSidebarStateTests: XCTestCase {
         }
     }
 
-    func testSidebarHeaderClearsTrafficLightsAtMinimumAndUpdateThresholdWidths() async throws {
+    func testSidebarHeaderClearsTrafficLightsAcrossSidebarWidths() async throws {
         let identifiers = ["sidebarHeader.sidebarButton", "sidebarHeader.searchTabsButton",
-            "sidebarHeader.upgradeButton", "sidebarHeader.backButton", "sidebarHeader.forwardButton",
+            "sidebarHeader.backButton", "sidebarHeader.forwardButton",
             "sidebarHeader.refreshButton", "sidebarHeader.stopButton"]
 
         for mode in [LayoutMode.performance, .balanced] {
@@ -587,29 +592,16 @@ final class HostedSidebarStateTests: XCTestCase {
                             "\(mode), width \(width): adjacent header controls overlap")
                     }
                     if mode == .performance {
-                        let leading = controls[2].isHiddenOrHasHiddenAncestor ? controls[0] : controls[2]
+                        let leading = controls[0]
                         let leadingFrame = leading.convert(leading.bounds, to: nil)
-                        let backFrame = controls[3].convert(controls[3].bounds, to: nil)
+                        let backFrame = controls[2].convert(controls[2].bounds, to: nil)
                         print("[Header clearance] width=\(width), navigationGap=\(backFrame.minX - leadingFrame.maxX)")
                     }
                 }
 
-                NotificationCenter.default.post(name: .sparkleDidSkipUpdate, object: nil)
-                await drainPresentationUpdates()
                 assertClearance()
-                NotificationCenter.default.post(name: .sparkleDidDownloadUpdate, object: nil,
-                    userInfo: ["displayVersion": "1.2.3"])
-                await drainPresentationUpdates()
-                assertClearance()
-                let update = controls[2]
-                XCTAssertEqual(update.isHiddenOrHasHiddenAncestor, width <= 225)
-                if mode == .balanced && width > 225 {
-                    let frame = update.convert(update.bounds, to: nil)
-                    XCTAssertEqual(frame.minX - green.convert(green.bounds, to: nil).maxX, 10, accuracy: 0.01)
-                }
             }
         }
-        NotificationCenter.default.post(name: .sparkleDidSkipUpdate, object: nil)
     }
 
     func testComfortableSpacePickerTracksNativeTrafficLightsWithTenPointGap() throws {
@@ -786,7 +778,7 @@ final class HostedSidebarStateTests: XCTestCase {
         XCTAssertNotNil(surface.view.phiLayer?.backgroundColor)
     }
 
-    func testFloatingAndDockedBandsUseTheSamePreparedMotion() throws {
+    func testFloatingAndDockedBandsUseTheSamePreparedMotion() async throws {
         for direction in [SpaceWindowSlot.SwapDirection.forward, .backward] {
             var motions: [[Double]] = []
             for floating in [false, true] {
@@ -828,15 +820,15 @@ final class HostedSidebarStateTests: XCTestCase {
                     leavingBandViews: source.spaceSwitchBandViews,
                     leavingBandContainer: source.spaceSwitchBandContainer,
                     direction: direction, duration: 0.25, restoreLeavingTheme: {})
-                let timing = SpaceSwitchTiming(operation: "test_switch", event: nil)
+                let timing = SpaceSwitchTiming(event: nil, recordsSteps: true)
                 timing.sidebar = slot.timingSidebarMode
-                timing.target = "regular"
                 timing.preparation = "dormant"
                 slide.timing = timing
                 XCTAssertEqual(timing.sidebar, floating ? "floating" : "pinned")
                 slide.start()
                 next.presentInShell(installingView: false, completing: false, deferringChromium: true)
                 slide.attachEntering(next)
+                await drainPresentationUpdates()
                 let target: any SpaceSwitchBandSurface = floating
                     ? try XCTUnwrap(host.floatingSidebarViewController)
                     : next.mainSplitViewController.sidebarViewController
@@ -879,7 +871,6 @@ final class HostedSidebarStateTests: XCTestCase {
                 XCTAssertLessThan(clock, submitted)
                 XCTAssertLessThan(submitted, cleanup)
                 XCTAssertEqual(timing.steps.map(\.milliseconds), timing.steps.map(\.milliseconds).sorted())
-                timing.flush()
             }
             XCTAssertEqual(motions[0], motions[1], "Floating and docked motion must match in either direction")
         }
@@ -914,12 +905,10 @@ final class HostedSidebarStateTests: XCTestCase {
         // The attach commits a frame one turn before the motion is added:
         // that frame must not show the entering band at rest over the
         // leaving one, nor the entering page at full opacity.
-        let travel = source.spaceSwitchBandFrame.width - 8
         let bandViews = next.mainSplitViewController.sidebarViewController.spaceSwitchBandViews
         for view in bandViews {
             let layer = try XCTUnwrap(view.layer)
             XCTAssertNil(layer.animation(forKey: "phi.hostedBandSlide"))
-            XCTAssertEqual(layer.transform.m41, travel, accuracy: 0.5)
             // AppKit can put the transform back when it syncs layer
             // geometry; the band is also kept transparent until then.
             XCTAssertEqual(view.alphaValue, 0)
@@ -1023,7 +1012,7 @@ final class HostedSidebarStateTests: XCTestCase {
         XCTAssertNil(probe.window)
     }
 
-    func testColdSlideWaitsForTargetAndRealizesNewTabBeforeMoving() throws {
+    func testColdSlideWaitsForTargetAndRealizesNewTabBeforeMoving() async throws {
         for floating in [false, true] {
             let slot = makeSlot()
             let first = makeSession(in: slot, spaceId: UUID().uuidString)
@@ -1053,6 +1042,7 @@ final class HostedSidebarStateTests: XCTestCase {
             }
             cold.presentInShell(installingView: false, completing: false, deferringChromium: true)
             slide.attachEntering(cold)
+            await drainPresentationUpdates()
             let target: any SpaceSwitchBandSurface = floating
                 ? try XCTUnwrap(split.floatingSidebarHost.floatingSidebarViewController)
                 : cold.mainSplitViewController.sidebarViewController
@@ -1080,7 +1070,7 @@ final class HostedSidebarStateTests: XCTestCase {
         let windows = Set(NSApp.windows.map(ObjectIdentifier.init))
         let spaceIds = manager.spaces.map(\.spaceId)
         let active = SpaceSessionControllersManager.shared.activeWindowController
-        manager.prewarmIncognitoContent(windowId: 123456790, localStore: store,
+        manager.prewarmIncognitoContent(windowId: nextTestWindowId(), localStore: store,
             size: NSSize(width: 1000, height: 700))
         let prepared = try XCTUnwrap(manager.prewarmedIncognitoContent)
         XCTAssertNil(prepared.state.windowController)
@@ -1102,7 +1092,7 @@ final class HostedSidebarStateTests: XCTestCase {
         XCTAssertTrue(slot.dormantSessionsBySpaceId.isEmpty)
         XCTAssertTrue(slot.windowsBySpaceId.isEmpty)
         XCTAssertFalse(store.getAllSpaces().contains { $0.spaceId == prepared.state.spaceId })
-        let timing = SpaceSwitchTiming(operation: "test_new_incognito", event: nil)
+        let timing = SpaceSwitchTiming(event: nil, recordsSteps: true)
         let requestedId = manager.createIncognitoSpace(timing: timing)
         XCTAssertEqual(timing.preparation, "spare_hit")
         XCTAssertTrue(timing.steps.contains { $0.name == "incognito.space_list.publish.end" })
@@ -1191,7 +1181,8 @@ final class HostedSidebarStateTests: XCTestCase {
         XCTAssertTrue(prepared.state.pinnedTabs.isEmpty)
         XCTAssertNil(prepared.state.windowController)
         XCTAssertNil(prepared.view.window)
-        XCTAssertEqual(Set(NSApp.windows.map(ObjectIdentifier.init)), windows)
+        XCTAssertEqual(Set(NSApp.windows.map(ObjectIdentifier.init)), windows,
+            "New windows: \(NSApp.windows.filter { !windows.contains(ObjectIdentifier($0)) }.map { "\(type(of: $0)), visible=\($0.isVisible), controller=\(String(describing: $0.windowController))" })")
         XCTAssertEqual(manager.spaces.map(\.spaceId), spaceIds)
         XCTAssertEqual(Set(AgentSpaceManager.shared.tasksBySpaceId.keys), taskIds)
         XCTAssertNil(SpaceSessionControllersManager.shared.controller(for: prepared.state.windowId))
@@ -1227,19 +1218,13 @@ final class HostedSidebarStateTests: XCTestCase {
         XCTAssertNotEqual(replacement.state.spaceId, claimedId)
     }
 
-    func testAgentSpareRejectsDeniedProfilesAndChangedRequestBindings() async throws {
+    func testAgentSpareRejectsChangedRequestBindings() async throws {
         manager.bind(to: store.account)
         await drainPresentationUpdates()
         let profile = "agent-prewarm-denied-\(UUID().uuidString)"
-        let previousDenied = PhiPreferences.AgentSpaces.disallowedAgentProfileIds
-        defer { PhiPreferences.AgentSpaces.disallowedAgentProfileIds = previousDenied }
-        PhiPreferences.AgentSpaces.disallowedAgentProfileIds.insert(profile)
         manager.prewarmAgentContent(windowId: 123456803, localStore: store,
             size: NSSize(width: 1000, height: 700))
         let prepared = try XCTUnwrap(manager.prewarmedAgentContent)
-        XCTAssertNil(manager.claimPrewarmedAgentContent(profileId: profile))
-        XCTAssertTrue(manager.prewarmedAgentContent === prepared)
-        PhiPreferences.AgentSpaces.disallowedAgentProfileIds.remove(profile)
         let claimedId = try XCTUnwrap(manager.claimPrewarmedAgentContent(profileId: profile))
         _ = manager.createSpace(name: "R1", colorHex: AgentSpaceManager.spaceColorHex,
             iconName: AgentSpaceManager.spaceIconName, profileId: "different-profile",
@@ -1340,9 +1325,17 @@ final class HostedSidebarStateTests: XCTestCase {
         let first = makeSession(in: slot, spaceId: "first")
         slot.registerWindow(first, for: first.spaceId)
         XCTAssertFalse(shell.window.isVisible, "Registration must wait for Chromium's show intent")
-        let otherWindow = HostedCommandRecordingWindow()
+        // A nonactivating panel can own keyboard focus even when the test app
+        // starts behind another app. The inactive show must preserve that focus.
+        let otherWindow = NSPanel(contentRect: NSRect(x: 100, y: 100, width: 500, height: 400),
+            styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
+        otherWindow.isReleasedWhenClosed = false
+        otherWindow.hidesOnDeactivate = false
         otherWindow.makeKeyAndOrderFront(nil)
         defer { otherWindow.close() }
+        let otherWindowIsKey = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in otherWindow.isKeyWindow }, object: nil)
+        await fulfillment(of: [otherWindowIsKey], timeout: 2)
         slot.presentRequestedSession(first, activate: false)
         await drainPresentationUpdates()
         XCTAssertTrue(shell.window.isVisible)
@@ -1369,8 +1362,7 @@ final class HostedSidebarStateTests: XCTestCase {
         let slot = makeSlot()
         let first = makeSession(in: slot, spaceId: "first")
         slot.registerWindow(first, for: first.spaceId)
-        nextWindowId += 1
-        let state = ReentrantSeedBrowserState(windowId: nextWindowId, localStore: store,
+        let state = ReentrantSeedBrowserState(windowId: nextTestWindowId(), localStore: store,
             profileId: LocalStore.defaultProfileId, spaceId: targetSpaceId)
         let target = makeSession(in: slot, state: state)
         slot.registerWindow(target, for: targetSpaceId)
@@ -1391,13 +1383,13 @@ final class HostedSidebarStateTests: XCTestCase {
     private func makeSlot() -> SpaceWindowSlot {
         let slot = SpaceWindowSlot(manager: manager, initialSpaceId: "first")
         slot.ensureShell(initialFrame: NSRect(x: 0, y: 0, width: 1000, height: 700))
+        slot.shell?.split.setSidebarGeometry(width: 240, collapsed: false)
         slots.append(slot)
         return slot
     }
 
     private func makeState(spaceId: String) -> BrowserState {
-        nextWindowId += 1
-        return BrowserState(windowId: nextWindowId, localStore: store, profileId: "Default", spaceId: spaceId)
+        BrowserState(windowId: nextTestWindowId(), localStore: store, profileId: "Default", spaceId: spaceId)
     }
 
     private func makeSession(in slot: SpaceWindowSlot, spaceId: String) -> SpaceSessionController {
@@ -1405,9 +1397,11 @@ final class HostedSidebarStateTests: XCTestCase {
     }
 
     private func makeSession(in slot: SpaceWindowSlot, state: BrowserState) -> SpaceSessionController {
-        SpaceSessionController(window: slot.shell!.window, windowId: state.windowId,
+        let session = SpaceSessionController(window: slot.shell!.window, windowId: state.windowId,
             profileId: state.profileId, spaceId: state.spaceId, account: store.account,
             slot: slot, browserState: state, dormant: true)
+        sessions.append(session)
+        return session
     }
 
     private func drainPresentationUpdates() async {

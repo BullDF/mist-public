@@ -46,6 +46,7 @@ private struct TabItemPageAppearanceModifier: ViewModifier {
 }
 
 final class TabItemView: NSView {
+    private let renameEditor = TabRenameEditor()
     static let statusBadgeViewIdentifier = NSUserInterfaceItemIdentifier("tabStripStatusBadge")
 
     // MARK: - Types
@@ -89,7 +90,6 @@ final class TabItemView: NSView {
 
     // MARK: - Private Properties
 
-    private var currentTabId: String?
     private weak var sourceTab: Tab?
     private let tabPreviewRegistration = TabPreviewRegistration()
     private let splitTabPreviewRegistration = SplitTabPreviewRegistration()
@@ -190,7 +190,7 @@ final class TabItemView: NSView {
         return view
     }()
 
-    /// Cell-level Sidecar/agent status. A merged split still exposes one badge
+    /// Cell-level agent status. A merged split still exposes one badge
     /// for the whole cell, using the same cross-pane priority as sidebar split
     /// cells. The host is decorative so it never intercepts tab interaction.
     private lazy var statusBadgeHostingView: HitTransparentHostingView<AnyView> = {
@@ -683,6 +683,7 @@ final class TabItemView: NSView {
 
         layoutStatusBadge()
         updatePaneToolTips(mode: mode)
+        renameEditor.layout()
     }
 
     private func layoutStatusBadge() {
@@ -888,11 +889,20 @@ final class TabItemView: NSView {
             }
             .store(in: &cancellables)
 
-        currentTabId = data.id
         isActive = data.isActive
         isMultiSelected = data.isMultiSelected
         isPinned = data.isPinned
         sourceTab = data.sourceTab
+        if let tab = data.sourceTab {
+            renameEditor.configure(tab: tab, state: browserState, anchor: self,
+                                   titleView: titleHostingView) { [weak self] in
+                guard let self, !self.isPinned, !self.titleHostingView.frame.isEmpty,
+                      self.layoutMode == .normal else { return nil }
+                return self.titleHostingView.frame
+            }
+        } else {
+            renameEditor.reset()
+        }
         pinnedSplitPartner = data.pinnedSplitPartner
         faviconHostingView.rootView = makeFaviconRootView()
         secondaryFaviconHostingView.rootView = makeSecondaryFaviconRootView()
@@ -1153,7 +1163,7 @@ final class TabItemView: NSView {
            TabMultiSelectionMenu.populateIfNeeded(menu, browserState: state) {
             return menu
         }
-        if let representable = sourceTab as? ContextMenuRepresentable {
+        if let representable = sourceTab {
             representable.makeContextMenu(on: menu)
         }
         return menu.items.isEmpty ? nil : menu

@@ -77,7 +77,6 @@ class ShortcutsViewModel: ObservableObject {
     }
     @Published var recordingMessage: String?
     @Published private(set) var reservedShortcuts: [ReservedShortcutItem] = []
-    @Published var hiddenGroups: Set<Shortcuts.Group> = [.help]
     @Published private(set) var persistenceFailure: PersistenceFailure?
     private var cancellables = Set<AnyCancellable>()
     private let additionalBindings: () -> [ShortcutBinding]
@@ -116,7 +115,7 @@ class ShortcutsViewModel: ObservableObject {
         searchEntries.removeAll(keepingCapacity: true)
         for item in sections.flatMap(\.items) {
             let keys = item.shortcutKey.map {
-                [$0, shortcutDisplayKey(for: item.command, key: $0)]
+                [$0]
             } ?? []
             searchEntries[.command(item.command.rawValue)] = ShortcutSearchEntry(
                 keywords: [item.name] + item.searchKeywords, keys: keys + item.aliases
@@ -212,12 +211,6 @@ class ShortcutsViewModel: ObservableObject {
          availableCommands: @escaping () -> [CommandWrapper] = { Shortcuts.availableMenuCommands() }) {
         self.additionalBindings = additionalBindings
         self.availableCommands = availableCommands
-        SpaceManager.shared.$spaces
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.rebuildSections()
-            }
-            .store(in: &cancellables)
         NotificationCenter.default.publisher(for: .shortcutsDidChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -234,7 +227,7 @@ class ShortcutsViewModel: ObservableObject {
             .sink { [weak self] _ in self?.rebuildSections() }
             .store(in: &cancellables)
         DistributedNotificationCenter.default()
-            .publisher(for: KioskGlobalShortcutRegistrar.inputSourceDidChangeNotification)
+            .publisher(for: SystemShortcutChordResolver.inputSourceDidChangeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.rebuildSections() }
             .store(in: &cancellables)
@@ -267,7 +260,6 @@ class ShortcutsViewModel: ObservableObject {
         let discoveredSet = Set(discovered)
         let categorized = Set(Shortcuts.Group.allCases.flatMap(\.discoveredCommands))
         Shortcuts.Group.allCases
-            .filter { !hiddenGroups.contains($0) }
             .forEach { group in
                 let commands = group.commands.filter(shouldShow)
                     + group.discoveredCommands.filter { discoveredSet.contains($0) }
@@ -308,8 +300,8 @@ class ShortcutsViewModel: ObservableObject {
         let key = Shortcuts.key(for: command) ?? (inheritsDefaults ? bindings.first?.key : nil)
         return ShortcutItem(
             id: command, command: command, name: displayName(for: command),
-            shortcutKey: key, shortcutDisplay: shortcutDisplay(for: command, key: key),
-            shortcutKeycapTokens: key.map { shortcutDisplayKey(for: command, key: $0).keycapTokens } ?? [],
+            shortcutKey: key, shortcutDisplay: shortcutDisplay(key: key),
+            shortcutKeycapTokens: key.map { $0.keycapTokens } ?? [],
             isOverridden: Shortcuts.isOverridden(command),
             conflictingCommandNames: conflicts
                 .filter { $0 != .system }.map { displayName(for: $0) },
@@ -320,7 +312,6 @@ class ShortcutsViewModel: ObservableObject {
     }
 
     private func shortcutDisplay(
-        for command: CommandWrapper,
         key: ShortcutsKey?
     ) -> String {
         guard let key else {
@@ -331,32 +322,9 @@ class ShortcutsViewModel: ObservableObject {
             )
         }
 
-        return shortcutDisplayKey(for: command, key: key).displayString
+        return key.displayString
     }
 
-    private func shortcutDisplayKey(for command: CommandWrapper, key: ShortcutsKey) -> ShortcutsKey {
-        // AppKit reports the shifted characters for these default events, so
-        // execution stores "{" and "}". Keep the settings label in the
-        // familiar physical-key notation without changing global key identity.
-        guard key == Shortcuts.DefaultShortcuts[command] else {
-            return key
-        }
-        switch command {
-        case .IDC_SELECT_PREVIOUS_TAB:
-            return ShortcutsKey(
-                characters: "[",
-                modifiers: key.modifiers
-            )
-        case .IDC_SELECT_NEXT_TAB:
-            return ShortcutsKey(
-                characters: "]",
-                modifiers: key.modifiers
-            )
-        default:
-            return key
-        }
-    }
-    
     private func findConflictingCommands(for command: CommandWrapper) -> [ShortcutBinding.Owner] {
         let owners = Set(inventory.bindings(for: command.rawValue).flatMap { binding in
             inventory.conflicts(for: command.rawValue, key: binding.key,
@@ -366,24 +334,11 @@ class ShortcutsViewModel: ObservableObject {
     }
 
     private func shouldShow(_ command: CommandWrapper) -> Bool {
-        guard !Shortcuts.disabledShortcutCommands.contains(command) else { return false }
-        guard let index = command.spaceSelectionIndex else {
-            return true
-        }
-        return index < SpaceManager.shared.spaces.count
+        !Shortcuts.disabledShortcutCommands.contains(command)
     }
 
     private func displayName(for command: CommandWrapper) -> String {
-        if let index = command.spaceSelectionIndex {
-            let spaces = SpaceManager.shared.spaces
-            if spaces.indices.contains(index) {
-                return String(
-                    format: NSLocalizedString("settings.shortcuts.activateSpaceCommandTitle", value: "Go to Space \"%@\"", comment: "Shortcuts settings - Command title to activate the Space at this position"),
-                    spaces[index].name
-                )
-            }
-        }
-        return command.localizedShortcutTitle
+        command.localizedShortcutTitle
     }
 
     private func displayName(for owner: ShortcutBinding.Owner) -> String {
@@ -426,13 +381,6 @@ class ShortcutsViewModel: ObservableObject {
     private func searchKeywords(for command: CommandWrapper) -> [String] {
         var keywords = command.searchKeywords
         keywords.append(displayName(for: command))
-        if let index = command.spaceSelectionIndex {
-            let spaces = SpaceManager.shared.spaces
-            if spaces.indices.contains(index) {
-                keywords.append(spaces[index].name)
-                keywords.append("space \(index + 1)")
-            }
-        }
         return Array(Set(keywords.map { $0.lowercased() }))
     }
     
@@ -563,8 +511,6 @@ private extension CommandWrapper {
             return NSLocalizedString("settings.shortcuts.command.closeTabsToRight", value: "Close Tabs to the Right", comment: "Shortcuts settings - Command title for closing tabs to the right of the current tab")
         case .IDC_MOVE_TAB_TO_NEW_WINDOW:
             return NSLocalizedString("settings.shortcuts.command.moveTabToNewWindow", value: "Move Tab to New Window", comment: "Shortcuts settings - Command title for moving the current tab to a new window")
-        case .IDC_FEEDBACK:
-            return NSLocalizedString("settings.shortcuts.command.sendFeedback", value: "Send Feedback", comment: "Shortcuts settings - Command title for opening the feedback page")
         case .IDC_HELP_PAGE_VIA_MENU:
             return NSLocalizedString("settings.shortcuts.command.openHelp", value: "Phi Help", comment: "Shortcuts settings - Command title for opening browser help")
         case .IDS_HIDE_OTHERS_MAC:
@@ -609,18 +555,16 @@ private extension CommandWrapper {
             return NSLocalizedString("settings.shortcuts.command.openFile", value: "Open File…", comment: "Shortcuts settings - Command title for opening a local file")
         case .IDC_NEW_TAB:
             return NSLocalizedString("settings.shortcuts.command.newTab", value: "New Tab", comment: "Shortcuts settings - Command title for opening a new tab")
+        case .PHI_ALTERNATE_NEW_TAB:
+            return NSLocalizedString("app.fileMenu.alternateNewTab", value: "Alternate New Tab", comment: "File menu and Shortcuts settings - Command title for opening the opposite of the configured New Tab action")
         case .IDC_NEW_WINDOW:
             return NSLocalizedString("settings.shortcuts.command.newWindow", value: "New Window", comment: "Shortcuts settings - Command title for opening a new window")
         case .IDC_NEW_INCOGNITO_WINDOW:
             return NSLocalizedString("settings.shortcuts.command.newIncognitoWindow", value: "New Incognito Window", comment: "Shortcuts settings - Command title for opening a new Incognito window")
         case .PHI_NEW_INCOGNITO_SPACE:
             return NSLocalizedString("app.fileMenu.createNewIncognitoSpace", value: "New Incognito Space", comment: "File menu and Shortcuts settings - Command title for creating a new Incognito Space")
-        case .PHI_NEW_KIOSK_WINDOW:
-            return NSLocalizedString("settings.shortcuts.command.newKioskWindow", value: "New Kiosk Window", comment: "Shortcuts settings - Command title for opening a new Kiosk window")
-        case .PHI_KIOSK_OPEN_IN_SPACE:
-            return NSLocalizedString("settings.shortcuts.command.kioskOpenInSpace", value: "Open Kiosk or Peek in current Space", comment: "Shortcuts settings - Open the Kiosk page in the toolbar's target Space or expand Peek into a regular tab in the current Space")
-        case .PHI_KIOSK_CHOOSE_SPACE:
-            return NSLocalizedString("settings.shortcuts.command.kioskChooseSpace", value: "Show Kiosk \"Open in\" Menu", comment: "Shortcuts settings - Show the Open in menu for selecting a destination Space in a Kiosk window")
+        case .PHI_PEEK_OPEN_IN_SPACE:
+            return NSLocalizedString("settings.shortcuts.command.peekOpenInSpace", value: "Open Peek in current Space", comment: "Shortcuts settings - Expand Peek into a regular tab in the current Space")
         case .IDC_RESTORE_TAB:
             return NSLocalizedString("settings.shortcuts.command.reopenClosedTab", value: "Reopen Closed Tab", comment: "Shortcuts settings - Command title for reopening the most recently closed tab")
         case .IDC_FOCUS_LOCATION:
@@ -641,8 +585,6 @@ private extension CommandWrapper {
             return NSLocalizedString("settings.shortcuts.command.copyURL", value: "Copy URL", comment: "Shortcuts settings - Command title for copying the current URL")
         case .PHI_TOGGLE_READER:
             return NSLocalizedString("settings.shortcuts.command.toggleReaderView", value: "Toggle Reader View", comment: "Shortcuts settings - Command title for switching the current page between Reader View and the normal page")
-        case .PHI_SAVE_FOR_LATER:
-            return NSLocalizedString("settings.shortcuts.command.saveToFolio", value: "Save to Folio", comment: "Shortcuts settings - Command title for saving the current page for later as markdown plus a webpage copy")
         case .IDC_FIND:
             return NSLocalizedString("settings.shortcuts.command.findOnPage", value: "Find", comment: "Shortcuts settings - Command title for finding text on the current page")
         case .IDC_FIND_NEXT:
@@ -678,9 +620,26 @@ private extension CommandWrapper {
         case .PHI_TOGGLE_SIDEBAR:
             return NSLocalizedString("settings.shortcuts.command.toggleSidebar", value: "Toggle Sidebar", comment: "Shortcuts settings - Command title for showing or hiding the sidebar")
         case .PHI_TOGGLE_CHATBAR:
-            return NSLocalizedString("settings.shortcuts.command.toggleChatbar", value: "Toggle Chatbar", comment: "Shortcuts settings - Command title for showing or hiding the Chatbar")
+            return NSLocalizedString("settings.shortcuts.command.toggleChatbar", value: "Toggle Chat Panel", comment: "Shortcuts settings - Command title for showing or hiding the chat panel")
+        case .PHI_SWITCH_CHAT_PANEL_AND_TAB:
+            return NSLocalizedString("app.viewMenu.switchChatPanelAndTab", value: "Switch Between Chat Panel and Tab", comment: "View menu and shortcuts - Go from the chat panel to the chat's own tab, or from a chat tab back to the tab whose chat panel shows it")
+        case .PHI_OPEN_CLIPBOARD: return MistAppID.clipboard.name
+        case .PHI_MAKE_PRIMARY_WINDOW:
+            return NSLocalizedString("settings.shortcuts.command.makePrimaryWindow", value: "Make Primary Window", comment: "Shortcuts settings title for making the focused window primary")
+        case .PHI_OPEN_DRIFTER: return MistAppID.drifter.name
+        case .PHI_NEW_DRIFTER_CHAT:
+            return NSLocalizedString("app.mainMenu.apps.newDrifterChat", value: "New Drifter Chat", comment: "Apps menu and shortcuts - Start a new empty Drifter chat")
+        case .PHI_OPEN_MAIL: return MistAppID.mail.name
         case .PHI_NEW_CONVERSATION:
-            return NSLocalizedString("settings.shortcuts.command.newConversation", value: "New Conversation", comment: "Shortcuts settings - Command title for starting a new conversation")
+            return NSLocalizedString("settings.shortcuts.command.newConversation", value: "New Chat", comment: "Shortcuts settings - Command title for starting a new chat")
+        case .PHI_DRIFTER_MODEL_MENU:
+            return NSLocalizedString("settings.shortcuts.command.drifterModelMenu", value: "Choose Model", comment: "Shortcuts settings - Command title for opening the model list of the Drifter composer being typed in")
+        case .PHI_DRIFTER_EFFORT_MENU:
+            return NSLocalizedString("settings.shortcuts.command.drifterEffortMenu", value: "Choose Effort", comment: "Shortcuts settings - Command title for opening the reasoning effort list of the Drifter composer being typed in")
+        case .PHI_DRIFTER_PREVIOUS_MARKER:
+            return NSLocalizedString("settings.shortcuts.command.drifterPreviousMarker", value: "Previous Marker", comment: "Shortcuts settings - Command title for jumping to the previous named marker in a Drifter chat")
+        case .PHI_DRIFTER_NEXT_MARKER:
+            return NSLocalizedString("settings.shortcuts.command.drifterNextMarker", value: "Next Marker", comment: "Shortcuts settings - Command title for jumping to the next named marker in a Drifter chat")
         case .IDC_HOME:
             return NSLocalizedString("settings.shortcuts.command.goHome", value: "Home", comment: "Shortcuts settings - Command title for opening the home page")
         case .IDC_BACK:
@@ -725,8 +684,6 @@ private extension CommandWrapper {
             return NSLocalizedString("settings.shortcuts.command.duplicateTab", value: "Duplicate Tab", comment: "Shortcuts settings - Command title for duplicating the current tab")
         case .IDC_WINDOW_MUTE_SITE:
             return NSLocalizedString("settings.shortcuts.command.muteSite", value: "Mute Site", comment: "Shortcuts settings - Command title for muting audio from the current site")
-        case .PHI_FARRINGDON_TOGGLE:
-            return NSLocalizedString("settings.shortcuts.command.organizeTabsWithAI", value: "Organize Tabs with AI", comment: "Shortcuts settings - Command title for organizing tabs with AI")
         case .IDC_TAB_SEARCH:
             return NSLocalizedString("settings.shortcuts.command.searchTabs", value: "Tab Search", comment: "Shortcuts settings - Command title for searching open tabs")
         case .PHI_SELECT_NEXT_SPACE:

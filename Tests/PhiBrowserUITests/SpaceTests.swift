@@ -57,7 +57,7 @@ final class SpaceTests: XCTestCase {
     /// and Spaces that don't cleanly tear down (a deleted profile lingers in the
     /// list, etc.), so a shared instance accumulates state and lets one test's
     /// crash cascade into the next. A per-test launch keeps every test
-    /// independent. The cold start (Chromium + Sentinel + bridge warm-up) is the
+    /// independent. The cold start (Chromium + bridge warm-up) is the
     /// price of that isolation.
     ///
     /// `--user-data-dir` isolates both the Chromium profile tree and native
@@ -88,7 +88,7 @@ final class SpaceTests: XCTestCase {
         self.app = app
 
         let window = app.windows.firstMatch
-        // Cold launch is slow: Chromium cold start + session restore + Sentinel
+        // Cold launch is slow: Chromium cold start + session restore
         // can take well over 45s.
         XCTAssertTrue(window.waitForExistence(timeout: 120),
                       "Main window did not appear (Phi cold start + session restore can be slow)")
@@ -169,8 +169,9 @@ final class SpaceTests: XCTestCase {
         // it must still be a normal tab when we bookmark it.
         let bookmarksBefore = sidebarBookmarks().count
         try runStep("Add the tab to this Space's bookmarks") {
-            try self.rightClickFocusedSidebarTab()
-            try self.clickMenuItem(matching: ["Add to Bookmark", "Add to Bookmark Bar"])
+            self.app.typeKey("d", modifierFlags: .command)
+            // ⌘D also opens the new bookmark's editor.
+            self.app.typeKey(.escape, modifierFlags: [])
         }
         XCTAssertTrue(waitForCount(of: sidebarBookmarks(), equalTo: bookmarksBefore + 1, timeout: 15),
                       "Adding a bookmark should add one 'sidebarBookmark' row")

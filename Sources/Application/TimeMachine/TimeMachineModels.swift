@@ -47,30 +47,8 @@ struct TimeMachineRollbackPolicy: Codable, Equatable {
         self.rollbackAppBundleName = rollbackAppBundleName
     }
 
-    func shouldCreateBackup(
-        currentVersion: String,
-        currentBuild: Int,
-        triggerMode: TimeMachineBackupTriggerMode = .current
-    ) -> Bool {
-        switch triggerMode {
-        case .build:
-            return currentBuild == backupTriggerBuild
-        case .version:
-            return currentVersion == backupTriggerVersion
-        }
-    }
-}
-
-enum TimeMachineBackupTriggerMode: Equatable {
-    case build
-    case version
-
-    static var current: TimeMachineBackupTriggerMode {
-        #if NIGHTLY_BUILD
-        return .build
-        #else
-        return .version
-        #endif
+    func shouldCreateBackup(currentBuild: Int) -> Bool {
+        currentBuild == backupTriggerBuild
     }
 }
 
@@ -96,18 +74,9 @@ struct TimeMachineCatalog: Codable, Equatable {
         completedBackups.contains { $0.backupTriggerBuild == triggerBuild }
     }
 
-    func hasCompletedBackup(creatingVersion: String) -> Bool {
-        completedBackups.contains { $0.creatingVersion == creatingVersion }
-    }
-
     func hasHandledBackup(triggerBuild: Int) -> Bool {
         hasCompletedBackup(triggerBuild: triggerBuild)
             || suppressedBackupTriggers.contains { $0.backupTriggerBuild == triggerBuild }
-    }
-
-    func hasHandledBackup(creatingVersion: String) -> Bool {
-        hasCompletedBackup(creatingVersion: creatingVersion)
-            || suppressedBackupTriggers.contains { $0.creatingVersion == creatingVersion }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -196,7 +165,7 @@ struct TimeMachineBackupRecord: Codable, Equatable, Identifiable {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy.M.d"
-        return "Phi \(rollbackVersion) (\(rollbackBuild)) on \(formatter.string(from: createdAt))"
+        return "Mist \(rollbackVersion) (\(rollbackBuild)) on \(formatter.string(from: createdAt))"
     }
 }
 
@@ -330,66 +299,6 @@ struct TimeMachineRestorePreparationProgress: Equatable {
         self.stage = stage
         self.fractionCompleted = fractionCompleted.map { min(max($0, 0), 1) }
     }
-}
-
-struct TimeMachineBackupTrace: Codable, Equatable {
-    enum Result: String, Codable {
-        case succeeded
-        case failed
-    }
-
-    let result: Result
-    let backupID: UUID
-    let bundleIdentifier: String
-    let currentVersion: String
-    let currentBuild: Int
-    let backupTriggerBuild: Int
-    let rollbackVersion: String
-    let rollbackBuild: Int
-    let includeChromiumData: Bool
-    let duration: TimeInterval
-    let snapshotSizeBytes: UInt64?
-    let errorDescription: String?
-    let errorType: String?
-}
-
-struct TimeMachineRestorePreparationTrace: Codable, Equatable {
-    enum Result: String, Codable {
-        case succeeded
-        case failed
-    }
-
-    let result: Result
-    let operationID: UUID
-    let backupID: UUID
-    let bundleIdentifier: String
-    let rollbackVersion: String
-    let rollbackBuild: Int
-    let includeChromiumData: Bool
-    let duration: TimeInterval
-    let lastStage: TimeMachineRestorePreparationStage
-    let packageSizeBytes: UInt64?
-    let operationSizeBytes: UInt64?
-    let errorDescription: String?
-    let errorType: String?
-}
-
-struct TimeMachineRestoreRecoveryTrace: Codable, Equatable {
-    enum Status: String, Codable {
-        case launched
-        case blocked
-        case markedFailed
-        case inspectionFailed
-    }
-
-    let status: Status
-    let operationID: UUID?
-    let bundleIdentifier: String
-    let phase: TimeMachineRestorePhase?
-    let hasStartedDestructiveSwap: Bool?
-    let reason: String?
-    let errorDescription: String?
-    let errorType: String?
 }
 
 enum TimeMachineRestorePhase: String, Codable, CaseIterable {

@@ -8,8 +8,6 @@ import AppKit
 import Carbon.HIToolbox
 
 struct Shortcuts {
-    let command: CommandWrapper
-    let key: ShortcutsKey
 }
 
 // chrome/app/chrome_command_ids.h. The IDC_* raw values are transcribed by
@@ -124,7 +122,6 @@ enum CommandWrapper: Int, Equatable {
     case IDC_DEBUG_PRINT_VIEW_TREE_DETAILS = 52512
 
     // Help
-    case IDC_FEEDBACK                = 40008
     case IDC_HELP_PAGE_VIA_MENU      = 40020
     
     
@@ -145,17 +142,24 @@ enum CommandWrapper: Int, Equatable {
     case PHI_SELECT_SPACE_6          = 90016
     case PHI_SELECT_SPACE_7          = 90017
     case PHI_SELECT_SPACE_8          = 90018
-    case PHI_FARRINGDON_TOGGLE       = 90019
     case PHI_COPY_URL                = 90020
     case PHI_TOGGLE_READER           = 90021
-    case PHI_NEW_KIOSK_WINDOW        = 90022
     case PHI_NEW_INCOGNITO_SPACE     = 90023
     case PHI_SHARE_PAGE              = 90024
-    case PHI_KIOSK_OPEN_IN_SPACE     = 90025
-    case PHI_KIOSK_CHOOSE_SPACE      = 90026
-    case PHI_SAVE_FOR_LATER          = 90027
+    case PHI_PEEK_OPEN_IN_SPACE      = 90025
     case PHI_CAPTURE_FULL_PAGE       = 90028
     case PHI_CAPTURE_AREA            = 90029
+    case PHI_ALTERNATE_NEW_TAB       = 90030
+    case PHI_OPEN_CLIPBOARD          = 90036
+    case PHI_OPEN_DRIFTER            = 90037
+    case PHI_MAKE_PRIMARY_WINDOW     = 90038
+    case PHI_NEW_DRIFTER_CHAT        = 90039
+    case PHI_SWITCH_CHAT_PANEL_AND_TAB = 90040
+    case PHI_OPEN_MAIL               = 90031
+    case PHI_DRIFTER_MODEL_MENU      = 90032
+    case PHI_DRIFTER_EFFORT_MENU     = 90033
+    case PHI_DRIFTER_PREVIOUS_MARKER = 90034
+    case PHI_DRIFTER_NEXT_MARKER     = 90035
 
     // System Preserved
     case IDS_HIDE_OTHERS_MAC         = 110
@@ -627,7 +631,6 @@ extension Shortcuts {
         .IDC_CLOSE_TAB: .init(characters: "w", modifiers: .command),
 //        .IDC_SAVE_PAGE: .init(characters: "s", modifiers: .command),
         .IDC_PRINT: .init(characters: "p", modifiers: .command),
-        .IDC_BASIC_PRINT: .init(characters: "p", modifiers: [.command, .option]),
 
         // Edit
         .IDC_CONTENT_CONTEXT_UNDO: .init(characters: "z", modifiers: .command),
@@ -640,102 +643,47 @@ extension Shortcuts {
         .IDC_FIND: .init(characters: "f", modifiers: .command),
         .IDC_FIND_NEXT: .init(characters: "g", modifiers: .command),
         .IDC_FIND_PREVIOUS: .init(characters: "g", modifiers: [.command, .shift]),
-        .IDC_FOCUS_SEARCH: .init(characters: "f", modifiers: [.command, .option]),
 
         // View
         .IDC_SHOW_BOOKMARK_BAR: .init(characters: "b", modifiers: [.command, .shift]),
-        .IDC_TOGGLE_FULLSCREEN_TOOLBAR: .init(characters: "f", modifiers: [.command, .shift]),
-        .IDC_STOP: .init(characters: ".", modifiers: .command),
         .IDC_RELOAD: .init(characters: "r", modifiers: .command),
         .IDC_RELOAD_BYPASSING_CACHE: .init(characters: "r", modifiers: [.command, .shift]),
-        .IDC_FULLSCREEN: .init(characters: "f", modifiers: [.command, .control]),
         .IDC_ZOOM_NORMAL: .init(characters: "0", modifiers: .command),
-        .IDC_ZOOM_PLUS: .init(characters: "+", modifiers: .command),
+        .IDC_ZOOM_PLUS: .init(characters: "=", modifiers: .command),
         .IDC_ZOOM_MINUS: .init(characters: "-", modifiers: .command),
-        .IDC_VIEW_SOURCE: .init(characters: "u", modifiers: [.command, .option]),
         .IDC_DEV_TOOLS: .init(characters: "i", modifiers: [.command, .option]),
-        .IDC_DEV_TOOLS_INSPECT: .init(characters: "c", modifiers: [.command, .option]),
-        .IDC_DEV_TOOLS_CONSOLE: .init(characters: "j", modifiers: [.command, .option]),
-
-        // History
-        .IDC_HOME: .init(characters: "h", modifiers: [.command, .shift]),
-        .IDC_BACK: .init(characters: "[", modifiers: .command),
-        .IDC_FORWARD: .init(characters: "]", modifiers: .command),
-        .IDC_SHOW_HISTORY: .init(characters: "y", modifiers: .command),
 
         // Bookmarks
         .IDC_SHOW_BOOKMARK_MANAGER: .init(characters: "b", modifiers: [.command, .option]),
         .IDC_BOOKMARK_THIS_TAB: .init(characters: "d", modifiers: .command),
-        .IDC_BOOKMARK_ALL_TABS: .init(characters: "d", modifiers: [.command, .shift]),
-
-        // Window
-        .IDC_MINIMIZE_WINDOW: .init(characters: "m", modifiers: .command),
-        .IDC_SHOW_DOWNLOADS: .init(characters: "j", modifiers: [.command, .shift]),
 
         // Tab
-        // AppKit events carry Shift in printable characters. Keep Shift in the
-        // stored identity for display, but store the actual shifted character so
-        // `menuKeyEquivalent` can remove the modifier without guessing a layout.
-        .IDC_SELECT_NEXT_TAB: .init(characters: "}", modifiers: [.command, .shift]),
-        .IDC_SELECT_PREVIOUS_TAB: .init(characters: "{", modifiers: [.command, .shift]),
-        .IDC_SELECT_TAB_0: .init(characters: "1", modifiers: .command),
-        .IDC_SELECT_TAB_1: .init(characters: "2", modifiers: .command),
-        .IDC_SELECT_TAB_2: .init(characters: "3", modifiers: .command),
-        .IDC_SELECT_TAB_3: .init(characters: "4", modifiers: .command),
-        .IDC_SELECT_TAB_4: .init(characters: "5", modifiers: .command),
-        .IDC_SELECT_TAB_5: .init(characters: "6", modifiers: .command),
-        .IDC_SELECT_TAB_6: .init(characters: "7", modifiers: .command),
-        .IDC_SELECT_TAB_7: .init(characters: "8", modifiers: .command),
-        .IDC_SELECT_LAST_TAB: .init(characters: "9", modifiers: .command),
+        .IDC_DUPLICATE_TAB: .init(characters: "y", modifiers: .command),
         .IDC_TAB_SEARCH: .init(characters: "a", modifiers: [.command, .shift]),
 
-        // Help
-        .IDC_FEEDBACK: .init(characters: "i", modifiers: [.command, .option, .shift]),
-        .IDC_HELP_PAGE_VIA_MENU: .init(characters: "?", modifiers: .command),
-        
-        
         // PHI
         .PHI_TOGGLE_SIDEBAR: .init(characters: "s", modifiers: [.command]),
-        .PHI_TOGGLE_CHATBAR: .init(characters: "s", modifiers: [.command, .shift]),
+        .PHI_TOGGLE_CHATBAR: .init(characters: "e", modifiers: .command),
+        // ⇧⌘F was Chromium's Always Show Toolbar in Full Screen, which Mist disables.
+        .PHI_SWITCH_CHAT_PANEL_AND_TAB: .init(characters: "f", modifiers: [.command, .shift]),
         .PHI_TAB_SWITCHER_FORWARD: .init(characters: "\t", modifiers: .control),
         .PHI_TAB_SWITCHER_BACKWARD: .init(characters: "\t", modifiers: [.control, .shift]),
-        .PHI_NEW_CONVERSATION: .init(characters: "o", modifiers: [.command, .shift]),
-        .PHI_SELECT_NEXT_SPACE: .init(characters: "\u{F703}", modifiers: [.command, .option]),
-        .PHI_SELECT_PREVIOUS_SPACE: .init(characters: "\u{F702}", modifiers: [.command, .option]),
-        .PHI_SELECT_SPACE_0: .init(characters: "1", modifiers: .control),
-        .PHI_SELECT_SPACE_1: .init(characters: "2", modifiers: .control),
-        .PHI_SELECT_SPACE_2: .init(characters: "3", modifiers: .control),
-        .PHI_SELECT_SPACE_3: .init(characters: "4", modifiers: .control),
-        .PHI_SELECT_SPACE_4: .init(characters: "5", modifiers: .control),
-        .PHI_SELECT_SPACE_5: .init(characters: "6", modifiers: .control),
-        .PHI_SELECT_SPACE_6: .init(characters: "7", modifiers: .control),
-        .PHI_SELECT_SPACE_7: .init(characters: "8", modifiers: .control),
-        .PHI_SELECT_SPACE_8: .init(characters: "9", modifiers: .control),
-        .PHI_FARRINGDON_TOGGLE: .init(characters: "g", modifiers: [.control, .shift]),
         .PHI_COPY_URL: .init(characters: "c", modifiers: [.command, .shift]),
-        // Phi owns Cmd-Option-R for Reader View. The Phi Framework omits
-        // Chromium's reading-mode alias; Cmd-Shift-R remains hard reload.
-        .PHI_TOGGLE_READER: .init(characters: "r", modifiers: [.command, .option]),
-        .PHI_NEW_KIOSK_WINDOW: .init(characters: "n", modifiers: [.command, .option]),
-        .PHI_NEW_INCOGNITO_SPACE: .init(characters: "n", modifiers: [.control, .shift]),
-        .PHI_SHARE_PAGE: .init(characters: "s", modifiers: [.control, .option]),
         // Printable shortcuts store the shifted character, as shortcut recording does.
         .PHI_CAPTURE_FULL_PAGE: .init(characters: "!", modifiers: [.command, .shift]),
         .PHI_CAPTURE_AREA: .init(characters: "@", modifiers: [.command, .shift]),
-        .PHI_KIOSK_OPEN_IN_SPACE: .init(characters: "o", modifiers: .command),
-        .PHI_KIOSK_CHOOSE_SPACE: .init(characters: "o", modifiers: [.command, .shift]),
-        // Cmd-S is the sidebar and Cmd-Shift-S the chatbar; Cmd-Opt-S keeps
-        // the save family together without displacing either.
-        .PHI_SAVE_FOR_LATER: .init(characters: "s", modifiers: [.command, .option]),
+        .PHI_ALTERNATE_NEW_TAB: .init(characters: "t", modifiers: [.command, .option]),
+        // Only while a Drifter composer has focus.
+        .PHI_DRIFTER_MODEL_MENU: .init(characters: "m", modifiers: .command),
+        .PHI_DRIFTER_EFFORT_MENU: .init(characters: ".", modifiers: .command),
+        .PHI_PEEK_OPEN_IN_SPACE: .init(characters: "o", modifiers: .command),
+
+        // Apps
+        .PHI_OPEN_DRIFTER: .init(characters: "d", modifiers: [.command, .shift]),
 
         // System Preserved Shortcuts
-        .IDS_HIDE_OTHERS_MAC: .init(characters: "h", modifiers: [.command, .option]),
         .IDS_CLOSE_ALL_WINDOWS_MAC: .init(characters: "w", modifiers: [.command, .option, .shift]), // alternate
-        .IDS_PASTE_MATCH_STYLE_MAC: .init(characters: "v", modifiers: [.command, .option]),         // alternate
-        .IDS_EDIT_USE_SELECTION_MAC: .init(characters: "e", modifiers: [.command]),
+        .IDS_PASTE_MATCH_STYLE_MAC: .init(characters: "v", modifiers: [.command, .shift]),          // alternate
         .IDS_EDIT_JUMP_TO_SELECTION_MAC: .init(characters: "j", modifiers: [.command]),
-        .IDS_EDIT_SHOW_SPELLING_GRAMMAR_MAC: .init(characters: ":", modifiers: [.command]),
-        .IDS_EDIT_CHECK_DOCUMENT_MAC: .init(characters: ";", modifiers: [.command]),
-        .IDC_HIDE_APP: .init(characters: "h", modifiers: [.command]),
     ]
 }

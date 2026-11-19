@@ -13,14 +13,6 @@ enum DownloadState: Int {
     case cancelled = 2
     case interrupted = 3
     
-    var displayName: String {
-        switch self {
-        case .inProgress: return NSLocalizedString("downloads.list.state.downloading", value: "Downloading", comment: "Download state")
-        case .complete: return NSLocalizedString("downloads.list.state.completed", value: "Completed", comment: "Download state")
-        case .cancelled: return NSLocalizedString("downloads.list.state.cancelled", value: "Cancelled", comment: "Download state")
-        case .interrupted: return NSLocalizedString("downloads.list.state.failed", value: "Failed", comment: "Download state")
-        }
-    }
 }
 
 /// Swift model for download item
@@ -190,7 +182,6 @@ class DownloadItem: ObservableObject, Identifiable {
         self.targetFilePath = wrapper.targetFilePath
     }
 
-    #if DEBUG
     /// Mock initializer for preview and testing
     init(id: String, fileName: String, url: String, state: DownloadState = .complete, 
          percentComplete: Int = 100, totalBytes: Int64 = 0, receivedBytes: Int64 = 0) {
@@ -218,7 +209,6 @@ class DownloadItem: ObservableObject, Identifiable {
         self.insecureDownloadStatus = 0
         self.targetFilePath = "/Downloads/\(fileName)"
     }
-    #endif
 }
 
 extension DownloadItem {
@@ -257,11 +247,6 @@ class DownloadsManager: ObservableObject {
     /// Number of currently active downloads.
     var activeDownloadCount: Int {
         downloads.filter { $0.state == .inProgress }.count
-    }
-    
-    /// Whether there are any active downloads.
-    var hasActiveDownloads: Bool {
-        activeDownloadCount > 0
     }
     
     /// Non-nil for aggregate downloads in Library and the All Downloads window.
@@ -531,6 +516,16 @@ class DownloadsManager: ObservableObject {
         }
     }
     
+    var clearableDownloads: [DownloadItem] {
+        downloads.filter { $0.state != .inProgress && $0.safetyState == .normal }
+    }
+
+    func clearFinishedDownloads() {
+        for item in clearableDownloads {
+            removeDownload(item)
+        }
+    }
+
     func removeDownload(_ item: DownloadItem) {
         if profileIds != nil {
             ChromiumLauncher.sharedInstance().bridge?.removeDownload(withGuid: item.id, profileId: item.profileId)

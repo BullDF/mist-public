@@ -67,8 +67,11 @@ enum SearchTabsQueryMatcher {
         fields: inout Set<SearchTabsMatchedField>
     ) {
         guard let rawURL, !rawURL.isEmpty else { return }
-        let normalizedURL = rawURL.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-        if let host = URL(string: rawURL)?.host?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil),
+        guard let components = URLComponents(string: rawURL) else { return }
+        let path = components.percentEncodedPath.prefix { !";?#".contains($0) }
+        let searchableURL = (components.host ?? "") + path
+        let normalizedURL = searchableURL.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        if let host = components.host?.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil),
            host.contains(query) {
             record(score: hostContainsScore, field: hostField, bestScore: &bestScore, fields: &fields)
         } else if normalizedURL.contains(query) {

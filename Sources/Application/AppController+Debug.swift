@@ -7,18 +7,7 @@ import Foundation
 import SwiftUI
 import AppKit
 import WebKit
-private final class DebugWindowDelegate: NSObject, NSWindowDelegate {
-    var onClose: (() -> Void)?
-
-    func windowWillClose(_ notification: Notification) {
-        onClose?()
-    }
-}
-
 private enum DebugWindowStore {
-    static var sentryWindow: NSWindow?
-    static var sentryDelegate: DebugWindowDelegate?
-
     // Associated object keys for extension message debug panel
     nonisolated(unsafe) static var typeFieldKey: UInt8 = 0
     nonisolated(unsafe) static var requestIdFieldKey: UInt8 = 0
@@ -26,7 +15,6 @@ private enum DebugWindowStore {
     nonisolated(unsafe) static var panelKey: UInt8 = 0
 }
 
-#if DEBUG
 /// State for the debug operating-mask preview toggle: which tab wears the
 /// mask, and the theme observers held while the preview is on.
 private enum OperatingMaskPreviewStore {
@@ -47,8 +35,7 @@ private enum ImagePreviewDebugSamples {
     private static func localItems() -> [ImagePreviewItem] {
         let localFiles: [(path: String, title: String)] = [
             ("build-scripts/background@2x.png", "Local Debug Background"),
-            ("Resources/Assets.xcassets/AppIconCanary.appiconset/512@2x.png", "Local App Icon 512@2x"),
-            ("Resources/Assets.xcassets/oobe-pre-animation-frames/oobe-pre-1.imageset/oobe-pre-1.jpg", "Local OOBE Frame")
+            ("Resources/PhiIcon.icon/Assets/Mist.png", "Local App Icon"),
         ]
 
         return localFiles.compactMap { sample in
@@ -86,7 +73,6 @@ private enum ImagePreviewDebugSamples {
         }
     }
 }
-#endif
 
 extension AppController {
     private static let debugMenuThemes: [Theme] = Theme.builtInThemes
@@ -97,32 +83,22 @@ extension AppController {
         debugMenuItem.tag = AppController.debugMenuItemTag
         debugMenuItem.submenu = debugMenu
 
-        let debugSentryItem = NSMenuItem(title: "Debug Sentry",
-                                         action: #selector(showSentryDebugWindow(_:)),
-                                         keyEquivalent: "")
-        debugSentryItem.target = self
-        debugMenu.addItem(debugSentryItem)
-        
         let deeplinkItem = NSMenuItem(title: "Trigger Deeplink...",
                                       action: #selector(triggerDeeplink(_:)),
                                       keyEquivalent: "")
         deeplinkItem.target = self
         debugMenu.addItem(deeplinkItem)
-        
+
         let clearDataMenuItem = NSMenuItem(title: "Clear Data", action: nil, keyEquivalent: "")
         let clearDataSubmenu = NSMenu(title: "ClearData")
-        
+
         let clearUserDataItem = NSMenuItem(title: "User Data", action: #selector(clearAllUserData(_:)), keyEquivalent: "")
         clearUserDataItem.target = self
         clearDataSubmenu.addItem(clearUserDataItem)
-        
-        let clearLoginStatusItem = NSMenuItem(title: "Login Status", action: #selector(clearLoginStatus(_:)), keyEquivalent: "")
-        clearLoginStatusItem.target = self
-        clearDataSubmenu.addItem(clearLoginStatusItem)
-        
+
         clearDataMenuItem.submenu = clearDataSubmenu
         debugMenu.addItem(clearDataMenuItem)
-        
+
         let sendCardItem = NSMenuItem(
             title: "Send Test Notification Card",
             action: #selector(sendTestNotificationCard(_:)),
@@ -139,7 +115,6 @@ extension AppController {
         sendExtMsgItem.target = self
         debugMenu.addItem(sendExtMsgItem)
 
-#if DEBUG
         let imagePreviewDemoItem = NSMenuItem(
             title: "Open Image Preview Demo",
             action: #selector(openImagePreviewDemo(_:)),
@@ -147,14 +122,6 @@ extension AppController {
         )
         imagePreviewDemoItem.target = self
         debugMenu.addItem(imagePreviewDemoItem)
-
-        let simulateAgentItem = NSMenuItem(
-            title: "Simulate Agent Space Task",
-            action: #selector(simulateAgentTask(_:)),
-            keyEquivalent: ""
-        )
-        simulateAgentItem.target = self
-        debugMenu.addItem(simulateAgentItem)
 
         let maskPreviewItem = NSMenuItem(
             title: "Preview Agent Operating Mask",
@@ -164,58 +131,10 @@ extension AppController {
         maskPreviewItem.target = self
         debugMenu.addItem(maskPreviewItem)
 
-        let fakeDeletionItem = NSMenuItem(
-            title: "Account Deletion Fake Responses",
-            action: nil,
-            keyEquivalent: ""
-        )
-        let fakeDeletionMenu = NSMenu(title: "Account Deletion Fake Responses")
-
-        let fakeDeletionOffItem = NSMenuItem(
-            title: "Off (Real Network)",
-            action: #selector(selectAccountDeletionFakeScenario(_:)),
-            keyEquivalent: ""
-        )
-        fakeDeletionOffItem.target = self
-        fakeDeletionOffItem.state = .on
-        fakeDeletionMenu.addItem(fakeDeletionOffItem)
-        fakeDeletionMenu.addItem(.separator())
-
-        for scenario in AccountDeletionFakeScenario.allCases {
-            let item = NSMenuItem(
-                title: scenario.menuTitle,
-                action: #selector(selectAccountDeletionFakeScenario(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = scenario
-            fakeDeletionMenu.addItem(item)
-        }
-
-        fakeDeletionItem.submenu = fakeDeletionMenu
-        debugMenu.addItem(fakeDeletionItem)
-
-        let credentialPromptItem = NSMenuItem(title: "Credential Prompts", action: nil, keyEquivalent: "")
-        let credentialPromptSubmenu = NSMenu(title: "Credential Prompts")
-        for (title, kind) in [("Approval — Fill", "fill"),
-                              ("Approval — Run", "run"),
-                              ("Approval — Reveal", "reveal"),
-                              ("Vault Unlock", "unlock")] {
-            let item = NSMenuItem(title: title,
-                                  action: #selector(debugShowCredentialPrompt(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = kind
-            credentialPromptSubmenu.addItem(item)
-        }
-        credentialPromptItem.submenu = credentialPromptSubmenu
-        debugMenu.addItem(credentialPromptItem)
-#endif
-        
         let themeMenuItem = NSMenuItem(title: "Debug Theme", action: nil, keyEquivalent: "")
         let themeSubmenu = NSMenu(title: "Debug Theme")
         themeSubmenu.delegate = self
-        
+
         let themsTitle = NSMenuItem(title: "Themes", action: nil, keyEquivalent: "")
         themsTitle.isEnabled = false
         themeSubmenu.addItem(themsTitle)
@@ -226,32 +145,32 @@ extension AppController {
             item.representedObject = theme.id
             themeSubmenu.addItem(item)
         }
-        
+
         themeSubmenu.addItem(NSMenuItem.separator())
         let appearance = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
         appearance.isEnabled = false
         themeSubmenu.addItem(appearance)
-        
+
         let system = NSMenuItem(title: "System", action: #selector(switchAppearance(_:)), keyEquivalent: "")
         system.representedObject = "system"
         system.target = self
         themeSubmenu.addItem(system)
-        
+
         let light = NSMenuItem(title: "Light", action: #selector(switchAppearance(_:)), keyEquivalent: "")
         light.representedObject = "light"
         light.target = self
         themeSubmenu.addItem(light)
-        
+
         let dark = NSMenuItem(title: "Dark", action: #selector(switchAppearance(_:)), keyEquivalent: "")
         dark.representedObject = "dark"
         dark.target = self
         themeSubmenu.addItem(dark)
-        
+
         themeMenuItem.submenu = themeSubmenu
         debugMenu.addItem(themeMenuItem)
-        
+
         debugMenu.addItem(NSMenuItem.separator())
-        
+
         let openUserDirItem = NSMenuItem(
             title: "Open User Data Directory",
             action: #selector(openUserDataDirectory(_:)),
@@ -259,42 +178,41 @@ extension AppController {
         )
         openUserDirItem.target = self
         debugMenu.addItem(openUserDirItem)
-        
+
         return debugMenuItem
     }
-    
+
     // MARK: - Theme Switching Actions
-    
+
     private var activeBrowserThemeContext: BrowserThemeContext? {
         NSApp.keyWindow?.browserThemeContext
     }
-    
+
     private var activeBrowserState: BrowserState? {
         (NSApp.keyWindow?.windowController as? SpaceSessionController)?.browserState
     }
-    
+
     private var activeBrowserIsIncognito: Bool {
         activeBrowserState?.isIncognito == true
     }
-    
+
     private func resolvedDebugTheme(for themeId: String) -> Theme {
         Theme.builtInThemes.first(where: { $0.id == themeId }) ?? .default
     }
-    
-    @objc func switchToTheme(_ sender: NSMenuItem) {
+
+    @MainActor @objc func switchToTheme(_ sender: NSMenuItem) {
         guard let themeId = sender.representedObject as? String else { return }
         let theme = resolvedDebugTheme(for: themeId)
-        
+
         ThemeManager.shared.registerTheme(theme)
-        
+
         if let context = activeBrowserThemeContext {
             context.setTheme(theme)
             return
         }
     }
-    
-    
-    @objc func switchAppearance(_ sender: NSMenuItem) {
+
+    @MainActor @objc func switchAppearance(_ sender: NSMenuItem) {
         guard let appearance = sender.representedObject as? String else { return }
         let choice: UserAppearanceChoice
         switch appearance {
@@ -305,7 +223,7 @@ extension AppController {
         default:
             choice = .system
         }
-        
+
         if let context = activeBrowserThemeContext {
             if activeBrowserIsIncognito {
                 context.setUserAppearanceChoice(.dark)
@@ -314,14 +232,14 @@ extension AppController {
             }
             return
         }
-        
+
         ThemeManager.shared.setUserAppearanceChoice(choice)
     }
-    
+
     @objc func sendTestNotificationCard(_ sender: Any?) {
         func sendTestMessage(title: String, buttonTitle: String, description: String) {
             let messageId = "debug-\(UUID().uuidString)"
-            
+
             let innerPayload: [String: Any] = [
                 "type": "agent_task_request",
                 "task_id": messageId,
@@ -332,18 +250,18 @@ extension AppController {
                 "expires_at": Int64((Date().timeIntervalSince1970 + 60) * 1000),
                 "button_title": buttonTitle
             ]
-            
+
             let envelope: [String: Any] = [
                 "action": "notification.card.request",
                 "messageId": messageId,
                 "payload": innerPayload
             ]
-            
+
             guard let jsonData = try? JSONSerialization.data(withJSONObject: envelope),
                   let jsonString = String(data: jsonData, encoding: .utf8) else {
                 return
             }
-            
+
             let requestId = "debug-request-\(messageId)"
             _ = PhiChromiumCoordinator.shared.handleExtensionMessage(
                 "notification",
@@ -352,19 +270,19 @@ extension AppController {
                 senderId: "debug-extension"
             )
         }
-        
+
         sendTestMessage(
             title: "Debug Notification 1",
             buttonTitle: "Run",
             description: "This is a test notification card for debugging purposes 1."
         )
-        
+
         sendTestMessage(
             title: "Debug Notification 2",
             buttonTitle: "Search XXXXXXXXXXXXXXXXXXXXX",
             description: "This is a test notification card for debugging purposes. Long Text Long Text Long Text Long Text Long Text Long Text Long Text Long Text Long Text Long Text Long Text Long Text Long Text"
         )
-        
+
         sendTestMessage(
             title: "Debug Notification 3",
             buttonTitle: "Go",
@@ -372,7 +290,6 @@ extension AppController {
         )
     }
 
-#if DEBUG
     @MainActor
     @objc func openImagePreviewDemo(_ sender: Any?) {
         let controller = ImagePreviewWindowController(
@@ -381,8 +298,7 @@ extension AppController {
         )
         controller.showWindow(sender)
     }
-#endif
-    
+
     @MainActor
     @objc func triggerDeeplink(_ sender: Any?) {
         let alert = NSAlert()
@@ -395,7 +311,7 @@ extension AppController {
         textField.stringValue = "phi://native/openpage?page=settings"
         textField.placeholderString = "Input deeplink to trigger"
         alert.accessoryView = textField
-        
+
         if alert.runModal() == .alertFirstButtonReturn {
             let urlString = textField.stringValue
             guard !urlString.isEmpty, let url = URL(string: urlString) else {
@@ -411,42 +327,7 @@ extension AppController {
             let _ = DeeplinkHandler.handle(url)
         }
     }
-    
-    @MainActor @objc func showSentryDebugWindow(_ sender: Any?) {
-        if let window = DebugWindowStore.sentryWindow {
-            window.makeKeyAndOrderFront(nil)
-            window.center()
-            return
-        }
 
-        let hostingController = ThemedHostingController(rootView: CrashSampleView())
-        let windowSize = NSSize(width: 560, height: 680)
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: windowSize),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Sentry Crash Samples"
-        window.contentViewController = hostingController
-        window.isReleasedWhenClosed = false
-        window.setContentSize(windowSize)
-        window.minSize = NSSize(width: 400, height: 480)
-
-        let delegate = DebugWindowDelegate()
-        delegate.onClose = {
-            DebugWindowStore.sentryWindow = nil
-            DebugWindowStore.sentryDelegate = nil
-        }
-        window.delegate = delegate
-
-        DebugWindowStore.sentryWindow = window
-        DebugWindowStore.sentryDelegate = delegate
-
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-    }
-    
     @MainActor
     @objc func showExtensionMessageDialog(_ sender: Any?) {
         let panel = NSPanel(
@@ -583,41 +464,8 @@ extension AppController {
     }
 
     @objc func openUserDataDirectory(_ sender: Any?) {
-        guard let url = AccountController.shared.account?.userDataStorage else { return }
+        let url = AccountController.shared.localDataAccount.userDataStorage
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
-    }
-
-    #if DEBUG
-    /// Routes the account deletion flow through the selected fake scenario
-    /// (or back to the real network) and moves the checkmark to the pick.
-    /// The selection is in-memory only, so every launch starts on Off.
-    @MainActor
-    @objc func selectAccountDeletionFakeScenario(_ sender: NSMenuItem) {
-        let scenario = sender.representedObject as? AccountDeletionFakeScenario
-        AccountDeletionFakeResponses.scenario = scenario
-        for item in sender.menu?.items ?? [] {
-            item.state = item == sender ? .on : .off
-        }
-        AppLogInfo("🗑️ [AccountDeletion] Fake responses: \(scenario.map { "\($0)" } ?? "off")")
-    }
-    #endif
-
-    #if DEBUG
-    /// Test harness: spawns a hidden agent Space for the first available profile
-    /// and drives AgentSpaceManager directly (no phi-agent / Kensington backend),
-    /// so the hidden-spawn, pip badge, and overlay can be exercised locally.
-    @MainActor
-    @objc func simulateAgentTask(_ sender: Any?) {
-        let profileName = ProfileManager.shared.profiles.first?.profileId ?? "Default"
-        let taskId = "debug-\(UUID().uuidString)"
-        AgentSpaceManager.shared.createAgentSpace(taskId: taskId, profileName: profileName) { spaceId, windowId in
-            guard let spaceId, windowId != nil else {
-                AppLogWarn("[AgentSpace][debug] simulate failed to spawn")
-                return
-            }
-            AppLogInfo("[AgentSpace][debug] simulated agent Space \(spaceId); switch to its pip to watch")
-            AgentSpaceManager.shared.setStatusCaption(taskId: taskId, caption: "Reading the page…")
-        }
     }
 
     /// Test harness for the operating-mask design: wears the real mask — the
@@ -676,56 +524,6 @@ extension AppController {
             windowId: windowId, themeColor: color, appearance: appearance)
     }
 
-    /// Test harness for the credential dialogs: runs the real coordinator flow
-    /// (so a remembered debug grant shows up — and is revocable — in Settings)
-    /// without needing an agent connection or a configured provider.
-    @MainActor
-    @objc func debugShowCredentialPrompt(_ sender: NSMenuItem) {
-        switch sender.representedObject as? String {
-        case "fill":
-            let approved = CredentialAccessCoordinator.shared.requestApproval(
-                agentName: "claude", scope: "github.com", kind: .fill,
-                purpose: "fill the password field on the GitHub sign-in page")
-            AppLogInfo("[Credentials][debug] fill prompt approved=\(approved)")
-        case "run":
-            let approved = CredentialAccessCoordinator.shared.requestApproval(
-                agentName: "deploy-bot", scope: "registry.npmjs.org", kind: .run,
-                purpose: "publish the package with npm publish")
-            AppLogInfo("[Credentials][debug] run prompt approved=\(approved)")
-        case "reveal":
-            let approved = CredentialAccessCoordinator.shared.requestApproval(
-                agentName: "An agent", scope: "github.com", kind: .reveal, purpose: nil)
-            AppLogInfo("[Credentials][debug] reveal prompt approved=\(approved)")
-        case "unlock":
-            let entered = CredentialAccessCoordinator.shared.promptForUnlock(
-                agentName: "claude", scope: "github.com")
-            AppLogInfo("[Credentials][debug] unlock prompt entered=\(entered != nil)")
-        default:
-            break
-        }
-    }
-    #endif
-    
-    @MainActor
-    @objc func clearLoginStatus(_ sender: Any?) {
-        guard showQuitAlert() else {
-            return
-        }
-        let dataStore = WKWebsiteDataStore.default()
-        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
-
-       
-        dataStore.fetchDataRecords(ofTypes: dataTypes) { records in
-            WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, for: records) {
-                AppLogDebug("✅ All WKWebView cookies, cache, and website data cleared.")
-            }
-            AuthManager.shared.clearLocalCredentials()
-            NSApp.terminate(nil)
-        }
-        
-        LoginController.shared.phase = .login
-    }
-
     @MainActor
     func showQuitAlert() -> Bool {
         let alert = NSAlert()
@@ -740,9 +538,9 @@ extension AppController {
 // MARK: - NSMenuDelegate for Theme Menu
 
 extension AppController {
-    func menuNeedsUpdate(_ menu: NSMenu) {
+    @MainActor func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu.title == "Debug Theme" else { return }
-        
+
         let context = NSApp.keyWindow?.browserThemeContext
         let isIncognito = activeBrowserIsIncognito
         let currentThemeId = context?.currentTheme.id ?? ThemeManager.shared.currentTheme.id

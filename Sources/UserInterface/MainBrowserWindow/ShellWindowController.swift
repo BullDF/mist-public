@@ -119,6 +119,7 @@ final class ShellWindow: NSWindow {
                 || item.action == #selector(ShellWindow.commandDispatchUsingKeyModifiers(_:)) else {
             return super.validateUserInterfaceItem(item)
         }
+        if let enabled = CommandDispatcher.nativePageZoomEnabled(item.tag, window: self) { return enabled }
         guard let target = commandTargetWindow else {
             // A dormant session's Browser is ~150 ms away; keep the items
             // usable and queue what is chosen.
@@ -348,7 +349,7 @@ final class ShellWindowController: NSObject, NSWindowDelegate {
     /// shell's own delegate callbacks are not enough: the reader and peek
     /// panels, the omnibox host and every child window Chromium parents
     /// here are windows of their own, so key leaving one of THEM for another
-    /// shell, a standalone Incognito or Kiosk window or another app — or
+    /// shell, a standalone Incognito window or another app — or
     /// coming straight back into one — never passes through the shell.
     ///
     /// Decided one turn after the notification, once AppKit has made the
@@ -440,7 +441,7 @@ final class ShellWindowController: NSObject, NSWindowDelegate {
         window.backgroundColor = NSColor.windowBackgroundColor
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.title = "Phi"
+        window.title = "Mist"
         window.isMovableByWindowBackground = true
         window.animationBehavior = .none
         // Chromium owns session restore and the slot owns frame continuity,

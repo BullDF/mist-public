@@ -29,6 +29,35 @@ final class AgentUserSpaceDriveRegistryTests: XCTestCase {
         XCTAssertTrue(AgentAnimationManager.shared.isActive(for: 11))
     }
 
+    /// A chat tab reloading for its new title goes over the app's own DevTools
+    /// session, which the browser reports like an agent's drive.
+    func testAppPageCommandDoesNotMaskTheTab() {
+        registry.appWillSendPageCommand(toTab: 11)
+        registry.didOperate(tabId: 11, windowId: 1, sessionId: 100)
+        registry.didStop(tabId: 11, sessionId: 100)
+
+        XCTAssertFalse(registry.isDriven(tabId: 11))
+        XCTAssertFalse(AgentAnimationManager.shared.isActive(for: 11))
+
+        registry.didOperate(tabId: 11, windowId: 1, sessionId: 200)
+        XCTAssertTrue(AgentAnimationManager.shared.isActive(for: 11),
+                      "one app command swallows one report, not a real driver's")
+    }
+
+    /// A driver already on the tab keeps reporting; only a new session's
+    /// report can be the app's.
+    func testAppPageCommandLeavesAnExistingDriverAlone() {
+        registry.didOperate(tabId: 11, windowId: 1, sessionId: 100)
+
+        registry.appWillSendPageCommand(toTab: 11)
+        registry.didOperate(tabId: 11, windowId: 1, sessionId: 100)
+        registry.didOperate(tabId: 11, windowId: 1, sessionId: 200)
+
+        registry.didStop(tabId: 11, sessionId: 100)
+        XCTAssertFalse(AgentAnimationManager.shared.isActive(for: 11),
+                       "session 200 was the app's command, not a second driver")
+    }
+
     func testSessionNamingAnotherTabMovesItsMask() {
         registry.didOperate(tabId: 11, windowId: 1, sessionId: 100)
         registry.didOperate(tabId: 12, windowId: 1, sessionId: 100)

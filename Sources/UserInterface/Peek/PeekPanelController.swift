@@ -222,6 +222,14 @@ final class PeekPanelController {
             isHovered = false
         }
 
+        /// A press that closes, expands or splits the peek takes the overlay
+        /// off screen under the pointer, so the button never sees its
+        /// `mouseExited` and came back hover-tinted with the next peek.
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { isHovered = false }
+        }
+
         override func viewDidChangeEffectiveAppearance() {
             super.viewDidChangeEffectiveAppearance()
             updateColors()
@@ -244,7 +252,8 @@ final class PeekPanelController {
         }
     }
 
-    /// Transparent strip to the right of the card holding the controls.
+    /// Transparent strip to the left of the card holding the controls, where
+    /// Mac apps keep their window controls.
     /// Hit-transparent where no button sits: the strip is page pane like any
     /// other area around the card, so clicks in the gaps must reach the
     /// dismiss monitor instead of dying on this view.
@@ -273,7 +282,7 @@ final class PeekPanelController {
 
     /// The card carries no chrome of its own (Arc's peek layout): the page
     /// fills it edge to edge and the controls live in a transparent strip the
-    /// panel window keeps to the card's right, over the page pane.
+    /// panel window keeps to the card's left, over the page pane.
     private static let controlGutterWidth: CGFloat = 44
     private static let controlButtonSize: CGFloat = 28
     private static let controlCornerRadius: CGFloat = 8
@@ -365,8 +374,8 @@ final class PeekPanelController {
 
         rootView.addSubview(containerView)
         containerView.snp.makeConstraints { make in
-            make.top.leading.bottom.equalToSuperview().inset(Self.shadowMargin)
-            make.trailing.equalToSuperview().inset(Self.shadowMargin + Self.controlGutterWidth)
+            make.top.trailing.bottom.equalToSuperview().inset(Self.shadowMargin)
+            make.leading.equalToSuperview().inset(Self.shadowMargin + Self.controlGutterWidth)
         }
 
         buildControls()
@@ -559,7 +568,7 @@ final class PeekPanelController {
     @objc private func readerButtonClicked(_ sender: Any?) {
         guard let tab = hostedTab, let browserState else { return }
         MainActor.assumeIsolated {
-            browserState.toggleReaderView(for: tab, from: .peekPanel)
+            browserState.toggleReaderView(for: tab)
         }
     }
 
@@ -863,7 +872,7 @@ final class PeekPanelController {
     private func buildControls() {
         rootView.addSubview(controlColumn)
         controlColumn.snp.makeConstraints { make in
-            make.top.trailing.equalToSuperview().inset(Self.shadowMargin)
+            make.top.leading.equalToSuperview().inset(Self.shadowMargin)
             make.width.equalTo(Self.controlGutterWidth)
         }
 
@@ -890,7 +899,7 @@ final class PeekPanelController {
             expandButton.setCustomTooltip {
                 CommandShortcutTooltipContent(
                     title: expandTooltip,
-                    command: .PHI_KIOSK_OPEN_IN_SPACE
+                    command: .PHI_PEEK_OPEN_IN_SPACE
                 )
             }
         }
@@ -972,14 +981,14 @@ final class PeekPanelController {
         // window) with a proportional side margin.
         let insetX = max(Self.minPaneInset, cardRect.width * Self.paneInsetRatio)
         let card = cardRect.insetBy(dx: insetX, dy: Self.paneVerticalInset)
-        // The overlay spans the card, the control gutter to its right, and the
+        // The overlay spans the card, the control gutter to its left, and the
         // shadow margin around the lot — the card view sits back inside it at
         // exactly the inset it had before there was a shadow, so the peek
         // keeps its place on the page. The gutter is taken out of the card's
-        // own right margin; a margin too narrow to hold it narrows the card
+        // own left margin; a margin too narrow to hold it narrows the card
         // instead of pushing the controls off the page pane.
-        let maxX = min(card.maxX + Self.controlGutterWidth + Self.shadowMargin, cardRect.maxX)
-        let originX = card.minX - Self.shadowMargin
+        let originX = max(card.minX - Self.controlGutterWidth - Self.shadowMargin, cardRect.minX)
+        let maxX = card.maxX + Self.shadowMargin
         rootView.setScreenFrame(CGRect(x: originX,
                               y: card.minY - Self.shadowMargin,
                               width: max(maxX - originX, Self.controlGutterWidth),
@@ -998,7 +1007,9 @@ final class PeekPanelController {
     /// flight runs on the frame `layoutOnAnchor` has only just set.
     private var cardScreenRect: NSRect {
         var rect = rootView.screenFrame.insetBy(dx: Self.shadowMargin, dy: Self.shadowMargin)
-        rect.size.width = max(0, rect.width - Self.controlGutterWidth)
+        let gutter = min(Self.controlGutterWidth, max(0, rect.width))
+        rect.origin.x += gutter
+        rect.size.width -= gutter
         return rect
     }
 
@@ -1087,7 +1098,7 @@ final class PeekPanelController {
         }
         guard let eventKeys else { return false }
         if NSApp.keyWindow === parentWindow,
-           eventKeys.matches(Shortcuts.key(for: .PHI_KIOSK_OPEN_IN_SPACE)) {
+           eventKeys.matches(Shortcuts.key(for: .PHI_PEEK_OPEN_IN_SPACE)) {
             expandButtonClicked(nil)
             return true
         }

@@ -8,19 +8,37 @@ import Foundation
 
 @MainActor
 final class SearchTabsViewModel: ObservableObject {
+    /// What the results list shows, published as one value so the list updates once per change.
+    struct Results: Equatable {
+        let sections: [SearchTabsSectionSnapshot]
+        let selectedIndex: Int
+        /// The query these sections matched, which can trail `inputText` while a search runs.
+        let query: String
+    }
+
     @Published private(set) var snapshot: SearchTabsSnapshot
-    @Published private(set) var sections: [SearchTabsSectionSnapshot] = []
-    @Published private(set) var selectedIndex: Int = -1
+    @Published private(set) var results: Results
     @Published private(set) var inputText: String = ""
 
     private let dataController: SearchTabsDataController
     private var collapsedSections = Set<SearchTabsSectionKind>()
+    private var searchTask: Task<Void, Never>?
+    private var searchPreservesSelection = false
+
+    var sections: [SearchTabsSectionSnapshot] {
+        results.sections
+    }
+
+    var selectedIndex: Int {
+        results.selectedIndex
+    }
 
     var items: [SearchTabsItem] {
         sections.flatMap(\.visibleItems)
     }
 
     var selectedItem: SearchTabsItem? {
+        let items = items
         guard selectedIndex >= 0, selectedIndex < items.count else {
             return nil
         }
@@ -29,48 +47,74 @@ final class SearchTabsViewModel: ObservableObject {
 
     init(dataController: SearchTabsDataController) {
         self.dataController = dataController
-        self.snapshot = dataController.snapshot(query: "")
-        self.sections = Self.makeSections(from: snapshot.items, collapsedSections: collapsedSections)
-        self.selectedIndex = items.isEmpty ? -1 : 0
+        let snapshot = dataController.snapshot(query: "")
+        self.snapshot = snapshot
+        self.results = Self.makeResults(
+            from: snapshot,
+            collapsedSections: [],
+            preservingSelectionOf: nil
+        )
     }
 
     func reset() {
-        updateInputText("")
+        dataController.reset { [weak self] in
+            guard let self else { return }
+            self.search(self.inputText, preservingSelection: true)
+        }
+        cancelSearch()
+        inputText = ""
+        apply(dataController.snapshot(query: ""), preservingSelection: false)
     }
 
+    /// Typing only records the text and starts a search off the main actor; the newest
+    /// search's results replace the list when it finishes, and older ones are dropped.
     func updateInputText(_ text: String) {
         inputText = text
-        snapshot = dataController.snapshot(query: text)
-        sections = Self.makeSections(from: snapshot.items, collapsedSections: collapsedSections)
-        selectedIndex = items.isEmpty ? -1 : 0
+        search(text, preservingSelection: false)
+    }
+
+    /// Applies the typed text's results now if its search is still running, so a key that
+    /// acts on the selection (Return, arrows) never acts on an older query's list.
+    func flushPendingSearch() {
+        guard searchTask != nil else {
+            return
+        }
+        let preservesSelection = searchPreservesSelection
+        cancelSearch()
+        apply(dataController.snapshot(query: inputText), preservingSelection: preservesSelection)
     }
 
     func selectNextItem() {
-        guard !items.isEmpty else {
-            selectedIndex = -1
+        flushPendingSearch()
+        let count = items.count
+        guard count > 0 else {
+            setSelectedIndex(-1)
             return
         }
-        selectedIndex = min(selectedIndex + 1, items.count - 1)
+        setSelectedIndex(min(selectedIndex + 1, count - 1))
     }
 
     func selectPreviousItem() {
+        flushPendingSearch()
         guard !items.isEmpty else {
-            selectedIndex = -1
+            setSelectedIndex(-1)
             return
         }
-        selectedIndex = max(selectedIndex - 1, 0)
+        setSelectedIndex(max(selectedIndex - 1, 0))
     }
 
     func selectItem(at index: Int) {
         guard index >= 0, index < items.count else {
             return
         }
-        selectedIndex = index
+        setSelectedIndex(index)
     }
 
     func removeItem(withID itemID: String) {
+        flushPendingSearch()
+        let currentItems = items
         let selectedItemID = selectedItem?.id
-        let removedVisibleIndex = items.firstIndex { $0.id == itemID }
+        let removedVisibleIndex = currentItems.firstIndex { $0.id == itemID }
         let filteredItems = snapshot.items.filter { $0.id != itemID }
         guard filteredItems.count != snapshot.items.count else {
             return
@@ -83,20 +127,24 @@ final class SearchTabsViewModel: ObservableObject {
             generatedAt: Date(),
             items: filteredItems
         )
-        sections = Self.makeSections(from: snapshot.items, collapsedSections: collapsedSections)
+        let sections = Self.makeSections(from: snapshot.items, collapsedSections: collapsedSections)
+        let newItems = sections.flatMap(\.visibleItems)
 
+        let newIndex: Int
         if let selectedItemID,
            selectedItemID != itemID,
-           let preservedIndex = items.firstIndex(where: { $0.id == selectedItemID }) {
-            selectedIndex = preservedIndex
-        } else if let removedVisibleIndex, !items.isEmpty {
-            selectedIndex = min(removedVisibleIndex, items.count - 1)
+           let preservedIndex = newItems.firstIndex(where: { $0.id == selectedItemID }) {
+            newIndex = preservedIndex
+        } else if let removedVisibleIndex, !newItems.isEmpty {
+            newIndex = min(removedVisibleIndex, newItems.count - 1)
         } else {
-            selectedIndex = items.isEmpty ? -1 : min(max(selectedIndex, 0), items.count - 1)
+            newIndex = newItems.isEmpty ? -1 : min(max(selectedIndex, 0), newItems.count - 1)
         }
+        results = Results(sections: sections, selectedIndex: newIndex, query: snapshot.query)
     }
 
     func toggleSection(_ section: SearchTabsSectionKind) {
+        flushPendingSearch()
         let selectedItemID = selectedItem?.id
         if collapsedSections.contains(section) {
             collapsedSections.remove(section)
@@ -104,15 +152,70 @@ final class SearchTabsViewModel: ObservableObject {
             collapsedSections.insert(section)
         }
 
-        sections = Self.makeSections(from: snapshot.items, collapsedSections: collapsedSections)
+        let sections = Self.makeSections(from: snapshot.items, collapsedSections: collapsedSections)
+        let newItems = sections.flatMap(\.visibleItems)
+        let newIndex: Int
         if let selectedItemID,
-           let preservedIndex = items.firstIndex(where: { $0.id == selectedItemID }) {
-            selectedIndex = preservedIndex
-        } else if items.isEmpty {
-            selectedIndex = -1
+           let preservedIndex = newItems.firstIndex(where: { $0.id == selectedItemID }) {
+            newIndex = preservedIndex
+        } else if newItems.isEmpty {
+            newIndex = -1
         } else {
-            selectedIndex = min(max(selectedIndex, 0), items.count - 1)
+            newIndex = min(max(selectedIndex, 0), newItems.count - 1)
         }
+        results = Results(sections: sections, selectedIndex: newIndex, query: snapshot.query)
+    }
+
+    private func search(_ query: String, preservingSelection: Bool) {
+        cancelSearch()
+        // Reading the browser stays on the main actor; matching and ranking don't.
+        let sources = dataController.sources()
+        searchPreservesSelection = preservingSelection
+        searchTask = Task { [weak self] in
+            let snapshot = await Task.detached(priority: .userInitiated) {
+                SearchTabsDataController.snapshot(query: query, sources: sources)
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            self.searchTask = nil
+            self.apply(snapshot, preservingSelection: preservingSelection)
+        }
+    }
+
+    private func cancelSearch() {
+        searchTask?.cancel()
+        searchTask = nil
+        searchPreservesSelection = false
+    }
+
+    private func apply(_ snapshot: SearchTabsSnapshot, preservingSelection: Bool) {
+        let results = Self.makeResults(
+            from: snapshot,
+            collapsedSections: collapsedSections,
+            preservingSelectionOf: preservingSelection ? selectedItem?.id : nil
+        )
+        self.snapshot = snapshot
+        self.results = results
+    }
+
+    private func setSelectedIndex(_ index: Int) {
+        guard index != selectedIndex else {
+            return
+        }
+        results = Results(sections: results.sections, selectedIndex: index, query: results.query)
+    }
+
+    private static func makeResults(
+        from snapshot: SearchTabsSnapshot,
+        collapsedSections: Set<SearchTabsSectionKind>,
+        preservingSelectionOf selectedItemID: String?
+    ) -> Results {
+        let sections = makeSections(from: snapshot.items, collapsedSections: collapsedSections)
+        let items = sections.flatMap(\.visibleItems)
+        var selectedIndex = items.isEmpty ? -1 : 0
+        if let selectedItemID, let preservedIndex = items.firstIndex(where: { $0.id == selectedItemID }) {
+            selectedIndex = preservedIndex
+        }
+        return Results(sections: sections, selectedIndex: selectedIndex, query: snapshot.query)
     }
 
     private static func makeSections(

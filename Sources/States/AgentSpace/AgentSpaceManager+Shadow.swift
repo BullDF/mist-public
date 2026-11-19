@@ -5,7 +5,6 @@
 
 import AppKit
 import Foundation
-import PostHog
 
 /// A shadow window opened for an agent task: a Chromium `is_shadow` browser —
 /// TYPE_NORMAL on a real profile, but alpha 0, off-screen, out of Mission
@@ -28,7 +27,6 @@ struct ShadowWindow {
     /// the profile itself. Fixed at creation: a taskId cannot flip between
     /// incognito and regular across re-binds.
     let incognito: Bool
-    let origin: AgentTaskOrigin
     let driverPrincipalId: String?
     let createdAt: Date
     var keepAliveDeadline: Date
@@ -46,7 +44,7 @@ extension AgentSpaceManager {
 
     /// Opens (or re-binds to) the shadow window bound to `taskId`.
     ///
-    /// Re-binding is by taskId within the caller's own origin+principal, the
+    /// Re-binding is by taskId within the caller's own principal, the
     /// same boundary `callerMayControl` draws for Spaces: a second driver
     /// asking for someone else's taskId is refused rather than handed the
     /// window. Profile resolution and the per-profile agent permission are
@@ -61,20 +59,17 @@ extension AgentSpaceManager {
         taskId: String,
         profileId: String,
         incognito: Bool,
-        origin: AgentTaskOrigin,
         driverPrincipalId: String?,
         completion: @escaping (_ windowId: Int?, _ error: String?) -> Void
     ) {
-        if origin == .cdp, driverPrincipalId?.isEmpty != false {
+        if driverPrincipalId?.isEmpty != false {
             AppLogWarn("[ShadowWindow] createShadowWindow: CDP task has no driver principal")
             completion(nil, "create_failed")
             return
         }
         if let existing = shadowWindowsByTaskId[taskId] {
             guard AgentTaskAccessPolicy.allows(
-                taskOrigin: existing.origin,
                 taskPrincipalId: existing.driverPrincipalId,
-                callerOrigin: origin,
                 callerPrincipalId: driverPrincipalId
             ) else {
                 AppLogWarn("[ShadowWindow] createShadowWindow: taskId \(taskId) belongs to another driver")
@@ -121,12 +116,9 @@ extension AgentSpaceManager {
             windowId: 0,
             profileId: profileId,
             incognito: incognito,
-            origin: origin,
             driverPrincipalId: driverPrincipalId,
             createdAt: Date(),
-            keepAliveDeadline: origin == .cdp
-                ? Date().addingTimeInterval(Self.defaultKeepAliveTTL)
-                : .distantFuture
+            keepAliveDeadline: Date().addingTimeInterval(Self.defaultKeepAliveTTL)
         )
         ensureKeepAliveSweep()
         // Chromium resolves the profile strictly (no last-used fallback), so it
@@ -146,7 +138,7 @@ extension AgentSpaceManager {
                     }
                     self.spawnShadowWindow(
                         taskId: taskId, profileId: profileId, incognito: incognito,
-                        origin: origin, driverPrincipalId: driverPrincipalId,
+                        driverPrincipalId: driverPrincipalId,
                         bridge: bridge, completion: completion)
                 }
             }
@@ -157,7 +149,6 @@ extension AgentSpaceManager {
         taskId: String,
         profileId: String,
         incognito: Bool,
-        origin: AgentTaskOrigin,
         driverPrincipalId: String?,
         bridge: PhiChromiumBridgeProtocol,
         completion: @escaping (_ windowId: Int?, _ error: String?) -> Void
@@ -183,12 +174,9 @@ extension AgentSpaceManager {
             windowId: windowId,
             profileId: profileId,
             incognito: incognito,
-            origin: origin,
             driverPrincipalId: driverPrincipalId,
             createdAt: Date(),
-            keepAliveDeadline: origin == .cdp
-                ? Date().addingTimeInterval(Self.defaultKeepAliveTTL)
-                : .distantFuture
+            keepAliveDeadline: Date().addingTimeInterval(Self.defaultKeepAliveTTL)
         )
         // A freshly created Browser has no tabs, and nothing else seeds one:
         // session restore is suppressed for this call. Without a tab the
@@ -198,10 +186,6 @@ extension AgentSpaceManager {
                             customGuid: nil,
                             focusAfterCreate: false)
         AppLogInfo("[ShadowWindow] opened \(taskId) — windowId=\(windowId), profile=\(profileId), incognito=\(incognito)")
-        PostHogSDK.shared.capture("agent_shadow_window_opened", properties: [
-            "origin": origin == .cdp ? "cdp" : "phi_agent",
-            "incognito": incognito,
-        ])
         completion(windowId, nil)
     }
 
@@ -269,11 +253,9 @@ extension AgentSpaceManager {
     /// than it does for Spaces: a leaked Space is a stale pip the user can see
     /// and close, a leaked shadow window is an invisible window burning a
     /// renderer with no UI affordance to reach it.
-    ///
-    /// `.cdp` only — phi-agent shadow runs have their own backend lifecycle.
     func sweepExpiredShadowWindows(now: Date) {
         let expired = shadowWindowsByTaskId.values.filter {
-            $0.origin == .cdp && $0.keepAliveDeadline < now
+            $0.keepAliveDeadline < now
         }
         for shadow in expired {
             closeShadowWindow(taskId: shadow.taskId, reason: "expired: no agent activity")
@@ -286,20 +268,17 @@ extension AgentSpaceManager {
         shadowWindowsByTaskId[taskId]
     }
 
-    /// Shadow windows visible to one caller — its own origin and principal
+    /// Shadow windows visible to one caller — its own principal
     /// only, so a driver can't enumerate another agent's background work.
     /// In-flight spawns (windowId 0) are omitted: there is nothing to drive yet.
     func shadowWindows(
-        forOrigin origin: AgentTaskOrigin,
         principalId: String?
     ) -> [ShadowWindow] {
         shadowWindowsByTaskId.values
             .filter { $0.windowId != 0 }
             .filter {
                 AgentTaskAccessPolicy.allows(
-                    taskOrigin: $0.origin,
                     taskPrincipalId: $0.driverPrincipalId,
-                    callerOrigin: origin,
                     callerPrincipalId: principalId)
             }
             .sorted { $0.createdAt < $1.createdAt }

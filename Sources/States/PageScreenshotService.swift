@@ -40,7 +40,7 @@ final class PageScreenshotService {
     func canCapture(in state: BrowserState, area: Bool = false) -> Bool {
         guard !isCapturing, ChromiumLauncher.sharedInstance().bridge != nil,
               state.windowId >= 0, let tab = state.pageCommandTarget,
-              tab.guid >= 0, !tab.isShowingNativeNTP,
+              tab.guid >= 0, !tab.isShowingNativeNTP, tab.appAddress == nil,
               let targetId = tab.webContentWrapper?.devToolsTargetId,
               !targetId.isEmpty else { return false }
         if area {

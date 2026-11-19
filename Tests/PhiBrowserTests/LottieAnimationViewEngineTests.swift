@@ -27,14 +27,6 @@ final class LottieAnimationViewEngineTests: XCTestCase {
         XCTAssertEqual(Set(engines), [.mainThread])
     }
 
-    /// The sidebar's download button builds its animation view itself, not
-    /// through `LottieAnimationNSView`.
-    func testDownloadButtonRendersOnTheMainThread() {
-        let button = DownloadButtonNSView(onTap: {})
-
-        XCTAssertEqual(renderingEngines(of: button), [.mainThread])
-    }
-
     /// A bookmark folder's icon builds its animation view itself, both as the
     /// static snapshot and as the live icon.
     func testBookmarkFolderIconRendersOnTheMainThread() {

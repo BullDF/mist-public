@@ -85,8 +85,8 @@ final class ShellSplitViewController: NSViewController {
         // panel opens at while the column is collapsed. Seeded from the
         // account so a launch with a collapsed sidebar still opens the panel
         // at the user's width; every expanded-column frame updates it.
-        lastExpandedSidebarWidth = AccountController.shared.localDataAccount?
-            .userDefaults.lastKnownSidebarWidth ?? 0
+        lastExpandedSidebarWidth = AccountController.shared.localDataAccount
+            .userDefaults.lastKnownSidebarWidth
 
         sidebarSplitViewItem.publisher(for: \.isCollapsed)
             .sink { [weak self] isCollapsed in
@@ -136,10 +136,6 @@ final class ShellSplitViewController: NSViewController {
     var sidebarWidth: CGFloat {
         guard let item = sidebarSplitViewItem, !item.isCollapsed else { return 0 }
         return item.viewController.view.frame.width
-    }
-
-    func toggleSidebar(_ collapsed: Bool? = nil) {
-        setSidebarCollapsed(collapsed ?? !isSidebarCollapsed, animated: true)
     }
 
     func setSidebarCollapsed(_ collapsed: Bool, animated: Bool) {
@@ -204,7 +200,7 @@ final class ShellSplitViewController: NSViewController {
         guard width != Self.leftItemMinWidth else { return }
         sidebarWidthPersistWorkItem?.cancel()
         let workItem = DispatchWorkItem {
-            AccountController.shared.localDataAccount?.userDefaults.setLastKnownSidebarWidth(width)
+            AccountController.shared.localDataAccount.userDefaults.setLastKnownSidebarWidth(width)
         }
         sidebarWidthPersistWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.sidebarWidthPersistDelay, execute: workItem)

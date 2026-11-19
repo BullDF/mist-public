@@ -95,7 +95,4 @@ public enum DefaultColors {
         }
     }
     
-    public static func color(for role: ColorRole, appearance: Appearance) -> NSColor {
-        colorPair(for: role).color(for: appearance)
-    }
 }

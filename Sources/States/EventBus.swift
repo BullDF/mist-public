@@ -43,17 +43,9 @@ struct TabEvent: WindowEvent {
         case updateTabRelationships(_ snapshot: NativeTabRelationshipSnapshot)
         case move(tab: Tab, toNewIndex: Int, selectAfterMove: Bool)
 
-        /// Chromium produced the first non-empty paint for the tab.
-        case tabReadyToDisplay(_ tabId: Int)
-
         /// Right-click "Open in Reading Mode" on the page. A request rather
         /// than a state change, so nothing buffers or replays it.
         case openReaderView(tabId: Int)
-
-        /// "Open in Phi Chat" succeeded from the AI Chat panel that is the tab
-        /// `chatTabId`: collapse that panel. A request rather than a state
-        /// change, so nothing buffers or replays it.
-        case collapseAIChat(chatTabId: Int)
 
         /// Right-click "Open Link in Peek View" on a link. A request rather
         /// than a state change, so nothing buffers or replays it.
@@ -78,24 +70,6 @@ struct OmniEvent: WindowEvent {
     
     enum OmniAction {
         case searchSuggestionResultChanged(suggestions: [[String: Any]], originalInput: String)
-    }
-}
-
-struct BookmarkEvent: WindowEvent {
-    var browserId: Int?
-    var scope: EventScope {
-        if let browserId {
-            return .window(browserId: browserId)
-        } else {
-            return .global
-        }
-    }
-    let action: BookmarkAction
-    
-    enum BookmarkAction {
-        case bookmarksLoaded
-        case bookmarksChanged(_ newNodes: [any BookmarkWrapper])
-        case bookmarkInfoChanged(id: Int64, title: String?, url: String?, faviconUrl: String?)
     }
 }
 
@@ -200,12 +174,11 @@ class EventBus {
             handleTabEvent(tabEvent, in: browserState)
         case let omniEvent as OmniEvent:
             handleOmniEvent(omniEvent, in: browserState)
-        case let bookmarkEvent as BookmarkEvent:
-            handleBookmarkEvent(bookmarkEvent, in: browserState)
         case let extensionEvent as ExtensionEvent:
             handleExtensionEvent(extensionEvent, in: browserState)
         case let tabGroupEvent as TabGroupEvent:
             handleTabGroupEvent(tabGroupEvent, in: browserState)
+            AgentChatStore.shared.browserFolderGroupEvent(tabGroupEvent)
         case let splitEvent as SplitEvent:
             handleSplitEvent(splitEvent, in: browserState)
         default:  fatalError("not support")
@@ -217,14 +190,20 @@ class EventBus {
         switch event.action {
         case .newTab(let tab):
             state.handleNewTabFromChromium(tab)
+            AgentUserSpaceDriveRegistry.shared.noteTabCreated(tabId: tab.guid, windowId: state.windowId)
+            AgentChatStore.shared.chatTabOpened(tab)
         case .newTabWithContext(let tab, let context):
             state.handleNewTabFromChromium(tab, context: context)
+            AgentUserSpaceDriveRegistry.shared.noteTabCreated(tabId: tab.guid, windowId: state.windowId)
+            AgentChatStore.shared.chatTabOpened(tab)
         case .closeTab(let tabId):
             state.closeTab(tabId)
         case .focusTab(let tab):
             state.focuseTab(tab)
+            AgentChatStore.shared.browserFolderVisibilityChanged()
         case .focusTabWithTabId(let tabId):
             state.handleChromiumActiveTabChanged(tabId)
+            AgentChatStore.shared.browserFolderVisibilityChanged()
         case .createTab(let url):
             state.createTab(url)
         case .openTab(let url):
@@ -239,14 +218,10 @@ class EventBus {
             state.move(tab: tab, to: toNewIndex, selectAfterMove: selectAfterMove)
         case .openLinkAsPeek(let sourceTabId, let url):
             state.openLinkAsPeek(urlString: url, sourceTabId: sourceTabId)
-        case .tabReadyToDisplay(let tabId):
-            state.handleTabReadyToDisplay(tabId: tabId)
         case .tabContentFullscreenChanged(let tabId, let isFullscreen):
             state.handleTabContentFullscreen(tabId: tabId, isFullscreen: isFullscreen)
         case .openReaderView(let tabId):
             state.handleOpenReaderView(tabId: tabId)
-        case .collapseAIChat(let chatTabId):
-            state.handleCollapseAIChat(chatTabId: chatTabId)
         }
     }
 
@@ -254,18 +229,6 @@ class EventBus {
         switch event.action {
         case .searchSuggestionResultChanged(let suggestions, let input):
             state.searchSuggestionChanged.send((suggestions, input))
-        }
-    }
-    
-    private func handleBookmarkEvent(_ event: BookmarkEvent, in state: BrowserState) {
-        switch event.action {
-        case .bookmarksLoaded:
-            state.bookmarkManager.fetchBookmarks()
-        case .bookmarksChanged(let newNodes):
-            state.bookmarkManager.bookmarksChanged(with: newNodes)
-        case .bookmarkInfoChanged(let id, let title, let url, let faviconUrl):
-            return
-        @unknown default: fatalError()
         }
     }
     
@@ -307,6 +270,7 @@ class EventBus {
 
     @MainActor
     private func handleSplitEvent(_ event: SplitEvent, in state: BrowserState) {
+        defer { AgentChatStore.shared.browserFolderVisibilityChanged() }
         switch event.action {
         case let .created(splitId, primaryTabId, secondaryTabId, layout, ratio):
             state.handleSplitCreated(splitId: splitId,

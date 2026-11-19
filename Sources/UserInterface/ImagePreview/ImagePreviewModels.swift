@@ -11,13 +11,12 @@ enum ImagePreviewSource: Equatable {
     case localFile(URL)
     case remoteURL(URL)
     case rawData(Data, mimeType: String?)
-    case phiAgentFile(path: String, senderID: String)
 
     var url: URL? {
         switch self {
         case .localFile(let url), .remoteURL(let url):
             return url
-        case .rawData, .phiAgentFile:
+        case .rawData:
             return nil
         }
     }
@@ -31,23 +30,14 @@ enum ImagePreviewSource: Equatable {
         case .rawData(let data, let mimeType):
             let hash = data.hashValue
             return "rawdata:\(hash):\(mimeType ?? "unknown")"
-        case .phiAgentFile(let path, let senderID):
-            return "phi-agent:\(senderID):\(path)"
         }
     }
 
     /// Resolves a plugin-supplied address string to a local file, remote HTTP(S) URL, or inline base64 data.
     static func resolved(
-        from address: String,
-        authorizedPhiAgentSenderID senderID: String? = nil
+        from address: String
     ) -> ImagePreviewSource {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let senderID,
-           ServiceBrokerExtensionProtocol.isAllowedSidecarSender(senderID),
-           isPhiAgentFilePath(trimmed) {
-            return .phiAgentFile(path: trimmed, senderID: senderID)
-        }
 
         if let parsed = parseDataURI(trimmed) {
             return .rawData(parsed.data, mimeType: parsed.mimeType)
@@ -67,15 +57,6 @@ enum ImagePreviewSource: Equatable {
         }
 
         return .localFile(URL(fileURLWithPath: expanded).standardizedFileURL)
-    }
-
-    private static func isPhiAgentFilePath(_ path: String) -> Bool {
-        let pathname = String(path.split(
-            separator: "?",
-            maxSplits: 1,
-            omittingEmptySubsequences: false
-        ).first ?? "")
-        return pathname.hasPrefix("/api/v1/files/") || pathname.hasPrefix("/v1/files/")
     }
 
     /// Parses `data:[<mediatype>][;base64],<data>` URIs and returns decoded bytes + MIME type.
@@ -107,15 +88,14 @@ struct ImagePreviewItem: Equatable, Identifiable {
     let suggestedFilename: String?
 
     static func items(
-        fromAddressStrings addresses: [String],
-        authorizedPhiAgentSenderID senderID: String? = nil
+        fromAddressStrings addresses: [String]
     ) -> [ImagePreviewItem] {
         addresses.enumerated().compactMap { index, raw in
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
             return ImagePreviewItem(
                 id: "image-preview-\(index)",
-                source: .resolved(from: trimmed, authorizedPhiAgentSenderID: senderID),
+                source: .resolved(from: trimmed),
                 title: nil,
                 mimeType: nil,
                 suggestedFilename: nil
@@ -263,7 +243,7 @@ enum ImagePreviewMessageHandler {
     static func handle(
         _ context: ExtensionMessageContext,
         messenger: ExtensionMessagingProtocol,
-        openPreview: ([ImagePreviewItem], Int) -> Void = { items, currentIndex in
+        openPreview: @MainActor ([ImagePreviewItem], Int) -> Void = { items, currentIndex in
             let controller = ImagePreviewWindowController(items: items, currentIndex: currentIndex)
             controller.showWindow(nil)
         }
@@ -278,8 +258,7 @@ enum ImagePreviewMessageHandler {
         }
 
         let items = ImagePreviewItem.items(
-            fromAddressStrings: request.itemAddresses,
-            authorizedPhiAgentSenderID: context.senderId
+            fromAddressStrings: request.itemAddresses
         )
         guard !items.isEmpty else {
             messenger.sendError("No image preview items provided", requestId: context.requestId)

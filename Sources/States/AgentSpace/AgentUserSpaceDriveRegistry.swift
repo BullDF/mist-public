@@ -5,6 +5,7 @@
 
 import Foundation
 import Combine
+import Darwin
 
 /// The operating mask for tabs in the user's OWN Spaces.
 ///
@@ -33,9 +34,7 @@ final class AgentUserSpaceDriveRegistry {
     /// keeps the pill — and its "Hand back" — on screen, and what says who to
     /// hand it back TO.
     struct Record {
-        let sessionId: Int64
         var tabId: Int
-        var windowId: Int
         var lastSeen: Date
         /// The user holds this tab; the browser is refusing this driver.
         var reclaimed: Bool = false
@@ -43,6 +42,7 @@ final class AgentUserSpaceDriveRegistry {
         /// itself (it authenticated the caller); empty for browser-reported
         /// drives, which fall back to the roster's best guess.
         var driverName: String = ""
+        var principalId: String?
     }
 
     /// An `agentSpace.spaces.openTab` the app has issued but Chromium has not
@@ -54,6 +54,7 @@ final class AgentUserSpaceDriveRegistry {
         let principalId: String
         let driverName: String
         let at: Date
+        let chatId: UUID?
     }
 
     /// A driver that stops sending commands but stays attached leaves no close
@@ -74,6 +75,10 @@ final class AgentUserSpaceDriveRegistry {
     private var reclaimedTabs: [Int: Date] = [:]
     private var sweepTimer: Timer?
     private var pendingOpens: [PendingOpen] = []
+    /// The framework's driving-session IDs are opaque. Retain the authenticated
+    /// transport by principal instead: shutdown makes Chromium release exactly
+    /// that connection's holds through its normal didStop callbacks.
+    private var browserAgentSockets: [String: [Int32]] = [:]
     /// Synthetic session keys for app-armed holds, one per driver, allocated
     /// downwards so they can never collide with the browser's (which count up
     /// from 1). One per driver is what makes a second open MOVE that agent's
@@ -84,6 +89,15 @@ final class AgentUserSpaceDriveRegistry {
     /// dropped — the alternative is masking whatever tab the user opens next.
     private static let openExpectationTTL: TimeInterval = 10
 
+    /// Page commands the app itself is sending (`Tab.reloadPage`), by tab, with
+    /// when each was sent. The app's DevTools session rides the same injected
+    /// transport as an agent's, so the browser reports its command as a drive;
+    /// each expectation swallows one such report instead of flashing the mask.
+    private var pendingAppCommands: [(tabId: Int, at: Date)] = []
+    /// The report lands within milliseconds of the command. Kept short because
+    /// a stale expectation would swallow a real driver's report on that tab.
+    private static let appCommandTTL: TimeInterval = 2
+
     /// Emits a tabId whenever its drive state changes (armed, moved, cleared) —
     /// the pill mounts off this. The mask itself rides
     /// `AgentAnimationManager.stateChanged`, which fires from the same paths.
@@ -91,25 +105,47 @@ final class AgentUserSpaceDriveRegistry {
 
     private init() {}
 
-#if DEBUG
     /// Tests share the singleton; clear every hold, takeover, and mask between
     /// cases so one test's state can't decide the next one's verdict.
     func resetForTesting() {
+        for principal in Array(browserAgentSockets.keys) { release(principalId: principal) }
         for record in recordsBySessionId.values {
             AgentAnimationManager.shared.setActive(false, for: record.tabId)
         }
         recordsBySessionId.removeAll()
         reclaimedTabs.removeAll()
         pendingOpens.removeAll()
+        pendingAppCommands.removeAll()
         appSessionIdByPrincipal.removeAll()
         sweepTimer?.invalidate()
         sweepTimer = nil
         idleTimeout = 30
         reclaimGrace = 30 * 60
     }
-#endif
 
     // MARK: - Browser reports
+
+    func retainBrowserAgentConnection(_ fd: Int32, principalId: String) {
+        let retained = dup(fd)
+        guard retained >= 0 else { return }
+        _ = fcntl(retained, F_SETFD, FD_CLOEXEC)
+        browserAgentSockets[principalId, default: []].append(retained)
+    }
+
+    /// A completed turn must not keep a user tab masked while the CLI remains
+    /// alive. The next tool reconnects and arms a new hold normally.
+    func release(principalId: String) {
+        for fd in browserAgentSockets.removeValue(forKey: principalId) ?? [] {
+            shutdown(fd, SHUT_RDWR)
+            close(fd)
+        }
+        pendingOpens.removeAll { $0.principalId == principalId }
+        let ids = recordsBySessionId.filter { $0.value.principalId == principalId }.map(\.key)
+        let tabs = Set(ids.compactMap { recordsBySessionId.removeValue(forKey: $0)?.tabId })
+        appSessionIdByPrincipal[principalId] = nil
+        tabs.forEach { clearMaskIfUndriven(tabId: $0) }
+        stopSweepIfIdle()
+    }
 
     /// A CDP session drove `tabId`. First report for the session arms the mask;
     /// later ones re-arm the idle timer. A session naming a different tab has
@@ -119,11 +155,11 @@ final class AgentUserSpaceDriveRegistry {
         // driver's commands, so this is belt-and-braces: it also keeps a
         // refusal from re-arming the mask through the report path.
         if isReclaimed(tabId: tabId) { return }
+        if recordsBySessionId[sessionId] == nil, claimAppCommand(tabId: tabId) { return }
 
         if var existing = recordsBySessionId[sessionId] {
             let previousTab = existing.tabId
             existing.tabId = tabId
-            existing.windowId = windowId
             existing.lastSeen = Date()
             existing.reclaimed = false
             recordsBySessionId[sessionId] = existing
@@ -131,8 +167,7 @@ final class AgentUserSpaceDriveRegistry {
                 clearMaskIfUndriven(tabId: previousTab)
             }
         } else {
-            recordsBySessionId[sessionId] = Record(
-                sessionId: sessionId, tabId: tabId, windowId: windowId,
+            recordsBySessionId[sessionId] = Record(tabId: tabId,
                 lastSeen: Date())
             AppLogInfo("[AgentUserSpace] agent drives tab \(tabId) "
                        + "(window \(windowId), session \(sessionId))")
@@ -141,6 +176,22 @@ final class AgentUserSpaceDriveRegistry {
         // after a hand back, where the record already exists on the same tab.
         applyMask(tabId: tabId)
         startSweepIfNeeded()
+    }
+
+    /// The app is about to send a page command to `tabId` over its own DevTools
+    /// session. That command is not an agent driving the tab, so the drive
+    /// report it raises is claimed here rather than arming the mask. Its
+    /// session's stop then finds no record and changes nothing.
+    func appWillSendPageCommand(toTab tabId: Int) {
+        pendingAppCommands.append((tabId, Date()))
+    }
+
+    private func claimAppCommand(tabId: Int) -> Bool {
+        let now = Date()
+        pendingAppCommands.removeAll { now.timeIntervalSince($0.at) > Self.appCommandTTL }
+        guard let index = pendingAppCommands.firstIndex(where: { $0.tabId == tabId }) else { return false }
+        pendingAppCommands.remove(at: index)
+        return true
     }
 
     /// The app is about to open a tab in one of the user's Spaces on an
@@ -152,7 +203,9 @@ final class AgentUserSpaceDriveRegistry {
             windowId: windowId,
             principalId: principalId ?? "anonymous",
             driverName: driverName,
-            at: Date()))
+            at: Date(),
+            chatId: AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: principalId)
+                ? AgentChatStore.shared.browserChat(principalId: principalId) : nil))
     }
 
     /// A tab was created. Claims the oldest expectation for its window, if any
@@ -164,6 +217,9 @@ final class AgentUserSpaceDriveRegistry {
         guard let index = pendingOpens.firstIndex(where: { $0.windowId == windowId })
         else { return }
         let pending = pendingOpens.remove(at: index)
+        if let chatId = pending.chatId {
+            AgentChatStore.shared.groupBrowserAgentTab(tabId, chatId: chatId, windowId: windowId)
+        }
         guard !isReclaimed(tabId: tabId) else { return }
 
         let sessionId = appSessionId(forPrincipal: pending.principalId)
@@ -172,9 +228,8 @@ final class AgentUserSpaceDriveRegistry {
             recordsBySessionId[sessionId] = nil
             clearMaskIfUndriven(tabId: existing.tabId)
         }
-        recordsBySessionId[sessionId] = Record(
-            sessionId: sessionId, tabId: tabId, windowId: windowId,
-            lastSeen: now, driverName: pending.driverName)
+        recordsBySessionId[sessionId] = Record(tabId: tabId,
+            lastSeen: now, driverName: pending.driverName, principalId: pending.principalId)
         AppLogInfo("[AgentUserSpace] agent opened tab \(tabId) in the user's Space "
                    + "(window \(windowId), driver \(pending.driverName))")
         applyMask(tabId: tabId)
@@ -203,7 +258,6 @@ final class AgentUserSpaceDriveRegistry {
         for id in sessionIds(forTabId: tabId)
         where recordsBySessionId[id]?.reclaimed == false {
             recordsBySessionId[id]?.lastSeen = now
-            recordsBySessionId[id]?.windowId = windowId
         }
     }
 
@@ -427,21 +481,12 @@ final class AgentCDPDriverRoster {
         return recent.first?.name
     }
 
-    /// Whether that single recent driver is the browser's own agent.
-    ///
-    /// Decided by the identity KEY, never by the display name. `firstPartyKey`
-    /// is minted only by `AgentPeerIdentity.firstPartyAgent`, which is the
-    /// verified check — Phi-signed peer, running the phi-agent bundle, and
-    /// descended from this bundle's `Phi Sentinel.app`. Every other identity
-    /// is keyed "teamId:signingId" or "unsigned:<path>", and a team identifier
-    /// is a 10-character Apple-issued string, so no outside agent can present
-    /// this key. A NAME could be worn by anything — an app or a directory that
-    /// calls itself "Phi Agent" — which is exactly why the pill must not
-    /// decide who is Phi from one.
+    /// Whether that single recent driver is Mist's capability-bound Browser
+    /// Agent. An external display name cannot claim this app-issued identity.
     var soleRecentDriverIsFirstParty: Bool {
         let cutoff = Date().addingTimeInterval(-Self.window)
         let recent = lastSeenByKey.filter { $0.value.at > cutoff }
         guard recent.count == 1, let key = recent.first?.key else { return false }
-        return key == AgentPeerIdentity.firstPartyKey
+        return key == "mist:browser-agent"
     }
 }

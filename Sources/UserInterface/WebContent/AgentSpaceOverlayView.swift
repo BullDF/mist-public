@@ -46,10 +46,8 @@ final class AgentSpaceOverlayView: NSView {
     /// bottom-right corner, for a user who wants the page back.
     private let collapseButton = NSButton()
     /// Collapsed is a deliberate user choice, so it survives every `update`
-    /// and every ownership flip — nothing re-expands the pill but the user,
-    /// or the developer unstyled-page switch, which also sets the default.
-    private var isCollapsed = PhiPreferences.AgentSpaces.unstyledOperatingPageEnabled
-    private var unstyledPageObserver: NSObjectProtocol?
+    /// and every ownership flip — only the user re-expands the pill.
+    private var isCollapsed = false
     /// Bottom-centre when expanded, bottom-right corner when collapsed; one is
     /// always active and the other never is.
     private var pillCenterX: NSLayoutConstraint?
@@ -68,28 +66,10 @@ final class AgentSpaceOverlayView: NSView {
         setupCursor()
         setupPill()
         applyCollapsedState(animated: false)
-        // A developer inspecting the page wants it clear of the pill: the
-        // switch minimises every pill on screen, and turning it off brings
-        // them back out.
-        unstyledPageObserver = NotificationCenter.default.addObserver(
-            forName: .agentUnstyledOperatingPageDidChange,
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            let collapsed = PhiPreferences.AgentSpaces.unstyledOperatingPageEnabled
-            guard collapsed != isCollapsed else { return }
-            isCollapsed = collapsed
-            applyCollapsedState(animated: window != nil)
-        }
+
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    deinit {
-        if let unstyledPageObserver {
-            NotificationCenter.default.removeObserver(unstyledPageObserver)
-        }
-    }
 
     // MARK: - Setup
 
@@ -292,6 +272,7 @@ final class AgentSpaceOverlayView: NSView {
         pill.addSubview(stack)
 
         NSLayoutConstraint.activate([
+            agentDivider.widthAnchor.constraint(equalToConstant: 1),
             agentDivider.heightAnchor.constraint(equalToConstant: 18),
         ])
 
@@ -554,7 +535,7 @@ final class AgentSpaceOverlayView: NSView {
         guard let task else { return }
         ownership = task.ownership
 
-        let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+        let badge = AgentDriverBadge.make(agentName: task.agentName)
         if let assetName = badge.assetName, let image = NSImage(named: assetName) {
             image.isTemplate = true  // tint with contentTintColor
             agentIcon.image = image
@@ -576,7 +557,9 @@ final class AgentSpaceOverlayView: NSView {
         default:
             setCaption(
                 task.statusCaption.isEmpty
-                    ? (ownership == .agent ? "Agent is working…" : "Agent paused")
+                    ? (ownership == .agent
+                        ? NSLocalizedString("agentSpace.overlay.working", value: "Agent is working…", comment: "Agent control pill - Working status")
+                        : NSLocalizedString("agentSpace.overlay.paused", value: "Agent paused", comment: "Agent control pill - Paused status"))
                     : task.statusCaption,
                 color: .labelColor)
         }
@@ -584,12 +567,12 @@ final class AgentSpaceOverlayView: NSView {
         let primaryTitle: String
         switch ownership {
         case .agent:
-            primaryTitle = "Take control"
+            primaryTitle = NSLocalizedString("agentSpace.overlay.takeControl", value: "Take control", comment: "Agent control pill - Take control from the agent")
             primaryButton.isHidden = false
             secondaryButton.isHidden = true
         case .user:
-            primaryTitle = "Hand back"
-            secondaryButton.title = "Finish"
+            primaryTitle = NSLocalizedString("agentSpace.overlay.handBack", value: "Hand back", comment: "Agent control pill - Return control to the agent")
+            secondaryButton.title = NSLocalizedString("agentSpace.overlay.finish", value: "Finish", comment: "Agent control pill - End the agent's control")
             primaryButton.isHidden = false
             secondaryButton.isHidden = false
         }
@@ -681,9 +664,9 @@ final class AgentSpaceOverlayView: NSView {
         }
     }
 
-    private var effectColor: CGColor {
-        NSColor.controlAccentColor.cgColor
-    }
+    /// The Space's theme color, like the cursor's; the accent color only before the first theme arrives.
+    private var effectNSColor: NSColor { accentFill ?? .controlAccentColor }
+    private var effectColor: CGColor { effectNSColor.cgColor }
 
     private func addTransientLayer(_ transient: CALayer, removeAfter delay: TimeInterval) {
         layer?.addSublayer(transient)
@@ -752,7 +735,7 @@ final class AgentSpaceOverlayView: NSView {
         box.bounds = CGRect(origin: .zero, size: boxSize)
         box.position = point
         box.strokeColor = effectColor
-        box.fillColor = NSColor.controlAccentColor.withAlphaComponent(0.07).cgColor
+        box.fillColor = effectNSColor.withAlphaComponent(0.07).cgColor
         box.lineWidth = 2
 
         let pulse = CABasicAnimation(keyPath: "opacity")

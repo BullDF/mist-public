@@ -31,7 +31,6 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             .sink { [weak self, weak browserState] _ in
                 self?.window?.appearance = browserState?.themeContext.windowAppearance
             }
-        module.onDismiss = { [weak parent] in parent?.makeKeyAndOrderFront(nil) }
 
         window.center()
     }

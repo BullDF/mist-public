@@ -16,6 +16,47 @@ final class ShortcutConfigurationTests: XCTestCase {
     private let custom = ShortcutOverride.custom(ShortcutsKey(characters: "r", modifiers: [.control]))
     private let denied = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)
 
+    func testProductDefaultsReleasePreviousOwners() {
+        let expected: [(CommandWrapper, String)] = [
+            (.PHI_TOGGLE_CHATBAR, "e"), (.PHI_DRIFTER_MODEL_MENU, "m"),
+            (.PHI_DRIFTER_EFFORT_MENU, "."), (.IDC_ZOOM_PLUS, "="), (.IDC_DUPLICATE_TAB, "y")
+        ]
+        for (command, characters) in expected {
+            XCTAssertEqual(Shortcuts.DefaultShortcuts[command], .init(characters: characters, modifiers: .command))
+        }
+        XCTAssertTrue(Set(Shortcuts.DefaultShortcuts.keys).isDisjoint(with: Shortcuts.disabledShortcutCommands))
+    }
+
+    func testPanelTabSwitchDefaultOwnsReleasedShiftCommandF() {
+        let command = CommandWrapper.PHI_SWITCH_CHAT_PANEL_AND_TAB
+        let key = ShortcutsKey(characters: "f", modifiers: [.command, .shift])
+        XCTAssertEqual(command.rawValue, 90040)
+        XCTAssertEqual(Shortcuts.DefaultShortcuts[command], key)
+        XCTAssertTrue(Shortcuts.disabledShortcutCommands.contains(.IDC_TOGGLE_FULLSCREEN_TOOLBAR))
+        XCTAssertEqual(Shortcuts.DefaultShortcuts.filter {
+            $0.value.menuKeyEquivalent == key.menuKeyEquivalent
+        }.map(\.key), [command])
+    }
+
+    func testPasteAndMatchStyleAlternateMatchesLiveMenu() {
+        XCTAssertEqual(Shortcuts.DefaultShortcuts[.IDS_PASTE_MATCH_STYLE_MAC],
+                       .init(characters: "v", modifiers: [.command, .shift]))
+        XCTAssertEqual(Shortcuts.DefaultShortcuts[.IDC_CONTENT_CONTEXT_PASTE_AND_MATCH_STYLE],
+                       .init(characters: "v", modifiers: [.command, .shift, .option]))
+    }
+
+    func testAlternateNewTabDefaultUsesOptionCommandTWithoutChangingOtherDefaults() {
+        let key = ShortcutsKey(characters: "t", modifiers: [.command, .option])
+        XCTAssertEqual(CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue, 90030)
+        XCTAssertEqual(Shortcuts.DefaultShortcuts[.PHI_ALTERNATE_NEW_TAB], key)
+        XCTAssertEqual(Shortcuts.DefaultShortcuts.filter { $0.value == key }.map(\.key), [.PHI_ALTERNATE_NEW_TAB])
+        XCTAssertEqual(Shortcuts.DefaultShortcuts[.IDC_NEW_TAB], .init(characters: "t", modifiers: .command))
+        XCTAssertEqual(Shortcuts.DefaultShortcuts[.IDC_RESTORE_TAB], .init(characters: "t", modifiers: [.command, .shift]))
+        for retiredID in [90019, 90022, 90026, 90027] {
+            XCTAssertNil(CommandWrapper(rawValue: retiredID))
+        }
+    }
+
     override func setUpWithError() throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -54,26 +95,26 @@ final class ShortcutConfigurationTests: XCTestCase {
     }
 
     func testLegacyOmittedKeyAndUnknownCommandSurviveAnotherEdit() throws {
-        let legacy = Data("[{\"commandId\":999991},{\"commandId\":999992,\"key\":{\"characters\":\"x\",\"modifiersRaw\":1048576}}]".utf8)
+        let legacy = Data("[{\"commandId\":90019},{\"commandId\":999992,\"key\":{\"characters\":\"x\",\"modifiersRaw\":1048576}}]".utf8)
         try legacy.write(to: url)
         var configuration = ShortcutConfiguration()
         try configuration.reload(from: url)
         try configuration.set(custom, for: reloadID, at: url)
         var loaded = ShortcutConfiguration()
         try loaded.reload(from: url)
-        XCTAssertEqual(loaded.overrides[999991], .disabled)
+        XCTAssertEqual(loaded.overrides[90019], .disabled)
         XCTAssertEqual(loaded.overrides[999992], .custom(ShortcutsKey(characters: "x", modifiers: .command)))
         XCTAssertEqual(loaded.overrides[reloadID], custom)
     }
 
     func testExplicitKeypadShiftSurvivesReloadAlongsideLegacyRecordsAndExclusions() throws {
-        let legacy = Data("[{\"commandId\":999991,\"key\":{\"characters\":\"1\",\"modifiersRaw\":393216}}]".utf8)
+        let legacy = Data("[{\"commandId\":90019,\"key\":{\"characters\":\"1\",\"modifiersRaw\":393216}}]".utf8)
         try legacy.write(to: url)
         var configuration = ShortcutConfiguration()
         try configuration.reload(from: url)
         let oldKey = ShortcutsKey(characters: "1", modifiers: [.control, .shift])
         let keypad = ShortcutsKey(characters: "1", modifiers: [.control, .shift], preservesShift: true)
-        XCTAssertEqual(configuration.overrides[999991], .custom(oldKey))
+        XCTAssertEqual(configuration.overrides[90019], .custom(oldKey))
         XCTAssertEqual(oldKey.menuKeyEquivalent.modifiers, .control)
         try configuration.set(.custom(keypad), for: reloadID, at: url)
         try configuration.set(.excluding([keypad]), for: 999992, at: url)
@@ -81,7 +122,7 @@ final class ShortcutConfigurationTests: XCTestCase {
         try loaded.reload(from: url)
         XCTAssertEqual(loaded.overrides[reloadID], .custom(keypad))
         XCTAssertEqual(loaded.overrides[reloadID]?.key?.menuKeyEquivalent.modifiers, [.control, .shift])
-        XCTAssertEqual(loaded.overrides[999991], .custom(oldKey))
+        XCTAssertEqual(loaded.overrides[90019], .custom(oldKey))
         XCTAssertEqual(loaded.overrides[999992], .excluding([keypad]))
         XCTAssertFalse(try XCTUnwrap(loaded.overrides[999992]).excludes(oldKey))
     }

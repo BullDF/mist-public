@@ -157,7 +157,7 @@ final class ShortcutLayoutIntegrationTests: XCTestCase {
                 let withoutFunction = ShortcutsKey(characters: "e", modifiers: flags.subtracting(.function))
                 XCTAssertFalse(try XCTUnwrap(ShortcutsKey.eventKeys(for: event, inputSourceIdentifier: source)).matches(withoutFunction))
                 XCTAssertFalse(try frameworkMatches(withoutFunction, event: event))
-                XCTAssertTrue(KioskGlobalShortcutRegistrar.configurations(for: key, isEnabled: true).isEmpty,
+                XCTAssertTrue(SystemShortcutChordResolver.configurations(for: key, isEnabled: true).isEmpty,
                              "Carbon must not silently register the chord without its Function modifier")
             }
             for (characters, code) in [("\u{F72D}", kVK_PageDown), ("\u{F700}", kVK_UpArrow), ("\u{F704}", kVK_F1)] {

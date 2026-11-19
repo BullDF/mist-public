@@ -138,7 +138,7 @@ final class BrowserStateBookmarkLayoutTests: XCTestCase {
         state.updateNormalTabs()
 
         XCTAssertEqual(bookmarkTab.guidInLocalDB, bookmarkGuid)
-        XCTAssertTrue(state.normalTabs.isEmpty)
+        XCTAssertEqual(state.normalTabs.map(\.guid), [101])
 
         switchLayout(to: .comfortable)
         XCTAssertTrue(waitUntil {
@@ -181,7 +181,7 @@ final class BrowserStateBookmarkLayoutTests: XCTestCase {
         state.updateNormalTabs()
 
         XCTAssertTrue(bookmark.isOpened)
-        XCTAssertTrue(state.normalTabs.isEmpty)
+        XCTAssertEqual(state.normalTabs.map(\.guid), [201, 202])
 
         switchLayout(to: .comfortable)
         XCTAssertTrue(waitUntil {
@@ -260,7 +260,8 @@ final class BrowserStateBookmarkLayoutTests: XCTestCase {
                                           url: "https://primary.example",
                                           secondaryUrl: "https://secondary.example")
 
-        state.openBookmark(bookmark)
+        state.openTwoURLsAsSplit(primaryURL: bookmark.url!, secondaryURL: bookmark.secondaryUrl!,
+                                 bookmarkGuid: bookmarkGuid)
 
         let pendingGuid = try XCTUnwrap(
             state.pendingPrimarySplitTargetByGuid.first {
@@ -293,7 +294,8 @@ final class BrowserStateBookmarkLayoutTests: XCTestCase {
                                           guid: bookmarkGuid,
                                           url: "https://primary.example",
                                           secondaryUrl: "https://secondary.example")
-        state.openBookmark(bookmark)
+        state.openTwoURLsAsSplit(primaryURL: bookmark.url!, secondaryURL: bookmark.secondaryUrl!,
+                                 bookmarkGuid: bookmarkGuid)
         let pendingGuid = try XCTUnwrap(
             state.pendingPrimarySplitTargetByGuid.first {
                 $0.value.boundBookmarkGuid == bookmarkGuid
@@ -405,20 +407,22 @@ final class BookmarkLayoutTestWebContentWrapper: NSObject, WebContentWrapper {
     }
 
     private(set) var customValues: [String] = []
+    private(set) var activationCount = 0
+    private(set) var closeCount = 0
 
     init(urlString: String?) {
         self.urlString = urlString
         super.init()
     }
 
-    func close() {}
+    func close() { closeCount += 1 }
     func reload() {}
     func reloadBypassingCache() {}
     func goBack() {}
     func goForward() {}
     func stopLoading() {}
     func navigate(toURL urlString: String) { self.urlString = urlString }
-    func setAsActiveTab() {}
+    func setAsActiveTab() { activationCount += 1 }
     func moveSelf(to newIndex: Int, selectAfterMove: Bool) {}
     func moveSelf(toNewWindow activateNewWindow: Bool) {}
     func moveSelf(toWindow targetWindowId: Int64, at insertIndex: Int) {}

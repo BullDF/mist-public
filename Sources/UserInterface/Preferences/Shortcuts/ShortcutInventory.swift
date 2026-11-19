@@ -31,9 +31,9 @@ struct ShortcutBinding: Hashable {
     struct Scope: OptionSet, Hashable {
         let rawValue: Int
         static let browser = Scope(rawValue: 1 << 0)
-        static let kiosk = Scope(rawValue: 1 << 1)
+        static let peek = Scope(rawValue: 1 << 1)
         static let nonBrowser = Scope(rawValue: 1 << 2)
-        static let all: Scope = [.browser, .kiosk, .nonBrowser]
+        static let all: Scope = [.browser, .peek, .nonBrowser]
     }
 
     enum Source: Int, Hashable {

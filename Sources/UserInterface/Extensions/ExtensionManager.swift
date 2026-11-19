@@ -321,11 +321,7 @@ class ExtensionManager: ObservableObject {
         )
         
         extensions = mapped
-        #if NIGHTLY_BUILD || DEBUG
             .filter { $0.id != "fenmfiepnpdlhplemgijlimpbebebljo" }
-        #else
-            .filter { !Self.phiExtensionIds.contains($0.id) }
-        #endif
             .sorted {
                 if $0.isPinned != $1.isPinned {
                     return $0.isPinned && !$1.isPinned
@@ -514,28 +510,6 @@ class ExtensionManager: ObservableObject {
         return true
     }
     
-    #if DEBUG
-    func loadTestData(itemCount: Int) {
-        guard itemCount >= 0 else { return }
-        
-        let mockData: [[String: Any]]
-        if itemCount == 0 {
-            mockData = []
-        } else {
-            mockData = (1...itemCount).map { i -> [String: Any] in
-                let shouldPin = i <= min(4, max(1, itemCount / 4))
-                return [
-                    "id": "test_\(i)",
-                    "name": "Test Extension \(i)",
-                    "version": "1.0.0",
-                    "isPinned": shouldPin,
-                    "pinnedIndex": shouldPin ? i : -1
-                ]
-            }
-        }
-        extensionChanged(mockData)
-    }
-    #endif
 }
 
 extension NSColor {

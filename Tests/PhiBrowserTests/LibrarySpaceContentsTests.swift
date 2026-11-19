@@ -275,9 +275,9 @@ final class LibrarySpaceContentsTests: XCTestCase {
             state.splits = [SplitGroup(id: "pair", primaryTabId: 1, secondaryTabId: 2,
                                       layout: .horizontal, ratio: 0.5)]
             state.splitBookmarkBindings[pairID] = "pair"
-            state.syncAllBookmarksOpenedState()
+            state.updateNormalTabs()
         }
-        for state in matching { XCTAssertTrue(state.normalTabs.isEmpty) }
+        for state in matching { XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3]) }
 
         LibrarySpaceManagementController.prepareLiveBookmarksForRemoval([folder], scope: contents.scope,
             storeIdentifier: contents.storeIdentifier, states: matching + unrelated, moving: moving)

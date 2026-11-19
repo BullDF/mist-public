@@ -5,7 +5,6 @@
 
 import Foundation
 
-#if DEBUG
 /// Development aid: `-phi-auto-reader` opens Reader View on the first content
 /// tab shortly after it loads.
 ///
@@ -52,11 +51,10 @@ extension BrowserState {
             // Let the page finish its own load before asking for the reader.
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             guard let self, let tab else { return }
-            self.toggleReaderView(for: tab, from: .automation)
+            self.toggleReaderView(for: tab)
         }
     }
 }
-#endif
 
 /// Reader View lives in the Phi Reader extension (`phi-ai/ai-extension/
 /// reader`): it extracts in-page and navigates the tab to its own reading
@@ -84,7 +82,6 @@ extension BrowserState {
               readerOverlayState.reader(forOrigin: tab.guid) == nil,
               !hasPendingReaderOverlayRequest(forOrigin: tab.guid) else { return }
         AppLogInfo("📖 [Reader] open requested tab=\(tab.guid) peek=\(peekState.peekTab(withId: tab.guid) != nil) from=contextMenu")
-        ReaderViewAnalytics.noteOpenRequested(for: tab, from: .contextMenu)
         noteReaderOverlayRequested(forOrigin: tab.guid)
         ReaderExtensionBridge.open(tab)
     }
@@ -98,8 +95,7 @@ extension BrowserState {
     /// because nothing here changes until the extension's surface actually
     /// mounts.
     @MainActor
-    func toggleReaderView(for tab: Tab,
-                          from entryPoint: ReaderViewAnalytics.EntryPoint) {
+    func toggleReaderView(for tab: Tab) {
         if readerOverlayState.reader(forOrigin: tab.guid) != nil {
             // The overlay is app-hosted: closing its tab directly is the
             // whole close (the extension cleans its cache on tab removal).
@@ -112,8 +108,7 @@ extension BrowserState {
             // Swallow a repeat press while an open is still extracting — a
             // second request would spawn a duplicate surface tab.
             guard !hasPendingReaderOverlayRequest(forOrigin: tab.guid) else { return }
-            AppLogInfo("📖 [Reader] open requested tab=\(tab.guid) peek=\(peekState.peekTab(withId: tab.guid) != nil) from=\(entryPoint.rawValue)")
-            ReaderViewAnalytics.noteOpenRequested(for: tab, from: entryPoint)
+            AppLogInfo("📖 [Reader] open requested tab=\(tab.guid) peek=\(peekState.peekTab(withId: tab.guid) != nil)")
             noteReaderOverlayRequested(forOrigin: tab.guid)
             ReaderExtensionBridge.open(tab)
         }

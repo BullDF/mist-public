@@ -208,45 +208,6 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
         XCTAssertEqual(reportedProgress.last?.fractionCompleted, 1)
     }
 
-    func testRestorePreparationReportsTraceMetrics() async throws {
-        let fixture = try makeFixture()
-        let uptime = UptimeSequence([20, 23.25])
-        var traces: [TimeMachineRestorePreparationTrace] = []
-        let coordinator = makeCoordinator(
-            fixture: fixture,
-            packageDownloader: { _, _, destinationURL in
-                try "zip".write(to: destinationURL, atomically: true, encoding: .utf8)
-                return destinationURL
-            },
-            unzipRunner: { _, arguments in
-                let destinationURL = URL(fileURLWithPath: arguments.last!)
-                try self.writeApp(
-                    at: destinationURL.appendingPathComponent("Phi.app", isDirectory: true),
-                    bundleIdentifier: "com.phibrowser.Mac",
-                    build: "590"
-                )
-            },
-            uptimeProvider: uptime.next,
-            restorePreparationTraceReporter: { trace in
-                traces.append(trace)
-            }
-        )
-
-        _ = try await coordinator.prepareAndLaunchRestore(for: fixture.backup)
-
-        let operationURL = fixture.paths.pendingOperationURL(id: fixture.operationID)
-        let trace = try XCTUnwrap(traces.first)
-        XCTAssertEqual(traces.count, 1)
-        XCTAssertEqual(trace.result, .succeeded)
-        XCTAssertEqual(trace.operationID, fixture.operationID)
-        XCTAssertEqual(trace.backupID, fixture.backup.id)
-        XCTAssertEqual(trace.duration, 3.25)
-        XCTAssertEqual(trace.lastStage, .readyToQuit)
-        XCTAssertEqual(trace.packageSizeBytes, 3)
-        XCTAssertEqual(trace.operationSizeBytes, TimeMachineFileMetrics.sizeBytes(at: operationURL))
-        XCTAssertGreaterThan(trace.operationSizeBytes ?? 0, trace.packageSizeBytes ?? 0)
-    }
-
     func testCanaryRestorePlanUsesConfiguredAppBundleName() async throws {
         let fixture = try makeFixture(
             bundleIdentifier: "com.phibrowser.canary.Mac",
@@ -396,9 +357,7 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
         packageDownloader: @escaping TimeMachineRestoreCoordinator.PackageDownloader,
         unzipRunner: @escaping TimeMachineRestoreCoordinator.ProcessRunner,
         helperLauncher: @escaping TimeMachineRestoreCoordinator.ProcessRunner = { _, _ in },
-        progressHandler: TimeMachineRestoreCoordinator.ProgressHandler? = nil,
-        uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        restorePreparationTraceReporter: @escaping TimeMachineRestoreCoordinator.RestorePreparationTraceReporter = { _ in }
+        progressHandler: TimeMachineRestoreCoordinator.ProgressHandler? = nil
     ) -> TimeMachineRestoreCoordinator {
         TimeMachineRestoreCoordinator(
             paths: fixture.paths,
@@ -412,10 +371,8 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
             preferencesURLProvider: { fixture.preferencesURL },
             operationIDProvider: { fixture.operationID },
             hostPIDProvider: { 12345 },
-            uptimeProvider: uptimeProvider,
             journalStore: TimeMachineRestoreJournalStore(paths: fixture.paths),
-            progressHandler: progressHandler,
-            restorePreparationTraceReporter: restorePreparationTraceReporter
+            progressHandler: progressHandler
         )
     }
 
@@ -437,18 +394,6 @@ final class TimeMachineRestoreCoordinatorTests: XCTestCase {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         temporaryDirectories.append(url)
         return url
-    }
-}
-
-private final class UptimeSequence {
-    private var values: [TimeInterval]
-
-    init(_ values: [TimeInterval]) {
-        self.values = values
-    }
-
-    func next() -> TimeInterval {
-        values.removeFirst()
     }
 }
 

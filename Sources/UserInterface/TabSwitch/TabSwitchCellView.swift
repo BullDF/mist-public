@@ -125,7 +125,7 @@ final class TabSwitchCellView: NSView {
         }
         trackingArea = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp],
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp],
             owner: self,
             userInfo: nil
         )
@@ -142,6 +142,12 @@ final class TabSwitchCellView: NSView {
     override func mouseExited(with event: NSEvent) {
         isHovered = false
         onHovered?(false)
+    }
+
+    // The ignored mouseEntered under a stationary cursor won't repeat, so
+    // moving within the starting cell has to select it.
+    override func mouseMoved(with event: NSEvent) {
+        onHovered?(true)
     }
 
     override func layout() {

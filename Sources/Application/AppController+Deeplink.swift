@@ -10,14 +10,8 @@ extension AppController {
         case .settings(let section):
             guard let section else { return }
             switch section {
-            case .account:
-                showSettings(pane: .account)
-            case .aisetting:
-                showSettings(pane: .aisettings)
             case .general:
                 showSettings(pane: .general)
-            case .imchannels:
-                showSettings(pane: .aisettings)
             case .shortcus:
                 showSettings(pane: .shortcuts)
             case .profiles:

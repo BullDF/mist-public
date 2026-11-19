@@ -70,7 +70,6 @@ private final class FakeContentBlockingBridge: ContentBlockingBridging {
     }
 
     var downloadCalls: [String] = []
-    var deleteDownloadCalls: [String] = []
 
     func downloadContentBlockingLists(_ profileId: String, listIds: [String],
                                       completion: @escaping (Bool, String?) -> Void) {
@@ -78,11 +77,6 @@ private final class FakeContentBlockingBridge: ContentBlockingBridging {
         completion(!failWrites, failWrites ? "nope" : nil)
     }
 
-    func deleteContentBlockingListDownload(_ profileId: String, listId: String,
-                                           completion: @escaping (Bool, String?) -> Void) {
-        deleteDownloadCalls.append(listId)
-        completion(!failWrites, failWrites ? "nope" : nil)
-    }
 }
 
 /// Swift stand-ins for the framework's protocol-typed snapshot objects.
@@ -160,11 +154,9 @@ final class ContentBlockingSettingsTests: XCTestCase {
         center = NotificationCenter()
     }
 
-    private var mirrored: [ContentBlockingState] = []
 
     private func makeFacade() -> ContentBlockingSettings {
-        ContentBlockingSettings(profileId: "Default", bridge: bridge, notificationCenter: center,
-                                mirrorSwitches: { [weak self] in self?.mirrored.append($0) })
+        ContentBlockingSettings(profileId: "Default", bridge: bridge, notificationCenter: center)
     }
 
     private func waitForMain() {
@@ -173,27 +165,15 @@ final class ContentBlockingSettingsTests: XCTestCase {
         wait(for: [done], timeout: 2)
     }
 
-    func testDownloadAndDeleteDownloadUpdateTheRowOptimistically() {
+    func testDownloadUpdatesTheRowOptimistically() {
         let facade = makeFacade()
         facade.refresh()
         waitForMain()
-        facade.deleteListDownload("easylist")
-        var list = facade.state?.lists.first { $0.id == "easylist" }
-        XCTAssertEqual(bridge.deleteDownloadCalls, ["easylist"])
-        XCTAssertEqual(list?.available, false)
-        XCTAssertEqual(list?.checked, false)
-
         facade.downloadList("easylist")
-        list = facade.state?.lists.first { $0.id == "easylist" }
+        let list = facade.state?.lists.first { $0.id == "easylist" }
         XCTAssertEqual(bridge.downloadCalls, ["easylist"])
         XCTAssertEqual(list?.isDownloading, true)
         XCTAssertEqual(list?.lastError, "")
-
-        bridge.failWrites = true
-        let before = facade.state
-        facade.deleteListDownload("adguard-japanese")
-        waitForMain()
-        XCTAssertEqual(facade.state, before, "a refused delete reverts the row")
     }
 
     func testRefreshMapsBridgePayload() {
@@ -231,27 +211,6 @@ final class ContentBlockingSettingsTests: XCTestCase {
         XCTAssertEqual(bridge.categoryCalls.first?.1, true)
     }
 
-    func testMirrorsSwitchChangesOnly() {
-        let facade = makeFacade()
-        facade.refresh()
-        waitForMain()
-        XCTAssertEqual(mirrored.map(\.blockTrackers), [false])
-
-        // Same switches again (a list or download event): nothing to mirror.
-        facade.refresh()
-        waitForMain()
-        XCTAssertEqual(mirrored.count, 1)
-
-        facade.setCategory(.trackers, enabled: true)
-        waitForMain()
-        XCTAssertEqual(mirrored.map(\.blockTrackers), [false, true])
-
-        // A refused write mirrors the optimistic value, then the reverted one.
-        bridge.failWrites = true
-        facade.setCategory(.trackers, enabled: false)
-        waitForMain()
-        XCTAssertEqual(mirrored.map(\.blockTrackers), [false, true, false, true])
-    }
 
     func testSetCategoryRevertsOnFailure() {
         let facade = makeFacade()

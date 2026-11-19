@@ -48,8 +48,6 @@ final class TabDraggingSession {
     }
 
     private let eventsSubject = PassthroughSubject<Event, Never>()
-    var events: AnyPublisher<Event, Never> { eventsSubject.eraseToAnyPublisher() }
-
     /// Native AppKit dragging session for the current drag, if available (owned by AppKit).
     /// We keep it weak to avoid extending its lifetime.
     private(set) weak var nativeSession: NSDraggingSession?
@@ -156,10 +154,8 @@ final class TabDraggingSession {
         return item.shouldTrackDraggingImage()
     }
 
-    #if DEBUG
     private var lastMoveLogAt: Date?
     private var lastMoveLogLocation: CGPoint?
-    #endif
     
     init(state: BrowserState) {
         self.snapshot = Snapshot(phase: .idle, draggingItem: nil, screenLocation: nil, updatedAt: Date())
@@ -206,9 +202,7 @@ final class TabDraggingSession {
                 let components = provider()
                 if let extractedImage = self.extractImageFromComponents(components) {
                     self.cachedOriginalDragImage = extractedImage
-                    #if DEBUG
                     self.debugLogTabImageModeChange("early-extracted original image size=\(String(format: "%.0fx%.0f", extractedImage.size.width, extractedImage.size.height))")
-                    #endif
                     stop.pointee = true
                 }
             }
@@ -222,13 +216,11 @@ final class TabDraggingSession {
     /// Provide the original drag image (typically captured by the source view/controller at drag begin).
     func setOriginalDragImage(_ image: NSImage?) {
         cachedOriginalDragImage = image
-        #if DEBUG
         if let image {
             debugLogTabImageModeChange("setOriginalDragImage size=\(String(format: "%.0fx%.0f", image.size.width, image.size.height))")
         } else {
             debugLogTabImageModeChange("setOriginalDragImage nil")
         }
-        #endif
     }
 
     /// Convenience for performing AppKit operations on the current native dragging session (e.g. updating drag image).
@@ -436,6 +428,9 @@ final class TabDraggingSession {
            let webContentWrapper = web.webContentWrapper {
             recordPendingTearOffWindowPlacement(screenLocation: snapshot.screenLocation)
             webContentWrapper.updateTabCustomValue("")
+            if let tab = item as? Tab {
+                state?.seedNewTabBeforeMovingOut(tabIds: [tab.guid])
+            }
             webContentWrapper.moveSplit(toNewWindow: true)
         }
     }
@@ -582,7 +577,9 @@ final class TabDraggingSession {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            self?.handleMainBrowserWindowCreated(notification)
+            MainActor.assumeIsolated {
+                self?.handleMainBrowserWindowCreated(notification)
+            }
         }
     }
     
@@ -1176,13 +1173,6 @@ extension TabDraggingSession {
         resolveOutsideWindowDragImage(for: item)
     }
 
-    /// Per-tab snapshot for UI surfaces that render each tab individually
-    /// (group overview, tab switcher). Never returns the paired composite —
-    /// use `pageSnapshotImage(for:)` for the drag preview path instead.
-    func singleTabSnapshotImage(for tab: Tab) -> NSImage? {
-        makeTabSnapshotImage(tab)
-    }
-
     private func snapshotDragFrame(around screenLocation: CGPoint, size: NSSize) -> NSRect {
         // Put the snapshot slightly above the cursor so it doesn't fully cover drop targets.
         let origin = NSPoint(
@@ -1190,17 +1180,6 @@ extension TabDraggingSession {
             y: screenLocation.y - size.height * 0.25
         )
         return NSRect(origin: origin, size: size)
-    }
-
-    private func makeTabSnapshotImage(_ tab: Tab) -> NSImage? {
-        if tab.isActive, let view = tab.webContentView,
-           let live = makeTabSnapshotImage(view) {
-            // Active tab: prefer live view capture (most up-to-date).
-            return live
-        }
-        // Inactive tab, or active tab whose live capture failed:
-        // use Chromium's cached thumbnail.
-        return requestChromiumThumbnail(for: tab)
     }
 
     /// Returns Chromium's cached JPEG thumbnail as a rounded snapshot image, or nil.
@@ -1215,14 +1194,6 @@ extension TabDraggingSession {
         )
     }
     
-    private func makeTabSnapshotImage(_ webContentView: NSView) -> NSImage? {
-        snapshotImage(
-            of: webContentView,
-            targetSize: Self.tabSnapshotSize,
-            cornerRadius: Self.tabSnapshotCornerRadius
-        )
-    }
-
     private func makeTabPlaceholderImage(url: String?, title: String) -> NSImage {
         let fallbackFavicon = NSImage(systemSymbolName: "globe", accessibilityDescription: "Website") ?? NSImage()
         let favicon: NSImage
@@ -1246,7 +1217,7 @@ extension TabDraggingSession {
     /// - Parameters:
     ///   - favicon: Favicon image to render (will be scaled to a fixed size).
     ///   - title: Title text; centered and limited to at most 2 lines (truncated with ellipsis if needed).
-    static func makeTabPlaceholderSnapshot(favicon: NSImage, title: String, needBorder: Bool = true) -> NSImage {
+    static func makeTabPlaceholderSnapshot(favicon: NSImage, title: String) -> NSImage {
         let canvasSize = Self.tabSnapshotSize
         let cornerRadius = Self.tabSnapshotCornerRadius
 
@@ -1263,12 +1234,10 @@ extension TabDraggingSession {
         bg.setFill()
         canvasRect.fill()
 
-        if needBorder {
-            // Border
-            NSColor.separatorColor.withAlphaComponent(0.55).setStroke()
-            clipPath.lineWidth = 1
-            clipPath.stroke()
-        }
+        // Border
+        NSColor.separatorColor.withAlphaComponent(0.55).setStroke()
+        clipPath.lineWidth = 1
+        clipPath.stroke()
 
         // Layout constants
         let horizontalInset: CGFloat = 12
@@ -1357,65 +1326,6 @@ extension TabDraggingSession {
         return image
     }
 
-    private func snapshotImage(of view: NSView, targetSize: NSSize, cornerRadius: CGFloat) -> NSImage? {
-        // Ensure we have a non-zero size to snapshot.
-        let bounds = view.bounds
-        guard bounds.width > 2, bounds.height > 2 else { return nil }
-
-        // For GPU-rendered views (e.g., Chromium web content), use CGWindowListCreateImage.
-        // On macOS 26+, traditional methods like `bitmapImageRepForCachingDisplay`/`cacheDisplay`
-        // and `CALayer.render(in:)` may return blank for GPU-accelerated views.
-        if let image = WebContentSnapshotter.captureOnScreen(view, resolution: .nominalResolution) {
-            return image.drawnAsRoundedSnapshot(targetSize: targetSize, cornerRadius: cornerRadius)
-        }
-        
-        // Fallback: try layer-based rendering.
-        if view.wantsLayer, let layer = view.layer {
-            if let image = snapshotImageFromLayer(layer, bounds: bounds) {
-                return image.drawnAsRoundedSnapshot(targetSize: targetSize, cornerRadius: cornerRadius)
-            }
-        }
-
-        // Last resort: traditional view-based snapshot for non-layer views.
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
-        view.cacheDisplay(in: bounds, to: rep)
-
-        let image = NSImage(size: bounds.size)
-        image.addRepresentation(rep)
-
-        return image.drawnAsRoundedSnapshot(targetSize: targetSize, cornerRadius: cornerRadius)
-    }
-    
-    /// Captures a snapshot of the given CALayer by rendering it into a bitmap context.
-    private func snapshotImageFromLayer(_ layer: CALayer, bounds: NSRect) -> NSImage? {
-        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let width = Int(bounds.width * scale)
-        let height = Int(bounds.height * scale)
-        
-        guard width > 0, height > 0 else { return nil }
-        
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        ) else { return nil }
-        
-        context.scaleBy(x: scale, y: scale)
-        layer.render(in: context)
-        
-        guard let cgImage = context.makeImage() else { return nil }
-        
-        // Check if the layer render produced a blank image.
-        if WebContentSnapshotter.isImageBlank(cgImage) {
-            return nil
-        }
-        
-        return NSImage(cgImage: cgImage, size: bounds.size)
-    }
 }
 
 private extension NSImage {
@@ -1447,18 +1357,13 @@ private extension NSImage {
 }
 
 extension TabDraggingSession {
-    #if DEBUG
     private func debugLogTabImageModeChange(_ action: String) {
         AppLogDebug("[TabDraggingSession] tabDragImage \(action)")
     }
-    #else
-    private func debugLogTabImageModeChange(_ action: String) {}
-    #endif
 }
 
 // MARK: - Debug logging
 extension TabDraggingSession {
-    #if DEBUG
     private func debugLog(event: String, snapshot: Snapshot) {
         AppLogDebug("[TabDraggingSession] \(event) phase=\(snapshot.phase) item=\(format(item: snapshot.draggingItem)) screen=\(format(point: snapshot.screenLocation))")
     }
@@ -1496,10 +1401,6 @@ extension TabDraggingSession {
         guard let point else { return "nil" }
         return String(format: "(%.1f, %.1f)", point.x, point.y)
     }
-    #else
-    private func debugLog(event: String, snapshot: Snapshot) {}
-    private func debugLogMoveIfNeeded(snapshot: Snapshot) {}
-    #endif
 }
 
 extension SidebarItem {

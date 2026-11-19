@@ -333,9 +333,9 @@ final class BookmarkHTMLExporterTests: XCTestCase {
             from: DateComponents(year: 2026, month: 7, day: 10, hour: 12)))
 
         XCTAssertEqual(BookmarkHTMLExporter.defaultFilename(spaceName: "Default", date: date),
-                       "Phi-Bookmarks-Default-2026-07-10.html")
+                       "Mist-Bookmarks-Default-2026-07-10.html")
         XCTAssertEqual(BookmarkHTMLExporter.defaultFilename(spaceName: "My Work: A/B", date: date),
-                       "Phi-Bookmarks-My-Work-A-B-2026-07-10.html")
+                       "Mist-Bookmarks-My-Work-A-B-2026-07-10.html")
     }
 
     /// Builds an in-memory pinned-record Tab the way `Tab(with:)` maps a

@@ -15,12 +15,184 @@ import XCTest
 final class ContentSurfaceHostingTests: XCTestCase {
 
     private var tempDirectories: [URL] = []
+    private var stores: [LocalStore] = []
     private var windows: [NSWindow] = []
+    /// A test wrapper's `nativeView` is weak, as Chromium's is.
+    private var pages: [NSView] = []
 
-    override func tearDownWithError() throws {
+    private func screenshotCoverFixture() throws -> (root: NSView, page: NSView, image: CGImage) {
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 500, height: 400),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        windows.append(window)
+        let root = NSView(frame: CGRect(x: 0, y: 0, width: 500, height: 400))
+        window.contentView = root
+        let page = NSView(frame: CGRect(x: 12, y: 18, width: 400, height: 250))
+        page.autoresizingMask = [.width, .height]
+        root.addSubview(page)
+        let context = try XCTUnwrap(CGContext(data: nil, width: 1600, height: 1000,
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        return (root, page, try XCTUnwrap(context.makeImage()))
+    }
+
+    func testScreenshotCoverSitsAbovePageAndIsRemovedOnFailure() throws {
+        let (root, page, image) = try screenshotCoverFixture()
+        let above = NSView(frame: root.bounds)
+        root.addSubview(above)
+        let frame = page.frame, bounds = page.bounds, autoresizing = page.autoresizingMask
+        let cover = try XCTUnwrap(BrowserAgentScreenshotCover(croppedImage: image, displaySize: page.bounds.size, page: page,
+            backgroundColor: .white, isValid: { true }))
+        XCTAssertEqual(root.subviews, [page, cover, above])
+        XCTAssertEqual(cover.frame, page.frame)
+        XCTAssertNil(cover.hitTest(.zero), "The cover never intercepts page input")
+        XCTAssertThrowsError(try { () throws -> Void in
+            defer { cover.remove() }
+            throw BrowserAgentTabPreview.CaptureError.unavailable
+        }())
+        XCTAssertEqual(root.subviews, [page, above])
+        XCTAssertTrue(page.superview === root)
+        XCTAssertEqual(page.frame, frame)
+        XCTAssertEqual(page.bounds, bounds)
+        XCTAssertEqual(page.autoresizingMask, autoresizing)
+        XCTAssertFalse(page.isHidden)
+    }
+
+    func testScreenshotCoverRemovesItselfWhenPageIsReparented() throws {
+        let (root, page, image) = try screenshotCoverFixture()
+        let cover = try XCTUnwrap(BrowserAgentScreenshotCover(croppedImage: image, displaySize: page.bounds.size, page: page,
+            backgroundColor: .white, isValid: { true }))
+        defer { cover.remove() }
+        let destination = NSView(frame: root.bounds)
+        root.addSubview(destination)
+        destination.addSubview(page)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        XCTAssertNil(cover.superview, "A handoff drops the sibling before the next display")
+        XCTAssertTrue(page.superview === destination)
+    }
+
+    func testScreenshotCoverRemovesItselfForHiddenPagesAndInvalidGenerations() throws {
+        let (_, page, image) = try screenshotCoverFixture()
+        var valid = true
+        let first = try XCTUnwrap(BrowserAgentScreenshotCover(croppedImage: image, displaySize: page.bounds.size, page: page,
+            backgroundColor: .white, isValid: { valid }))
+        defer { first.remove() }
+        valid = false
+        first.reconcile()
+        XCTAssertNil(first.superview)
+        let second = try XCTUnwrap(BrowserAgentScreenshotCover(croppedImage: image, displaySize: page.bounds.size, page: page,
+            backgroundColor: .white, isValid: { true }))
+        defer { second.remove() }
+        page.isHidden = true
+        second.reconcile()
+        XCTAssertNil(second.superview)
+        XCTAssertNil(BrowserAgentScreenshotCover(croppedImage: image, displaySize: page.bounds.size, page: page,
+            backgroundColor: .white, isValid: { true }))
+        XCTAssertTrue(page.isHidden)
+    }
+
+    func testPreviewStackKeepsEveryCardTheSameSize() throws {
+        let root = NSView(frame: CGRect(x: 0, y: 0, width: 1000, height: 1000))
+        let stack = BrowserAgentPreviewStack()
+        root.addSubview(stack)
+        let tabs = (1...5).map { Tab(guid: $0, url: "https://page.example/", isActive: false, index: $0) }
+        stack.show(tabs.enumerated().map { .init(tab: $0.element, mount: $0.offset == 0 ? .live : .still, still: nil) }, aspect: 0.625)
+        XCTAssertEqual(stack.visibleTabIds, [1, 2, 3])
+        let first = try XCTUnwrap(stack.card(for: 1))
+        XCTAssertEqual(first.frame.width, 400, accuracy: 0.01)
+        for card in stack.visibleCards { XCTAssertEqual(card.frame.size, first.frame.size) }
+        let original = first.frame.size
+        stack.show(tabs.reversed().map { .init(tab: $0, mount: .still, still: nil) }, aspect: 0.625)
+        for card in stack.visibleCards { XCTAssertEqual(card.frame.size, original) }
+        stack.layoutCards(pageSize: CGSize(width: 500, height: 900))
+        XCTAssertEqual(stack.visibleTabIds.count, 1)
+    }
+
+    private func mountFixture() -> (BrowserAgentTabPreview, Tab, PageColorTestWebContentWrapper, NSView) {
+        let wrapper = PageColorTestWebContentWrapper(urlString: "https://page.example/")
+        let page = NSView()
+        pages.append(page)
+        wrapper.nativeView = page
+        wrapper.devToolsTargetId = "mount-target"
+        let tab = Tab(guid: 987, url: wrapper.urlString, isActive: false, index: 0, webContentView: wrapper)
+        let holder = NSView(frame: .zero)
+        holder.wantsLayer = true
+        holder.layer?.masksToBounds = true
+        let preview = BrowserAgentTabPreview()
+        preview.holder = { holder }
+        preview.realSize = { CGSize(width: 900, height: 700) }
+        return (preview, tab, wrapper, holder)
+    }
+
+    func testOutOfSightMountHasRealSizeEmptyClipAndLowestZOrder() throws {
+        let (preview, tab, wrapper, holder) = mountFixture()
+        defer { preview.release() }
+        let page = try XCTUnwrap(wrapper.nativeView)
+        let root = NSView(frame: CGRect(x: 0, y: 0, width: 900, height: 700))
+        root.addSubview(holder)
+        preview.updateMounts([tab])
+        XCTAssertTrue(page.superview === holder)
+        XCTAssertTrue(preview.isBorrowing(tabId: tab.guid))
+        XCTAssertEqual(page.frame.size, CGSize(width: 900, height: 700))
+        XCTAssertEqual(page.bounds.size, page.frame.size)
+        let hosting = ContentSurfaceHosting.hosting(of: page, zOrder: 0, below: root, windowHeight: 700)
+        XCTAssertTrue(hosting.clip.isEmpty)
+        XCTAssertEqual(hosting.zOrder, 0)
+        preview.release()
+        XCTAssertNil(page.superview)
+        XCTAssertFalse(preview.isBorrowing(tabId: tab.guid))
+    }
+
+    func testMountSkipsVisibleAndDeadPages() throws {
+        let (preview, tab, wrapper, _) = mountFixture()
+        defer { preview.release() }
+        let (root, _, _) = try screenshotCoverFixture()
+        let page = try XCTUnwrap(wrapper.nativeView)
+        root.addSubview(page)
+        preview.updateMounts([tab])
+        XCTAssertTrue(page.superview === root)
+        XCTAssertFalse(preview.isBorrowing(tabId: tab.guid))
+        page.removeFromSuperview()
+        tab.crashState = CrashPageData(dictionary: [:])
+        preview.updateMounts([tab])
+        XCTAssertNil(page.superview)
+        tab.crashState = nil
+        wrapper.devToolsTargetId = nil
+        preview.reconcile()
+        XCTAssertNil(page.superview)
+    }
+
+    func testMountReconcilesViewTargetAndSizeChanges() throws {
+        let (preview, tab, wrapper, holder) = mountFixture()
+        defer { preview.release() }
+        preview.updateMounts([tab])
+        let first = try XCTUnwrap(wrapper.nativeView)
+        let replacement = NSView()
+        wrapper.nativeView = replacement
+        wrapper.devToolsTargetId = "replacement-target"
+        preview.realSize = { CGSize(width: 700, height: 500) }
+        preview.reconcile()
+        XCTAssertNil(first.superview)
+        XCTAssertTrue(replacement.superview === holder)
+        XCTAssertEqual(replacement.frame.size, CGSize(width: 700, height: 500))
+        preview.updateMounts([])
+        XCTAssertNil(replacement.superview)
+        XCTAssertFalse(preview.hasActivity)
+    }
+
+    override func tearDown() async throws {
         WebContentContainerViewController.panelSlideDurationForTesting = nil
         windows.forEach { $0.close() }
         windows.removeAll()
+        pages.removeAll()
+        // A slide cut short by a tab switch, a tab close or content
+        // fullscreen keeps its page's views, and with them the fixture's
+        // state, past the test. Closed, its store stops answering every
+        // later test's saves with a fetch from a removed directory.
+        for store in stores {
+            try await store.closeForAccountDirectoryRemoval()
+        }
+        stores.removeAll()
         for directory in tempDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -102,11 +274,27 @@ final class ContentSurfaceHostingTests: XCTestCase {
 
     // MARK: - Extension side panel slide
 
-    /// The extension side panel slides in by a Core Animation group, which
-    /// puts the views around the page at their end frame at once while the
-    /// page follows its card on every frame. The surface's view keeps its
-    /// frame, and the page is told each frame what shows, rounded, not the
-    /// part the end frame leaves.
+    func testOrdinaryPageCallbacksDoNotEnterPreviewLifecycle() throws {
+        let fixture = try makeFixture()
+        let page = try XCTUnwrap(fixture.container.children.compactMap { $0 as? WebContentViewController }.first)
+        var previewUpdates = 0
+        page.onAgentPreviewVisibilityChanged = { previewUpdates += 1 }
+
+        XCTAssertNil(fixture.state.browserAgentPreview)
+        page.refreshContentForCurrentTab()
+        let tabs = fixture.state.tabs
+        fixture.state.tabs = tabs
+        fixture.container.restoreFocusAfterPresentation()
+        fixture.container.collapseContentFullscreenForConcealment()
+        NotificationCenter.default.post(name: .browserAgentPreviewDidChange, object: nil,
+                                        userInfo: ["windowId": fixture.state.windowId + 1])
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        XCTAssertEqual(previewUpdates, 0, "An ordinary page refresh must not reenter preview reconciliation")
+        XCTAssertNil(fixture.state.browserAgentPreview, "Ordinary tab/window callbacks must not create preview resources")
+    }
+
+
     func testASidePanelSlideInTellsThePageWhatShowsOnEveryFrame() throws {
         WebContentContainerViewController.panelSlideDurationForTesting = 0.5
         let fixture = try makeFixture()
@@ -462,6 +650,7 @@ final class ContentSurfaceHostingTests: XCTestCase {
         tempDirectories.append(directory)
         let store = LocalStore(account: Account(userID: UUID().uuidString),
                                storeDirectoryURL: directory)
+        stores.append(store)
         let state = BrowserState(windowId: 24, localStore: store, profileId: "Default")
 
         let webView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))

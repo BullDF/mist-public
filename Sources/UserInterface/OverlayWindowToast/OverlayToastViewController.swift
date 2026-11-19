@@ -49,12 +49,9 @@ class OverlayToastViewController: NSViewController {
             make.edges.equalToSuperview()
         }
 
-        #if DEBUG
         seedOverlayToastForUITestsIfNeeded()
-        #endif
     }
 
-    #if DEBUG
     private func seedOverlayToastForUITestsIfNeeded() {
         let arguments = ProcessInfo.processInfo.arguments
         guard arguments.contains("-uitest"),
@@ -183,10 +180,8 @@ class OverlayToastViewController: NSViewController {
             }
         }
     }
-    #endif
 }
 
-#if DEBUG
 private extension [String] {
     func value(after option: String) -> String? {
         guard let index = firstIndex(of: option) else { return nil }
@@ -195,7 +190,6 @@ private extension [String] {
         return self[valueIndex]
     }
 }
-#endif
 
 extension OverlayToastViewController {
     /// Allows click-through outside visible toast areas while preserving normal

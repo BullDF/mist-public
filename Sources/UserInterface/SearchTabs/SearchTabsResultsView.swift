@@ -6,6 +6,7 @@
 import Cocoa
 import SnapKit
 
+@MainActor
 protocol SearchTabsResultsViewDelegate: AnyObject {
     func searchTabsResultsView(_ resultsView: SearchTabsResultsView, didSelect item: SearchTabsItem)
     func searchTabsResultsView(_ resultsView: SearchTabsResultsView, didRequestClose item: SearchTabsItem)
@@ -29,7 +30,6 @@ final class SearchTabsResultsView: NSView {
         case item(SearchTabsItem, itemIndex: Int)
     }
 
-    private var sections: [SearchTabsSectionSnapshot] = []
     private var rows: [Row] = []
     private var query = ""
     private var profileId: String?
@@ -91,7 +91,6 @@ final class SearchTabsResultsView: NSView {
         query: String,
         dataSourceChanged: Bool
     ) {
-        self.sections = sections
         self.rows = Self.makeRows(from: sections)
         self.query = query
         self.profileId = profileId
@@ -116,10 +115,18 @@ final class SearchTabsResultsView: NSView {
             return 0
         }
 
-        tableView.layoutSubtreeIfNeeded()
-        scrollView.layoutSubtreeIfNeeded()
+        // The table adds space above later group rows; its row rect includes that gap.
         let tableHeight = tableView.rect(ofRow: rows.count - 1).maxY
         return Self.topPadding + tableHeight + Self.bottomPadding
+    }
+
+    private static func height(of row: Row) -> CGFloat {
+        switch row {
+        case .sectionHeader:
+            return headerHeight
+        case .item:
+            return rowHeight
+        }
     }
 
     private func setupViews() {
@@ -139,6 +146,11 @@ final class SearchTabsResultsView: NSView {
 
         if dataSourceChanged {
             tableView.reloadData()
+            // New results start at the top, so the first section's header shows; a selection
+            // further down is scrolled to below. Reopening the panel otherwise kept the last
+            // session's offset and hid the header above the first row.
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
 
         guard let selectedRow = rows.firstIndex(where: { row in
@@ -160,11 +172,20 @@ final class SearchTabsResultsView: NSView {
             return
         }
 
-        var rowsToReload = IndexSet(integer: selectedRow)
+        // Restyle the two cells in place: reloading their rows hands a recycled cell to the
+        // existing row view, which then never pins it to its insets.
+        var changedRows = IndexSet(integer: selectedRow)
         if oldSelectedRow >= 0, oldSelectedRow < rows.count {
-            rowsToReload.insert(oldSelectedRow)
+            changedRows.insert(oldSelectedRow)
         }
-        tableView.reloadData(forRowIndexes: rowsToReload, columnIndexes: IndexSet(integer: 0))
+        for row in changedRows {
+            guard case let .item(_, itemIndex) = rows[row],
+                  let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false)
+                    as? SearchTabsResultCellView else {
+                continue
+            }
+            cell.updateSelected(itemIndex == selectedIndex)
+        }
     }
 
     private func scrollRowToVisibleIfNeeded(_ row: Int) {
@@ -244,9 +265,14 @@ extension SearchTabsResultsView: NSTableViewDelegate {
         guard row >= 0, row < rows.count else {
             return nil
         }
+        // Recycle cells: a fresh result cell builds a SwiftUI host and theme bindings, and
+        // the list reloads on every keystroke.
         switch rows[row] {
         case let .sectionHeader(section):
-            let view = SearchTabsSectionHeaderView()
+            let view = tableView.makeView(
+                withIdentifier: SearchTabsSectionHeaderView.reuseIdentifier,
+                owner: nil
+            ) as? SearchTabsSectionHeaderView ?? SearchTabsSectionHeaderView()
             view.configure(kind: section.kind, isCollapsed: section.isCollapsed)
             view.onToggle = { [weak self] in
                 guard let self else { return }
@@ -255,7 +281,10 @@ extension SearchTabsResultsView: NSTableViewDelegate {
             return view
 
         case let .item(item, itemIndex):
-            let cell = SearchTabsResultCellView()
+            let cell = tableView.makeView(
+                withIdentifier: SearchTabsResultCellView.reuseIdentifier,
+                owner: nil
+            ) as? SearchTabsResultCellView ?? SearchTabsResultCellView()
             cell.delegate = self
             cell.configure(with: item, profileId: profileId, selected: itemIndex == selectedIndex, query: query)
             return cell
@@ -288,12 +317,7 @@ extension SearchTabsResultsView: NSTableViewDelegate {
         guard row >= 0, row < rows.count else {
             return Self.rowHeight
         }
-        switch rows[row] {
-        case .sectionHeader:
-            return Self.headerHeight
-        case .item:
-            return Self.rowHeight
-        }
+        return Self.height(of: rows[row])
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
@@ -336,6 +360,8 @@ extension SearchTabsResultsView: SearchTabsResultCellViewDelegate {
 }
 
 private final class SearchTabsSectionHeaderView: NSTableCellView {
+    static let reuseIdentifier = NSUserInterfaceItemIdentifier("searchTabsSectionHeader")
+
     var onToggle: (() -> Void)?
 
     private lazy var titleLabel: NSTextField = {
@@ -365,6 +391,7 @@ private final class SearchTabsSectionHeaderView: NSTableCellView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        identifier = Self.reuseIdentifier
         setupViews()
     }
 
@@ -402,6 +429,8 @@ private final class SearchTabsSectionHeaderView: NSTableCellView {
 
     private static func title(for kind: SearchTabsSectionKind) -> String {
         switch kind {
+        case .apps:
+            return NSLocalizedString("searchTabs.section.apps", value: "Apps", comment: "Search Tabs - Apps section title")
         case .openTabs:
             return NSLocalizedString("searchTabs.section.openTabs", value: "Open Tabs", comment: "Search Tabs - Open tabs section title")
         case .pinnedTabs:
@@ -410,6 +439,8 @@ private final class SearchTabsSectionHeaderView: NSTableCellView {
             return NSLocalizedString("searchTabs.section.bookmarks", value: "Bookmarks", comment: "Search Tabs - Bookmarks section title")
         case .recentlyClosed:
             return NSLocalizedString("searchTabs.section.recentlyClosed", value: "Recently Closed", comment: "Search Tabs - Recently closed section title")
+        case .history:
+            return NSLocalizedString("searchTabs.section.history", value: "History", comment: "Search Tabs - Browsing history section title")
         }
     }
 }

@@ -104,26 +104,6 @@ class Bookmark: WebContentRepresentable {
         children.append(bookmark)
     }
     
-    func insertChild(_ bookmark: Bookmark, at index: Int) {
-        guard isFolder else { return }
-        bookmark.parent = self
-        children.insert(bookmark, at: min(index, children.count))
-    }
-    
-    func removeChild(_ bookmark: Bookmark) {
-        guard isFolder else { return }
-        if let index = children.firstIndex(of: bookmark) {
-            children.remove(at: index)
-            bookmark.parent = nil
-        }
-    }
-    
-    func moveChild(from sourceIndex: Int, to destinationIndex: Int) {
-        guard isFolder, sourceIndex < children.count else { return }
-        let bookmark = children.remove(at: sourceIndex)
-        children.insert(bookmark, at: min(destinationIndex, children.count))
-    }
-
     fileprivate func replaceChildren(_ newChildren: [Bookmark]) {
         guard isFolder else { return }
 
@@ -136,10 +116,6 @@ class Bookmark: WebContentRepresentable {
         for child in children {
             child.parent = self
         }
-    }
-    
-    var hasChildren: Bool {
-        return isFolder && !children.isEmpty
     }
     
     var depth: Int {
@@ -300,6 +276,7 @@ class BookmarkManager: ObservableObject {
         self.init(store: browseState.localStore,
                   scope: BookmarkManagementScope(browserState: browseState),
                   browserState: browseState, subscribes: !browseState.isIncognito)
+        DispatchQueue.main.async { [weak browseState] in if let browseState { MistChromiumBookmarkMirror.shared.register(browseState) } }
     }
 
     /// Management surfaces use the same tree reconciliation without opening a window.
@@ -541,35 +518,6 @@ class BookmarkManager: ObservableObject {
         return bookmarkIndex[guid]
     }
     
-    func fetchBookmarks() {
-//        let wrappers = ChromiumLauncher.sharedInstance().bridge?.getAllBookmarks(withWindowId: Int64(browserState?.windowId ?? 0))
-//        bookmarksChanged(with: wrappers ?? [])
-    }
-    
-    func bookmarksChanged(with wrappers: [BookmarkWrapper]) {
-//        let bookmarks = Self.mappedModels(from: wrappers)
-//        rootFolder = Bookmark(title: "Bookmarks", children: bookmarks)
-    }
-    
-//    func bookmarkInfoChanged(_ id: Int64, title: String?, url: String?, facicon favicon_url: String?) {
-//        DispatchQueue.global(qos: .utility).async {
-//            let allBookmarks =  self.getAllBookmarks()
-//            if let target = allBookmarks.first(where: { $0.guid == "\(id)" }) {
-//                DispatchQueue.main.async {
-//                    if let title {
-//                        target.title = title
-//                    }
-//                    if let url {
-//                        target.url = url
-//                    }
-//                    if let favicon_url {
-//                        target.faviconUrl = favicon_url
-//                    }
-//                }
-//            }
-//        }
-//    }
-    
     func addBookmark(title: String,
                      url: String,
                      to parent: Bookmark? = nil,
@@ -653,29 +601,6 @@ class BookmarkManager: ObservableObject {
         localStore?.createDirectory(title: title, profileId: profileId, parentId: parent?.guid, guid: newGuid, spaceId: spaceId)
     }
 
-    /// Creates a folder and inserts the bookmark without triggering sidebar inline editing.
-    func addFolderFromTabStrip(title: String,
-                              to parent: Bookmark? = nil,
-                              bookmarkTitle: String?,
-                              bookmarkURL: String,
-                              bookmarkFaviconData: Data? = nil,
-                              completion: @escaping (Bool, String) -> Void) {
-        let newGuid = UUID().uuidString
-        guard localStore != nil else { return }
-        let profileId = scope.profileId
-        let spaceId = scope.spaceId
-        localStore?.createDirectoryWithBookmark(folderTitle: title,
-                                                             folderGuid: newGuid,
-                                                             profileId: profileId,
-                                                             parentId: parent?.guid,
-                                                             bookmarkTitle: bookmarkTitle,
-                                                             bookmarkURL: bookmarkURL,
-                                                             bookmarkFavicon: faviconDataForNewBookmark(url: bookmarkURL, explicitData: bookmarkFaviconData),
-                                                             spaceId: spaceId) { success in
-            completion(success, newGuid)
-        }
-    }
-
     private func faviconDataForNewBookmark(url: String, explicitData: Data?) -> Data? {
         if let explicitData { return explicitData }
         guard let state = browserState,
@@ -754,27 +679,6 @@ class BookmarkManager: ObservableObject {
         }
         
         return allBookmarks
-    }
-    
-    /// Returns all folders while preserving the folder-only hierarchy under the root.
-    func getAllFolderWithHierarchy() -> [Bookmark] {
-        func filterFolders(_ bookmark: Bookmark) -> Bookmark? {
-            guard bookmark.isFolder else { return nil }
-            
-            let folderChildren = bookmark.children.compactMap { filterFolders($0) }
-            let newFolder = Bookmark(
-                guid: bookmark.guid,
-                title: bookmark.title,
-                folderIconName: bookmark.folderIconName,
-                isFolder: true
-            )
-            for child in folderChildren {
-                newFolder.addChild(child)
-            }
-            return newFolder
-        }
-        
-        return rootFolder.children.compactMap { filterFolders($0) }
     }
 }
 

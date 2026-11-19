@@ -41,56 +41,6 @@ extension BrowserState {
         }
     }
 
-    @MainActor
-    func displayNewFolderDialog(_ name: String? = nil, placeholder: String? = nil, isFolder: Bool) async -> String? {
-        let alert = NSAlert()
-        alert.messageText = (name?.isEmpty == true || isFolder) ? NSLocalizedString("app.bookmarkFolderDialog.createTitle", value: "New Folder", comment: "New folder dialog title")
-        : NSLocalizedString("app.bookmarkFolderDialog.renameTitle", value: "Rename", comment: "Rename folder or bookmark dialog title")
-        alert.alertStyle = .informational
-
-
-        let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        inputField.placeholderString = placeholder ?? NSLocalizedString("app.bookmarkFolderDialog.nameField.placeholder", value: "Folder Name", comment: "New folder dialog input placeholder")
-        inputField.stringValue = name ?? ""
-        alert.accessoryView = inputField
-
-        alert.addButton(withTitle: NSLocalizedString("app.newBookmarkFolderDialog.confirmButton", value: "Confirm", comment: "New folder dialog confirm button title"))
-        alert.addButton(withTitle: NSLocalizedString("app.newBookmarkFolderDialog.cancelButton", value: "Cancel", comment: "New folder dialog cancel button title"))
-
-        let response: NSApplication.ModalResponse
-        if let window = self.windowController?.window  {
-            response = await alert.beginSheetModal(for: window)
-        } else {
-            response = alert.runModal()
-        }
-        if response == .alertFirstButtonReturn {
-            let name = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            return name
-        } else {
-            return nil
-        }
-    }
-
-    @MainActor
-    func displayRenameBookmarkDialog(initialName: String) async -> String? {
-        return await displayNewFolderDialog(initialName, placeholder: "", isFolder: false)
-    }
-
-    @MainActor
-    func displayRenameBookmarkFolderDialog(initialName: String) async -> String? {
-        return await displayNewFolderDialog(initialName, placeholder: "", isFolder: true)
-    }
-    
-    func createDirectory(title: String,
-                         parentId: String?,
-                         index: Int? = nil) {
-        localStore.createDirectory(title: title, profileId: profileId, parentId: parentId, spaceId: spaceId)
-    }
-    
-    func addBookmark(url: String, title: String, parentId: String) {
-        localStore.createBookmark(url: url, title: title, profileId: profileId, parentId: parentId, spaceId: spaceId)
-    }
-
     /// If `tab` belongs to a split pair, save the whole pair as one split-view
     /// bookmark and return true. Otherwise return false so the caller can fall
     /// back to a single-URL bookmark path.
@@ -100,10 +50,9 @@ extension BrowserState {
     ///   via `splitBookmarkBindings`, hiding the live panes from the normal tab
     ///   list so the bookmark cell becomes the split's opened representation —
     ///   a move (mirrors single-tab drag through `moveNormalTab`).
-    /// - `false` (menu "Add Split to Bookmark/Folder" and Cmd+D): the bookmark
-    ///   is an independent *copy* and the on-screen split stays open and
-    ///   unbound, mirroring the single-tab menu/Cmd+D bookmark path which also
-    ///   leaves the live tab in place.
+    /// - `false` (Cmd+D): the bookmark is an independent *copy* and the
+    ///   on-screen split stays open and unbound, mirroring the single-tab
+    ///   Cmd+D bookmark path which also leaves the live tab in place.
     @discardableResult
     func addSplitBookmarkFromTab(_ tab: Tab,
                                  toFolder parent: Bookmark? = nil,
@@ -112,8 +61,8 @@ extension BrowserState {
                                  bindLiveSplit: Bool = true) -> Bool {
         // Pinned-split cells render synthetic-`guid` records; their `guid`
         // doesn't match the live SplitGroup's tab ids. Fall back to a
-        // `guidInLocalDB` lookup so the context-menu actions can pass the
-        // record-tab directly without each caller having to resolve.
+        // `guidInLocalDB` lookup so callers can pass the record-tab directly
+        // without each having to resolve.
         let resolvedTab: Tab? = {
             if splitGroup(forTabId: tab.guid) != nil { return tab }
             guard let dbGuid = tab.guidInLocalDB, !dbGuid.isEmpty else { return nil }
@@ -135,9 +84,9 @@ extension BrowserState {
                 return secondaryTab.title.isEmpty ? nil : secondaryTab.title
             }()
             let newBookmarkGuid = UUID().uuidString
-            // `toFolderGuid` lets the "New Folder" flow target a folder created
-            // with a pre-generated guid before its Bookmark instance has been
-            // published into the tree. Falls back to `parent?.guid` for the
+            // `toFolderGuid` lets callers that hold only a parent guid (tab
+            // drops into the bookmark tree) target a folder without resolving
+            // its Bookmark instance. Falls back to `parent?.guid` for the
             // common case where the caller already holds the Bookmark.
             // Use `localStore.createBookmark` directly so we control the guid and
             // can register the bookmark→split binding immediately, before the
@@ -156,12 +105,12 @@ extension BrowserState {
                 favicon: primaryTab.liveFaviconData ?? primaryTab.cachedFaviconData
             )
             // Drag binds the live split so it becomes the bookmark's opened
-            // representation (a move); menu/Cmd+D leaves the split open as an
+            // representation (a move); Cmd+D leaves the split open as an
             // independent copy. Pinned splits never bind from this path — the
             // live pinned split must stay pinned and unbound (the
             // drag-from-pinned-split path `savePinnedSplitAsBookmark` handles
             // the unpin+bind case).
-            if bindLiveSplit, !group.isPinned {
+            if bindLiveSplit, !group.isPinned, !(layoutMode.isTraditional || bookmarksAreLaunchers) {
                 splitBookmarkBindings[newBookmarkGuid] = group.id
             }
             updateNormalTabs()
@@ -169,9 +118,8 @@ extension BrowserState {
         }
         // Unopened pinned split: no live SplitGroup, but the two halves are
         // persisted as paired records in `pinnedTabs`. Build the bookmark
-        // from each pinned record's persisted URL/title so the right-click
-        // "Add Split to Bookmark / Folder" works on a cell whose panes
-        // haven't been opened in this session yet.
+        // from each pinned record's persisted URL/title, for a cell whose
+        // panes haven't been opened in this session yet.
         if let myDB = tab.guidInLocalDB, !myDB.isEmpty,
            let pinnedSelf = pinnedTabs.first(where: { $0.guidInLocalDB == myDB }),
            let (leftDB, rightDB) = pinnedSplitDBPair(forPinnedTab: pinnedSelf),
@@ -212,13 +160,12 @@ extension BrowserState {
         guard !bookmark.isFolder, let url = bookmark.url else { return }
         // Bookmark activation is dispatched from UI/menu paths on the main thread.
         MainActor.assumeIsolated {
-            clearGroupOverview()
             clearMultiSelection()
         }
 
         localStore.updateLastSeen(bookmark.guid)
         if let secondaryURL = bookmark.secondaryUrl, !secondaryURL.isEmpty {
-            if layoutMode.isTraditional {
+            if layoutMode.isTraditional || bookmarksAreLaunchers {
                 detachBookmarkTabsForComfortableLayout(bookmarkGuids: [bookmark.guid])
                 openTwoURLsAsSplit(primaryURL: url,
                                    secondaryURL: secondaryURL,
@@ -247,7 +194,7 @@ extension BrowserState {
             return
         }
 
-        if layoutMode.isTraditional {
+        if layoutMode.isTraditional || bookmarksAreLaunchers {
             detachBookmarkTabsForComfortableLayout(bookmarkGuids: [realBookmark.guid])
             createTab(URLProcessor.processUserInput(url), customGuid: nil, focusAfterCreate: true)
             return
@@ -422,6 +369,10 @@ extension BrowserState {
         }
         
         if let bookmark = bookmarkManager.bookmark(withGuid: localGuid) {
+            if layoutMode.isTraditional || bookmarksAreLaunchers {
+                detachBookmarkTabsForComfortableLayout(bookmarkGuids: [localGuid])
+                return
+            }
             localStore.updateLastSeen(localGuid)
             syncBookmarkBinding(bookmark, with: tab, focusingTabGuid: focusingTab?.guid)
         }
@@ -441,6 +392,9 @@ extension BrowserState {
     /// Recomputes open-state flags for all bookmarks from the current tab list.
     func syncAllBookmarksOpenedState() {
         guard !isIncognito else { return }
+        if layoutMode.isTraditional || bookmarksAreLaunchers {
+            detachBookmarkTabsForComfortableLayout()
+        }
         let allBookmarks = bookmarkManager.getAllBookmarks()
         let focusingTabGuid = focusingTab?.guid
 

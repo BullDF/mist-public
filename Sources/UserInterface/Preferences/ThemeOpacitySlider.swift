@@ -252,7 +252,6 @@ private struct SpaceThemeEditorGlassBackground: NSViewRepresentable {
 /// and Spaces settings panes.
 struct SpaceThemeEditorView: View {
     static let contentSize = NSSize(width: 328, height: 99)
-    static let menuContentSize = NSSize(width: 248, height: 76)
 
     private static let innerCardSize = NSSize(width: 312, height: 83)
     private static let swatchGroupWidth: CGFloat = 200
@@ -262,7 +261,6 @@ struct SpaceThemeEditorView: View {
     private static let panelInnerBorder = Color(nsColor: .separatorColor)
 
     let spaceId: String
-    let isEmbeddedInMenu: Bool
     let onDismiss: () -> Void
 
     @ObservedObject private var spaceManager = SpaceManager.shared
@@ -271,9 +269,8 @@ struct SpaceThemeEditorView: View {
     @State private var selectedThemeId: String
     @State private var sliderValue: Double
 
-    init(spaceId: String, isEmbeddedInMenu: Bool = false, onDismiss: @escaping () -> Void) {
+    init(spaceId: String, onDismiss: @escaping () -> Void) {
         self.spaceId = spaceId
-        self.isEmbeddedInMenu = isEmbeddedInMenu
         self.onDismiss = onDismiss
 
         let themeId = SpaceManager.shared.resolvedThemeId(forSpaceId: spaceId)
@@ -289,46 +286,29 @@ struct SpaceThemeEditorView: View {
     }
 
     var body: some View {
-        Group {
-            if isEmbeddedInMenu {
-                GeometryReader { geometry in
-                    VStack(spacing: 8) {
-                        colorRow
-                            .frame(height: 24)
-                        saturationRow(width: geometry.size.width)
-                            .frame(height: 28)
-                    }
-                }
-                // Match the native menu's content column, leaving room for checkmarks.
-                .padding(.leading, 30)
-                .padding(.trailing, 16)
-                .padding(.vertical, 8)
-            } else {
-                VStack(spacing: 0) {
-                    colorRow
-                        .frame(height: 40)
-                    Rectangle()
-                        .fill(Self.panelDivider)
-                        .frame(height: 1)
-                    saturationRow(width: Self.sliderWidth)
-                        .frame(height: 42)
-                }
-                .padding(.horizontal, 12)
-                .frame(width: Self.innerCardSize.width, height: Self.innerCardSize.height)
-                .background {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color.primary.opacity(0.01))
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(Self.panelInnerBorder, lineWidth: 1)
-                        .allowsHitTesting(false)
-                }
-                .padding(8)
-                .frame(width: Self.contentSize.width, height: Self.contentSize.height)
-                .background { SpaceThemeEditorGlassBackground() }
-            }
+        VStack(spacing: 0) {
+            colorRow
+                .frame(height: 40)
+            Rectangle()
+                .fill(Self.panelDivider)
+                .frame(height: 1)
+            saturationRow(width: Self.sliderWidth)
+                .frame(height: 42)
         }
+        .padding(.horizontal, 12)
+        .frame(width: Self.innerCardSize.width, height: Self.innerCardSize.height)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.01))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Self.panelInnerBorder, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .padding(8)
+        .frame(width: Self.contentSize.width, height: Self.contentSize.height)
+        .background { SpaceThemeEditorGlassBackground() }
         .onAppear(perform: syncControls)
         .onReceive(NotificationCenter.default.publisher(for: .spaceThemeDidChange)) { notification in
             guard let changedSpaceId = notification.userInfo?["spaceId"] as? String,
@@ -350,20 +330,14 @@ struct SpaceThemeEditorView: View {
 
     private var colorRow: some View {
         HStack(spacing: 0) {
-            if !isEmbeddedInMenu {
-                Text(NSLocalizedString("settings.spaces.theme.colorLabel", value: "Color", comment: "Spaces settings - theme color row label"))
-                    .font(.body)
-                    .foregroundStyle(.primary)
+            Text(NSLocalizedString("settings.spaces.theme.colorLabel", value: "Color", comment: "Spaces settings - theme color row label"))
+                .font(.body)
+                .foregroundStyle(.primary)
 
-                Spacer(minLength: 0)
-            }
+            Spacer(minLength: 0)
 
             HStack(spacing: 0) {
                 ForEach(ThemeManager.shared.orderedThemes, id: \.id) { theme in
-                    if isEmbeddedInMenu, theme.id != ThemeManager.shared.orderedThemes.first?.id {
-                        Spacer(minLength: 0)
-                    }
-
                     ThemeSwatchView(
                         fillColor: theme == .pure
                             ? .white
@@ -376,25 +350,21 @@ struct SpaceThemeEditorView: View {
                         ringDiameter: 20,
                         action: { selectTheme(theme.id) }
                     )
-                    // Align the visible endpoint dots with the full-width menu slider.
-                    .frame(width: isEmbeddedInMenu ? Self.colorDotDiameter : nil)
-                    .frame(maxWidth: isEmbeddedInMenu ? nil : .infinity)
+                    .frame(maxWidth: .infinity)
                     .accessibilityLabel(theme.name)
                 }
             }
-            .frame(width: isEmbeddedInMenu ? nil : Self.swatchGroupWidth)
+            .frame(width: Self.swatchGroupWidth)
         }
     }
 
     private func saturationRow(width: CGFloat) -> some View {
         HStack(spacing: 0) {
-            if !isEmbeddedInMenu {
-                Text(NSLocalizedString("settings.spaces.theme.saturationLabel", value: "Saturation", comment: "Spaces settings - theme saturation row label for the per-Space window colors"))
-                    .font(.body)
-                    .foregroundStyle(.primary)
+            Text(NSLocalizedString("settings.spaces.theme.saturationLabel", value: "Saturation", comment: "Spaces settings - theme saturation row label for the per-Space window colors"))
+                .font(.body)
+                .foregroundStyle(.primary)
 
-                Spacer(minLength: 0)
-            }
+            Spacer(minLength: 0)
 
             ThemeOpacitySliderView(
                 value: sliderBinding,
@@ -434,12 +404,6 @@ struct SpaceThemeEditorView: View {
 
     private var sliderTrackStyle: ThemeSliderTrackStyle {
         selectedThemeId == Theme.pure.id ? .pureBrightness(appearance) : .saturation
-    }
-
-    private var displayedTheme: Theme {
-        ThemeManager.shared.registeredThemes[selectedThemeId]
-            ?? Theme.builtInThemes.first(where: { $0.id == selectedThemeId })
-            ?? ThemeManager.shared.currentTheme
     }
 
     private func selectTheme(_ themeId: String) {

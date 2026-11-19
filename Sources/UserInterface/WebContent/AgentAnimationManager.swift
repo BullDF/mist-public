@@ -32,9 +32,4 @@ final class AgentAnimationManager {
         activeTabIds.contains(tabId)
     }
 
-    func removeTab(_ tabId: Int) {
-        if activeTabIds.remove(tabId) != nil {
-            stateChanged.send(tabId)
-        }
-    }
 }

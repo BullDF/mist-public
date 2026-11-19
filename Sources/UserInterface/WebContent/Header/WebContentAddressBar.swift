@@ -7,7 +7,11 @@ import SwiftUI
 import Combine
 import AppKit
 
+@MainActor
 final class WebContentAddressBarViewModel: ObservableObject {
+    @Published private(set) var appDisplay: MistAppAddressDisplay?
+    private var chatSubscription: AnyCancellable?
+    private var chatId: UUID?
     @Published var displayText: String = ""
     @Published var addressBarWidth: CGFloat = 0
     @Published var isInPlaceholderMode: Bool = false
@@ -28,6 +32,10 @@ final class WebContentAddressBarViewModel: ObservableObject {
 
     func bind(currentTab: Tab?) {
         cancellables.removeAll()
+        chatSubscription = nil
+        chatId = nil
+        displayText = ""
+        updateChat(currentTab)
 
         // Placeholder-mode sink: blank text on enter, restore on exit. Lives
         // outside the `guard let tab` so it stays subscribed even when the
@@ -80,19 +88,12 @@ final class WebContentAddressBarViewModel: ObservableObject {
             .prepend(PhiPreferences.GeneralSettings.alwaysShowURLPath.loadValue())
             .removeDuplicates()
 
-        let overviewActivePublisher = browserState?.$groupOverviewState
-            .map { $0 != nil }
-            .prepend(browserState?.groupOverviewState != nil)
-            .removeDuplicates()
-            .eraseToAnyPublisher() ?? Just(false).eraseToAnyPublisher()
-
-        tab.$url
-            .removeDuplicates()
+        tab.$url.combineLatest(tab.$title)
             .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
-            .combineLatest(alwaysShowURLPathPublisher, overviewActivePublisher)
-            .map { [weak self] urlString, alwaysShowURLPath, overviewActive in
-                guard !overviewActive else { return "" }
-                return self?.formattedDisplayText(urlString: urlString ?? "", alwaysShowURLPath: alwaysShowURLPath) ?? ""
+            .combineLatest(alwaysShowURLPathPublisher)
+            .map { [weak self] value, alwaysShowURLPath in
+                self?.updateChat(tab)
+                return self?.formattedDisplayText(urlString: value.0 ?? "", alwaysShowURLPath: alwaysShowURLPath) ?? ""
             }
             .receive(on: DispatchQueue.main)
             .sink { [weak self] text in
@@ -105,6 +106,7 @@ final class WebContentAddressBarViewModel: ObservableObject {
     }
 
     private func formattedDisplayText(urlString: String, alwaysShowURLPath: Bool) -> String {
+        if appDisplay != nil { return "" }
         // A reader page stands in for its article: show the article's URL.
         let urlString = ReaderExtensionBridge.sourceURLString(fromReaderPageURL: urlString) ?? urlString
         guard !urlString.isEmpty else {
@@ -117,6 +119,17 @@ final class WebContentAddressBarViewModel: ObservableObject {
             return removingTrailingSlashIfNeeded(from: displayURLWithoutScheme(urlString))
         }
         return removingTrailingSlashIfNeeded(from: URLProcessor.displayName(for: urlString))
+    }
+
+    private func updateChat(_ tab: Tab?) {
+        appDisplay = MistAppAddressDisplay.resolve(tab)
+        let id = MistApps.address(tab?.url)?.chatId
+        guard id != chatId else { return }
+        chatId = id
+        chatSubscription = id.flatMap { AgentChatStore.shared.conversation(for: $0) }?.$title
+            .receive(on: DispatchQueue.main).sink { [weak self, weak tab] _ in
+                self?.appDisplay = MistAppAddressDisplay.resolve(tab)
+            }
     }
 
     private func displayURLWithoutScheme(_ urlString: String) -> String {
@@ -193,9 +206,6 @@ struct WebContentAddressBarView: View {
     @State private var anchorView: NSView?
     @State private var isMenuShown = false
     @State private var menuAnchorView: NSView?
-    @State private var memoryMenuAnchorView: NSView?
-    @State private var isMemoryMenuShown = false
-    @State private var isMemoryButtonHovering = false
     @State private var showCopyConfirmation = false
     @StateObject private var lottieState = LottieAnimationViewState()
     @Environment(\.phiTheme) private var theme
@@ -234,14 +244,27 @@ struct WebContentAddressBarView: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
-                Text(displayText)
-                    .font(.system(size: 13))
-                    .foregroundColor(displayTextColor)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                if let app = viewModel.appDisplay, !viewModel.isInPlaceholderMode {
+                    Image(app.icon.asset).resizable().renderingMode(app.icon.isTemplate ? .template : .original).interpolation(.high)
+                        .scaledToFit().frame(height: 14)
+                    Text(verbatim: app.name).fontWeight(.semibold).fixedSize()
+                    if let title = app.title {
+                        Rectangle().fill(ThemedColor.separator.swiftUIColor(theme: theme, appearance: appearance))
+                            .frame(width: 1, height: 14)
+                        Text(verbatim: title).lineLimit(1).truncationMode(.tail)
+                    }
+                } else {
+                    Text(displayText)
+                        .font(.system(size: 13))
+                        .foregroundColor(displayTextColor)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
 
                 Spacer(minLength: 0)
             }
+            .font(.system(size: 13))
+            .foregroundStyle(ThemedColor.textPrimary.swiftUIColor(theme: theme, appearance: appearance))
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(maxHeight: .infinity)
             .allowsHitTesting(false)
@@ -257,8 +280,7 @@ struct WebContentAddressBarView: View {
             if !viewModel.isInPlaceholderMode {
                 HStack(spacing: 2) {
                     readerButton
-                    memoryMenuButton
-                    copyURLButton
+                    if viewModel.appDisplay == nil { copyURLButton }
                     menuButton
                 }
             }
@@ -389,7 +411,7 @@ struct WebContentAddressBarView: View {
                 action: {
                     anchorView?.window?.customTooltipController.dismissAll()
                     guard let tab = currentTab else { return }
-                    browserState?.toggleReaderView(for: tab, from: .addressBar)
+                    browserState?.toggleReaderView(for: tab)
                 }
             )
             .customTooltip {
@@ -398,46 +420,6 @@ struct WebContentAddressBarView: View {
                     command: .PHI_TOGGLE_READER
                 )
             }
-        }
-    }
-
-    @ViewBuilder
-    private var memoryMenuButton: some View {
-        if let browserState,
-           SiteMemoryMenuActions(
-            urlString: currentTab?.url ?? "", profileID: browserState.profileId,
-            isIncognito: browserState.isIncognito,
-            isPhiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue(),
-            service: nil
-           ) != nil {
-            let title = NSLocalizedString("browser.webContentAddressBar.manageSiteMemoriesTooltip", value: "Manage Site Memories", comment: "Address bar - Button tooltip for opening memory controls for the current website")
-            Button {
-                anchorView?.window?.customTooltipController.dismissAll()
-                WebContentAddressBarMenuPresenter.presentMemoryMenu(
-                    browserState: browserState,
-                    currentTab: currentTab,
-                    anchorView: memoryMenuAnchorView
-                ) { isPresented in
-                    isMemoryMenuShown = isPresented
-                    isMenuShown = isPresented
-                }
-            } label: {
-                Image("memory-manage-icon")
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 16, height: 16)
-                    .foregroundStyle(ThemedColor.textPrimary.swiftUIColor(theme: theme, appearance: appearance))
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(Color(.sidebarTabHovered))
-                        .opacity(isMemoryButtonHovering || isMemoryMenuShown ? 1 : 0))
-            }
-            .buttonStyle(.plain)
-            .background(AddressBarAnchorView { memoryMenuAnchorView = $0 }.allowsHitTesting(false))
-            .onHover { isMemoryButtonHovering = $0 }
-            .opacity(isHovering || isMenuShown ? 1 : 0)
-            .animation(.easeInOut(duration: 0.15), value: isHovering || isMenuShown)
-            .accessibilityLabel(title)
         }
     }
 
@@ -475,7 +457,7 @@ struct WebContentAddressBarView: View {
             Circle()
                 .fill(Color(.sidebarTabHovered))
                 .frame(width: 24, height: 24)
-                .opacity(isMenuShown && !isMemoryMenuShown ? 1 : 0)
+                .opacity(isMenuShown ? 1 : 0)
 
             LottieAnimationView(config: config, state: lottieState) {
                 presentAddressBarMenu()
@@ -751,7 +733,6 @@ private struct AddressBarProgressBarView: View {
     }
 }
 
-#if DEBUG
 #Preview("AddressBar Progress States") {
     VStack(spacing: 12) {
         WebContentAddressBarView(
@@ -796,4 +777,3 @@ private struct AddressBarProgressBarView: View {
     }
     .padding()
 }
-#endif

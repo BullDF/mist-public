@@ -4,7 +4,6 @@
 // found in the LICENSE file.
 
 import Foundation
-import PostHog
 
 /// The management slice of the `agentSpace.*` message surface: operating the
 /// browser's user-facing features (Spaces, profiles, URL rules, tab groups,
@@ -26,19 +25,6 @@ extension AgentSpaceRouter {
             return "{\"ok\":false,\"error\":\"encode_failed\"}"
         }
         return text
-    }
-
-    /// Settings ▸ Developer ▸ Agent permissions gate: when the toggle is off,
-    /// agent tooling may only operate inside its own agent Spaces — every
-    /// user-space management message refuses with this response. nil means
-    /// allowed.
-    static func userSpaceOperationsRefusal() -> String? {
-        if SpaceSessionControllersManager.shared
-            .isGuestTransitionInteractionBlocked {
-            return failure("guest_account_transition_in_progress")
-        }
-        guard !PhiPreferences.AgentSpaces.userSpaceOperationsEnabled else { return nil }
-        return failure("user_space_operations_disabled")
     }
 
     static func failure(_ error: String) -> String {
@@ -126,7 +112,7 @@ extension AgentSpaceRouter {
             // stored `colorHex` from it.
             let themeId = requestedTheme ?? ThemeManager.shared.currentTheme.id
             guard let spaceId = manager.createSpace(name: name,
-                                                    colorHex: BrowserMigrationSpaceTheme.overlayHex(ofThemeID: themeId),
+                                                    colorHex: SpaceThemeColor.overlayHex(ofThemeID: themeId),
                                                     iconName: iconName,
                                                     profileId: profileId,
                                                     makeDefaultActive: false) else {
@@ -210,7 +196,7 @@ extension AgentSpaceRouter {
                 throw SpacePayloadError(code: "invalid_color")
             }
             let hex = raw.hasPrefix("#") ? raw : "#" + raw
-            return BrowserMigrationSpaceTheme.resolved(forSourceColorHex: hex).themeID
+            return SpaceThemeColor.resolved(forSourceColorHex: hex).themeID
         }
         return nil
     }
@@ -289,8 +275,10 @@ extension AgentSpaceRouter {
 
     /// `agentSpace.spaces.listTabs` — a user Space's open tabs (its window's
     /// full listable inventory: normal, open pinned, and bookmark-opened
-    /// tabs alike), as {tabId, url, title, active, kind} with `kind` one of
-    /// normal|pinned|bookmark. Fails when the Space has no open window
+    /// tabs alike) in the order the window shows them, as {tabId, url,
+    /// title, active, kind, group?} with `kind` one of normal|pinned|bookmark
+    /// and `group` {token, title, color, collapsed} on a grouped tab (an
+    /// empty title is an unnamed group). Fails when the Space has no open window
     /// (only live windows have a tab strip to read) and `window_not_ready`
     /// when the window exists but its state has not attached yet — a
     /// transient worth retrying, never a silent empty list. An optional
@@ -318,13 +306,25 @@ extension AgentSpaceRouter {
                 return failure("window_not_ready")
             }
             let tabs = state.agentTabInventory().map { entry -> [String: Any] in
-                [
+                var row: [String: Any] = [
                     "tabId": entry.tab.guid,
                     "url": entry.tab.url ?? "",
                     "title": entry.tab.title,
                     "active": entry.tab.isActive,
                     "kind": entry.kind,
                 ]
+                if entry.tab.crashState != nil {
+                    row["crashed"] = true
+                }
+                if let token = entry.tab.groupToken, let group = state.groups[token] {
+                    row["group"] = [
+                        "token": token,
+                        "title": group.title,
+                        "color": group.color.rawValue,
+                        "collapsed": group.isCollapsed,
+                    ] as [String: Any]
+                }
+                return row
             }
             return encode(["ok": true, "windowId": target.windowId,
                            "spaceId": target.spaceId, "tabs": tabs])
@@ -381,6 +381,130 @@ extension AgentSpaceRouter {
                         encode(["ok": true, "windowId": openedWindowId, "windowOpened": true]),
                         requestId: requestId)
                 }
+            }
+            return nil
+        }
+    }
+
+    /// First-party chat identity is authoritative; unrelated reports are ignored.
+    static func handleSpacesWorkingTab(context: ExtensionMessageContext) -> String? {
+        MainActor.assumeIsolated {
+            guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: context.driverPrincipalId),
+                  let id = AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId),
+                  let preview = AgentChatStore.shared.entry(for: id)?.browserPreview else {
+                return encode(["ok": true, "ignored": true])
+            }
+            guard let obj = json(context.payload), let windowId = obj["windowId"] as? Int,
+                  windowId == preview.windowId, let raw = obj["tabId"],
+                  raw is NSNull || raw is Int else { return invalid() }
+            let tabId = raw as? Int
+            if let tabId {
+                guard let state = windowSpace(windowId: windowId)?.state,
+                      let tab = state.tabs.first(where: { $0.guid == tabId }),
+                      MistApps.address(tab.url) == nil else { return failure("unknown_tab") }
+            }
+            AgentChatStore.shared.reportWorkingTab(principalId: context.driverPrincipalId, tabId: tabId, live: true)
+            if let tabId, preview.turnActive,
+               let tab = windowSpace(windowId: windowId)?.state?.tabs.first(where: { $0.guid == tabId }) {
+                let recording = BrowserAgentScrollRestore.shared.record(chat: id, tab: tab)
+                Task { @MainActor in
+                    await recording.value
+                    ExtensionMessaging.shared.sendResponse(encode(["ok": true]), requestId: context.requestId)
+                }
+                return nil
+            }
+            return encode(["ok": true])
+        }
+    }
+
+    static func handleSpacesScrolled(context: ExtensionMessageContext) -> String? {
+        MainActor.assumeIsolated {
+            guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: context.driverPrincipalId),
+                  let id = AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId),
+                  let preview = AgentChatStore.shared.entry(for: id)?.browserPreview else {
+                return encode(["ok": true, "ignored": true])
+            }
+            guard let obj = json(context.payload), let windowId = obj["windowId"] as? Int,
+                  let tabId = obj["tabId"] as? Int, windowId == preview.windowId,
+                  preview.turnActive, tabId == preview.tabId,
+                  let tab = windowSpace(windowId: windowId)?.state?.tabs.first(where: { $0.guid == tabId }),
+                  MistApps.address(tab.url) == nil else { return invalid() }
+            BrowserAgentScrollRestore.shared.mark(chat: id, tab: tabId)
+            return encode(["ok": true])
+        }
+    }
+
+    static func handleSpacesScreenshot(context: ExtensionMessageContext) -> String? {
+        MainActor.assumeIsolated {
+            guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: context.driverPrincipalId),
+                  let id = AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId),
+                  let preview = AgentChatStore.shared.entry(for: id)?.browserPreview else { return failure("unknown_browser_agent") }
+            guard let obj = json(context.payload), let windowId = obj["windowId"] as? Int,
+                  let tabId = obj["tabId"] as? Int, windowId == preview.windowId,
+                  tabId == preview.tabId,
+                  let state = windowSpace(windowId: windowId)?.state,
+                  let tab = state.tabs.first(where: { $0.guid == tabId }),
+                  MistApps.address(tab.url) == nil else { return failure("unknown_working_tab") }
+            let clip: CGRect?
+            let fullPage = obj["fullPage"] as? Bool ?? false
+            let save = obj["save"] as? Bool ?? false
+            guard !(fullPage && obj["clip"] != nil) else { return invalid() }
+            if let raw = obj["clip"] as? [String: Any] {
+                guard let x = raw["x"] as? Double, let y = raw["y"] as? Double,
+                      let width = raw["width"] as? Double, let height = raw["height"] as? Double,
+                      [x, y, width, height].allSatisfy(\.isFinite), x >= 0, y >= 0, width > 0, height > 0 else { return invalid() }
+                clip = CGRect(x: x, y: y, width: width, height: height)
+            } else {
+                guard obj["clip"] == nil else { return invalid() }
+                clip = nil
+            }
+            Task { @MainActor in
+                do {
+                    var result = try await state.ensureBrowserAgentPreview().screenshot(tab,
+                        region: fullPage ? .fullPage : clip.map { .clip($0) } ?? .viewport, save: save)
+                    result["ok"] = true
+                    ExtensionMessaging.shared.sendResponse(encode(result), requestId: context.requestId)
+                } catch {
+                    ExtensionMessaging.shared.sendResponse(failure(error.localizedDescription), requestId: context.requestId)
+                }
+            }
+            return nil
+        }
+    }
+
+    /// Load restored, discarded, or crashed contents in place. Never activate the tab or its window.
+    static func handleSpacesWakeTab(context: ExtensionMessageContext) -> String? {
+        guard let obj = json(context.payload), let windowId = obj["windowId"] as? Int,
+              let tabId = obj["tabId"] as? Int else { return invalid() }
+        return MainActor.assumeIsolated {
+            guard let state = windowSpace(windowId: windowId)?.state,
+                  let tab = state.agentTabInventory().first(where: { $0.tab.guid == tabId })?.tab,
+                  let wrapper = tab.webContentWrapper else { return failure("unknown_tab") }
+            if !wrapper.isUnloaded, tab.crashState == nil,
+               let target = wrapper.devToolsTargetId, !target.isEmpty {
+                return encode(["ok": true, "targetId": target])
+            }
+            if wrapper.isUnloaded || tab.crashState != nil {
+                guard let url = tab.url, !url.isEmpty else { return failure("missing_url") }
+                // The wrapper's reload() acts on the window's active tab, not this one.
+                wrapper.navigate(toURL: url)
+            }
+            let requestId = context.requestId
+            Task { @MainActor in
+                let deadline = Date().addingTimeInterval(15)
+                while Date() < deadline {
+                    guard state.tabs.contains(where: { $0.guid == tabId }) else {
+                        ExtensionMessaging.shared.sendResponse(failure("unknown_tab"), requestId: requestId)
+                        return
+                    }
+                    if !wrapper.isUnloaded, tab.crashState == nil,
+                       let target = wrapper.devToolsTargetId, !target.isEmpty {
+                        ExtensionMessaging.shared.sendResponse(encode(["ok": true, "targetId": target]), requestId: requestId)
+                        return
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                ExtensionMessaging.shared.sendResponse(failure("tab_wake_timeout"), requestId: requestId)
             }
             return nil
         }
@@ -530,9 +654,6 @@ extension AgentSpaceRouter {
 
     // MARK: - URL rules
 
-    /// One existing row as a draft that names itself: `id` / `syncId` keep the
-    /// row's identity across the write (R-M3-4a-13), `spaceId` is its current
-    /// bucket and `sortOrder` the caller's per-bucket index.
     private static func draft(from rule: SpaceRoutingRule, sortOrder: Int) -> LocalStore.URLRuleDraft {
         LocalStore.URLRuleDraft(id: rule.id,
                                 host: rule.host,
@@ -540,8 +661,7 @@ extension AgentSpaceRouter {
                                 askBeforeRouting: rule.askBeforeRouting,
                                 spaceId: rule.spaceId,
                                 sortOrder: sortOrder,
-                                createdDate: rule.createdDate,
-                                syncId: rule.syncId)
+                                createdDate: rule.createdDate)
     }
 
     /// `spaceId`'s rows in bucket order (`sortOrder`, then `id` — the same
@@ -556,8 +676,7 @@ extension AgentSpaceRouter {
 
     /// Pure: the edit set for `urlRules.add`. The target bucket is re-sent in
     /// full with its own ids (so nothing there misses the index) plus one new
-    /// draft at the tail — no `id` / `syncId` on the new row, the store mints
-    /// them at the insertion point (R-M3-4a-23). Buckets not touched send nothing.
+    /// draft at the tail with a fresh local ID. Buckets not touched send nothing.
     static func urlRuleAddEdits(all: [SpaceRoutingRule], spaceId: String, host: String,
                                 pathPrefix: String?, ask: Bool) -> URLRulesEditor.EditSet {
         let existing = bucket(spaceId, in: all)
@@ -584,8 +703,7 @@ extension AgentSpaceRouter {
                                     askBeforeRouting: ask,
                                     spaceId: spaceId,
                                     sortOrder: sortOrder,
-                                    createdDate: existing.createdDate,
-                                    syncId: existing.syncId)
+                                    createdDate: existing.createdDate)
         }
         var upserts: [LocalStore.URLRuleDraft] = []
         if spaceId == existing.spaceId {
@@ -609,7 +727,7 @@ extension AgentSpaceRouter {
     /// a client made moments earlier; the store fetch is authoritative.
     @MainActor
     private static func storedRules() -> [SpaceRoutingRule] {
-        AccountController.shared.localDataAccount?.localStorage.getAllURLRules() ?? []
+        AccountController.shared.localDataAccount.localStorage.getAllURLRules()
     }
 
     /// A rule may target any existing normal Space, or the Incognito rule
@@ -623,9 +741,6 @@ extension AgentSpaceRouter {
         }
     }
 
-    /// `agentSpace.urlRules.list` — every Space's rules. Row ids are stable
-    /// across writes (rows are upserted in place, R-M3-4a-13), so
-    /// list-then-mutate within one round is the intended use.
     static func handleUrlRulesList(context: ExtensionMessageContext) -> String? {
         let rules = MainActor.assumeIsolated {
             storedRules().map { rule -> [String: Any] in
@@ -668,8 +783,6 @@ extension AgentSpaceRouter {
                                         host: host,
                                         pathPrefix: obj["pathPrefix"] as? String,
                                         ask: obj["ask"] as? Bool ?? false)
-            // Delay the reply: ok means committed; failures return write_failed, distinct from an unapplied
-            // write (R-M3-3-14).
             guard let expectedStoreIdentifier = SpaceManager.shared.storeIdentifier else {
                 ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
                 return
@@ -681,7 +794,7 @@ extension AgentSpaceRouter {
                                                                  expectedStoreIdentifier: expectedStoreIdentifier)
                     ExtensionMessaging.shared.sendResponse(ok(), requestId: requestId)
                 } catch {
-                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(PhiSyncLog.describe(error))")
+                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(error)")
                     ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
                 }
             }
@@ -737,8 +850,6 @@ extension AgentSpaceRouter {
                                            pathPrefix: newPath,
                                            ask: newAsk,
                                            spaceId: newSpace)
-            // Delay the reply: ok means committed; failures return write_failed, distinct from an unapplied
-            // write (R-M3-3-14).
             guard let expectedStoreIdentifier = SpaceManager.shared.storeIdentifier else {
                 ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
                 return
@@ -750,7 +861,7 @@ extension AgentSpaceRouter {
                                                                  expectedStoreIdentifier: expectedStoreIdentifier)
                     ExtensionMessaging.shared.sendResponse(ok(), requestId: requestId)
                 } catch {
-                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(PhiSyncLog.describe(error))")
+                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(error)")
                     ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
                 }
             }
@@ -775,8 +886,6 @@ extension AgentSpaceRouter {
                 return
             }
             let edits = URLRulesEditor.EditSet(upserts: [], deletedIds: [id])
-            // Delay the reply: ok means committed; failures return write_failed, distinct from an unapplied
-            // write (R-M3-3-14).
             guard let expectedStoreIdentifier = SpaceManager.shared.storeIdentifier else {
                 ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
                 return
@@ -788,7 +897,7 @@ extension AgentSpaceRouter {
                                                                  expectedStoreIdentifier: expectedStoreIdentifier)
                     ExtensionMessaging.shared.sendResponse(ok(), requestId: requestId)
                 } catch {
-                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(PhiSyncLog.describe(error))")
+                    AppLogError("[AgentSpaceRouter] urlRules write failed: \(error)")
                     ExtensionMessaging.shared.sendResponse(failure("write_failed"), requestId: requestId)
                 }
             }
@@ -858,14 +967,9 @@ extension AgentSpaceRouter {
         _ body: @MainActor ((windowId: Int, state: BrowserState?)) -> String?
     ) -> String? {
         if let spaceId = obj["spaceId"] as? String {
-            if let denied = userSpaceOperationsRefusal() { return denied }
             let windowId = obj["windowId"] as? Int
             // The spaceId path targets a USER Space's window (the taskId path
             // below is the agent's own window) — count it as user-space usage.
-            PostHogSDK.shared.capture("agent_user_space_command", properties: [
-                "command": context.type,
-                "agent_name": AgentDriverBadge.telemetryName(context.agentName),
-            ])
             return MainActor.assumeIsolated {
                 guard let target = spaceWindow(spaceId: spaceId, windowId: windowId) else {
                     return failure(windowId == nil ? "space_not_open" : "window_not_open")
@@ -1043,8 +1147,8 @@ extension AgentSpaceRouter {
 
     /// `agentSpace.splitView.create` — split two of the target window's tabs
     /// side by side. `layout`: "vertical" (side-by-side, default) or
-    /// "horizontal" (stacked). Routes through BrowserState so the focused
-    /// tab lands in the primary argument (renderer-visibility nuance).
+    /// "horizontal" (stacked). Routes through BrowserState: `primaryTabId`
+    /// takes the left (or top) pane.
     static func handleSplitViewCreate(context: ExtensionMessageContext) -> String? {
         guard let obj = json(context.payload),
               let primary = (obj["primaryTabId"] as? NSNumber)?.intValue,
@@ -1155,9 +1259,7 @@ extension AgentSpaceRouter {
         let object = json(context.payload)
         let requested = object?["profileId"] as? String
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let profileId = resolveProfileId(requested) else {
                 return failure("unknown_profile")
             }
@@ -1185,9 +1287,7 @@ extension AgentSpaceRouter {
               URL(string: url.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
         else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let profileId = resolveProfileId(obj["profileId"] as? String) else {
                 return failure("unknown_profile")
             }
@@ -1213,9 +1313,7 @@ extension AgentSpaceRouter {
             return invalid()
         }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let model = store.getTab(by: guid),
                   model.dataType == .pinnedTab,
                   store.isPinnedTabInActiveScope(model) else {
@@ -1238,9 +1336,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let guid = obj["guid"] as? String else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let model = store.getTab(by: guid),
                   model.dataType == .pinnedTab,
                   store.isPinnedTabInActiveScope(model) else {
@@ -1271,9 +1367,7 @@ extension AgentSpaceRouter {
     static func handleBookmarksList(context: ExtensionMessageContext) -> String? {
         let requestedSpace = json(context.payload)?["spaceId"] as? String
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let scope = bookmarkScope(requestedSpace) else {
                 return failure("unknown_space")
             }
@@ -1321,9 +1415,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let url = obj["url"] as? String, !url.isEmpty else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let scope = bookmarkScope(obj["spaceId"] as? String) else {
                 return failure("unknown_space")
             }
@@ -1353,9 +1445,7 @@ extension AgentSpaceRouter {
                   .trimmingCharacters(in: .whitespacesAndNewlines),
               !title.isEmpty else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let scope = bookmarkScope(obj["spaceId"] as? String) else {
                 return failure("unknown_space")
             }
@@ -1382,9 +1472,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let guid = obj["guid"] as? String else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let model = store.getTab(by: guid),
                   model.dataType == .bookmark || model.dataType == .bookmarkFolder,
                   let profileId = model.profileId else {
@@ -1409,9 +1497,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let guid = obj["guid"] as? String else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let model = store.getTab(by: guid),
                   model.dataType == .bookmark || model.dataType == .bookmarkFolder,
                   model.parent != nil,
@@ -1439,9 +1525,7 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let guid = obj["guid"] as? String else { return invalid() }
         return MainActor.assumeIsolated {
-            guard let store = AccountController.shared.localDataAccount?.localStorage else {
-                return failure("no_account")
-            }
+            let store = AccountController.shared.localDataAccount.localStorage
             guard let model = store.getTab(by: guid),
                   model.dataType == .bookmark || model.dataType == .bookmarkFolder,
                   model.parent != nil,
@@ -1522,6 +1606,39 @@ extension AgentSpaceRouter {
                 .sorted { $0.startTime > $1.startTime }
                 .map { downloadDict($0) }
             return encode(["ok": true, "downloads": items])
+        }
+    }
+
+    /// `agentSpace.history.search` — a Drifter chat searches its window's browsing history: pages whose
+    /// title or URL match `query`, best match first, or the most recently visited without one. Read
+    /// through `BrowsingHistoryProvider`'s copy of the profile's `History`; an incognito window has none.
+    static func handleHistorySearch(context: ExtensionMessageContext) -> String? {
+        MainActor.assumeIsolated {
+            guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: context.driverPrincipalId),
+                  AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId) != nil else { return failure("unknown_browser_agent") }
+            guard let payload = json(context.payload),
+                  let windowId = (payload["windowId"] as? NSNumber)?.intValue,
+                  payload["query"] == nil || payload["query"] is String else { return invalid() }
+            let limit = (payload["limit"] as? NSNumber)?.intValue ?? 20
+            guard (1...100).contains(limit) else { return invalid() }
+            guard let state = SpaceSessionControllersManager.shared.getAllWindows()
+                    .first(where: { $0.windowId == windowId })?.browserState else { return failure("window_not_open") }
+            guard !state.isIncognito else { return encode(["ok": true, "entries": [[String: Any]]()]) }
+            let query = (payload["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let profileId = state.profileId
+            let requestId = context.requestId
+            BrowsingHistoryProvider.shared.refresh(profileId: profileId) {
+                let all = BrowsingHistoryProvider.shared.entries(forProfileId: profileId)
+                let entries = query.isEmpty
+                    ? Array(all.sorted { $0.lastVisit > $1.lastVisit }.prefix(limit))
+                    : BrowsingHistoryProvider.rank(all, query: query, excludingURLs: [], limit: limit).map(\.entry)
+                let formatter = ISO8601DateFormatter()
+                let rows: [[String: Any]] = entries.map {
+                    ["title": $0.title, "url": $0.url, "lastVisit": formatter.string(from: $0.lastVisit), "visits": $0.visitCount]
+                }
+                ExtensionMessaging.shared.sendResponse(encode(["ok": true, "entries": rows]), requestId: requestId)
+            }
+            return nil
         }
     }
 

@@ -11,19 +11,19 @@ struct FooterTests {
         let state = SidebarBottomBarState()
         let cards = NotificationCardManager()
         let root = SidebarBottomBarSwiftUI(state: state, downloadViewModel: DownloadButtonViewModel(),
-            cardManager: cards, onFeedbackTap: {}, onBookmarkTap: {},
-            onChatTap: {}, onCardEntryTap: {}, onMemoryTap: {}, onDownloadTap: {})
+            cardManager: cards,
+            onChatTap: {}, onCardEntryTap: {}, onDownloadTap: {}, onMarkAsPrimaryTap: {})
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 193, height: 24),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
         window.title = "Phi Sidebar Footer Fixture"
         var cases = 0
-        let threshold = ChatButton.preferredContentWidth + 160
+        let threshold = ChatButton.preferredContentWidth + 104
         for width: CGFloat in [193, 217, 218, 260, 500, threshold - 1, threshold, threshold + 1] {
-            for mask in 0..<16 {
-                state.isMemoryHidden = mask & 1 != 0
-                state.isFeedbackHidden = mask & 2 != 0
-                state.isChatHidden = mask & 4 != 0
-                cards.latestCard = mask & 8 != 0 ? nil : 1
+            for mask in 0..<8 {
+                state.isChatHidden = mask & 1 != 0
+                cards.latestCard = mask & 2 != 0 ? nil : 1
+                state.showsMarkAsPrimary = mask & 4 == 0
                 Probe.frames = [:]
                 let host = NSHostingView(rootView: root)
                 host.sizingOptions = []
@@ -32,14 +32,7 @@ struct FooterTests {
                 host.layoutSubtreeIfNeeded()
                 RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
                 let frames = Probe.frames
-                let iconCount = 2 + (state.isMemoryHidden ? 0 : 1) + (cards.latestCard == nil ? 0 : 1)
-                let chatWidth = state.isChatHidden ? 0 : ChatButton.preferredContentWidth
-                let allWidth = CGFloat(iconCount + 1) * 24 + chatWidth + 16
-                    + CGFloat(iconCount + 1 + (state.isChatHidden ? 0 : 1)) * 4
-                let feedbackVisible = !state.isFeedbackHidden && width >= allWidth
-                precondition((frames["feedback"] != nil) == feedbackVisible, "Feedback must hide only when the full row does not fit: width \(width), mask \(mask), threshold \(allWidth)")
-                let expectedCount = 2 + (state.isMemoryHidden ? 0 : 1) + (feedbackVisible ? 1 : 0)
-                    + (state.isChatHidden ? 0 : 1) + (cards.latestCard == nil ? 0 : 1)
+                let expectedCount = 1 + (state.isChatHidden ? 0 : 1) + (cards.latestCard == nil ? 0 : 1) + (state.showsMarkAsPrimary ? 1 : 0)
                 precondition(frames.count == expectedCount, "Missing controls: \(frames)")
                 for (name, frame) in frames {
                     if name == "chat" {
@@ -63,9 +56,8 @@ struct FooterTests {
                 cases += 1
             }
         }
-        state.isMemoryHidden = false
-        state.isFeedbackHidden = false
         state.isChatHidden = false
+        state.showsMarkAsPrimary = true
         cards.latestCard = 1
         let liveHost = NSHostingView(rootView: root)
         liveHost.sizingOptions = []
@@ -79,26 +71,22 @@ struct FooterTests {
             }
             precondition(abs(Probe.frames["chat"]!.width - ChatButton.preferredContentWidth) <= 1,
                          "Chat title must survive live resizing")
-            precondition((Probe.frames["feedback"] != nil) == (width >= threshold), "Feedback must adapt during live resizing")
         }
-        let fiveEntryWidth = ChatButton.preferredContentWidth + 132
-        window.setContentSize(NSSize(width: fiveEntryWidth, height: 24))
+        let allEntriesWidth = ChatButton.preferredContentWidth + 100
+        window.setContentSize(NSSize(width: allEntriesWidth, height: 24))
         for hasCard in [false, true, false] {
             cards.latestCard = hasCard ? 1 : nil
             liveHost.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.03))
             precondition(Probe.frames["chat"]!.width > 24, "Chat title must survive notification changes")
-            precondition((Probe.frames["feedback"] != nil) == !hasCard, "Feedback must adapt to notification entry changes")
         }
         print("PASS: \(cases) rendered layouts plus live resize/card updates; title \(NSLocalizedString("sidebar.chatButton.title", comment: "")); language \(Locale.preferredLanguages.first ?? "unknown")")
         if CommandLine.arguments.contains("--preview") {
-            state.isMemoryHidden = false
-            state.isFeedbackHidden = false
             state.isChatHidden = false
             cards.latestCard = 1
             window.contentView = NSHostingView(rootView: VStack(alignment: .leading, spacing: 20) {
-                Text("Sidebar footer · all six entries").font(.headline)
-                Text("193 pt · Feedback hidden")
+                Text("Sidebar footer · all four entries").font(.headline)
+                Text("193 pt · compact spacing")
                 root.frame(width: 193, height: 24).border(Color.gray.opacity(0.4))
                 Text("260 pt · full Chat title")
                 root.frame(width: 260, height: 24).border(Color.gray.opacity(0.4))

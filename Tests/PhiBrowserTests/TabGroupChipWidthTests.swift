@@ -9,10 +9,9 @@ import XCTest
 
 final class TabGroupChipWidthTests: XCTestCase {
 
-    func test_named_expanded_includesCountBadge() {
+    func test_expanded_includesCountBadge() {
         let width = TabGroupChipView.chipWidth(
             forTitle: "Work",
-            hasUserSetTitle: true,
             memberCount: 5,
             isCollapsed: false
         )
@@ -23,61 +22,20 @@ final class TabGroupChipWidthTests: XCTestCase {
         XCTAssertLessThan(width, 125)
     }
 
-    func test_named_collapsed_includesMosaicInsteadOfCount() {
+    func test_collapsed_includesMosaicInsteadOfCount() {
         let expanded = TabGroupChipView.chipWidth(
             forTitle: "Work",
-            hasUserSetTitle: true,
             memberCount: 5,
             isCollapsed: false
         )
         let collapsed = TabGroupChipView.chipWidth(
             forTitle: "Work",
-            hasUserSetTitle: true,
             memberCount: 5,
             isCollapsed: true
         )
-        // Both have a "thing" between label and chevron. The mosaic
-        // is fixed 18pt; the count badge for a single-digit count is
-        // ~17pt. They should be within ±8pt of each other.
-        XCTAssertEqual(collapsed, expanded, accuracy: 8)
-    }
-
-    func test_unnamed_expanded_skipsBadge() {
-        let withBadge = TabGroupChipView.chipWidth(
-            forTitle: "Blue · 5 tabs",
-            hasUserSetTitle: true,
-            memberCount: 5,
-            isCollapsed: false
-        )
-        let withoutBadge = TabGroupChipView.chipWidth(
-            forTitle: "Blue · 5 tabs",
-            hasUserSetTitle: false,
-            memberCount: 5,
-            isCollapsed: false
-        )
-        XCTAssertGreaterThan(withBadge, withoutBadge,
-            "User-named chip should be wider — it includes the count badge.")
-    }
-
-    func test_unnamed_collapsed_widensVersusExpanded() {
-        // Unnamed group: expanded has no badge, collapsed has mosaic
-        // → collapse widens the chip by mosaic + countToLabelGap.
-        let expanded = TabGroupChipView.chipWidth(
-            forTitle: "Blue · 5 tabs",
-            hasUserSetTitle: false,
-            memberCount: 5,
-            isCollapsed: false
-        )
-        let collapsed = TabGroupChipView.chipWidth(
-            forTitle: "Blue · 5 tabs",
-            hasUserSetTitle: false,
-            memberCount: 5,
-            isCollapsed: true
-        )
-        let delta = collapsed - expanded
-        // Mosaic 28 + gap 6 = 34. Allow ±3.
-        XCTAssertEqual(delta, 34, accuracy: 3,
-            "Collapsing an unnamed group should widen the chip by mosaic + gap.")
+        // The 28pt mosaic replaces a roughly 19pt single-digit count badge.
+        XCTAssertGreaterThan(collapsed, expanded)
+        XCTAssertEqual(collapsed - expanded, 9, accuracy: 2)
     }
 
     func test_collapsed_widthDoesNotDependOnMemberCount() {
@@ -86,13 +44,11 @@ final class TabGroupChipWidthTests: XCTestCase {
         // budget).
         let smallGroup = TabGroupChipView.chipWidth(
             forTitle: "Work",
-            hasUserSetTitle: true,
             memberCount: 2,
             isCollapsed: true
         )
         let bigGroup = TabGroupChipView.chipWidth(
             forTitle: "Work",
-            hasUserSetTitle: true,
             memberCount: 100,
             isCollapsed: true
         )
@@ -115,7 +71,6 @@ final class TabGroupChipWidthTests: XCTestCase {
         let title = "Work"
         let width = TabGroupChipView.chipWidth(
             forTitle: title,
-            hasUserSetTitle: true,
             memberCount: 5,
             isCollapsed: true
         )
@@ -126,7 +81,6 @@ final class TabGroupChipWidthTests: XCTestCase {
             color: .blue,
             displayTitle: title,
             memberCount: 5,
-            hasUserSetTitle: true,
             isCollapsed: true,
             memberFavicons: [nil, nil, nil, nil]
         )

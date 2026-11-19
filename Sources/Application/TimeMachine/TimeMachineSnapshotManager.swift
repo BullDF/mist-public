@@ -15,7 +15,7 @@ enum TimeMachineSnapshotError: Error, LocalizedError {
         case .missingApplicationSupport(let url):
             return "Missing application support directory at \(url.path)"
         case .missingPhiData(let url):
-            return "Missing Phi data directory at \(url.path)"
+            return "Missing Mist data directory at \(url.path)"
         case .snapshotAlreadyExists(let url):
             return "Time Machine snapshot already exists at \(url.path)"
         }
@@ -23,11 +23,8 @@ enum TimeMachineSnapshotError: Error, LocalizedError {
 }
 
 struct TimeMachineSnapshotManager {
-    typealias BackupTraceReporter = (TimeMachineBackupTrace) -> Void
-
     private let paths: TimeMachinePaths
     private let policyLoader: TimeMachineRollbackPolicyLoader
-    private let backupTriggerMode: TimeMachineBackupTriggerMode
     private let catalogStore: TimeMachineCatalogStore
     private let applicationSupportURLProvider: () -> URL
     private let phiDataURLProvider: () -> URL
@@ -36,13 +33,11 @@ struct TimeMachineSnapshotManager {
     private let uptimeProvider: () -> TimeInterval
     private let idProvider: () -> UUID
     private let fileCloner: TimeMachineFileCloner
-    private let backupTraceReporter: BackupTraceReporter
     private let fileManager: FileManager
 
     init(
         paths: TimeMachinePaths = TimeMachinePaths(),
         policyLoader: TimeMachineRollbackPolicyLoader = TimeMachineRollbackPolicyLoader(),
-        backupTriggerMode: TimeMachineBackupTriggerMode = .current,
         catalogStore: TimeMachineCatalogStore? = nil,
         applicationSupportURLProvider: @escaping () -> URL = {
             URL(fileURLWithPath: FileSystemUtils.applicationSupportDirctory(), isDirectory: true)
@@ -57,12 +52,10 @@ struct TimeMachineSnapshotManager {
         uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         idProvider: @escaping () -> UUID = UUID.init,
         fileCloner: TimeMachineFileCloner = TimeMachineFileCloner(),
-        backupTraceReporter: @escaping BackupTraceReporter = SentryService.captureTimeMachineBackupTrace,
         fileManager: FileManager = .default
     ) {
         self.paths = paths
         self.policyLoader = policyLoader
-        self.backupTriggerMode = backupTriggerMode
         self.catalogStore = catalogStore ?? TimeMachineCatalogStore(paths: paths)
         self.applicationSupportURLProvider = applicationSupportURLProvider
         self.phiDataURLProvider = phiDataURLProvider
@@ -71,7 +64,6 @@ struct TimeMachineSnapshotManager {
         self.uptimeProvider = uptimeProvider
         self.idProvider = idProvider
         self.fileCloner = fileCloner
-        self.backupTraceReporter = backupTraceReporter
         self.fileManager = fileManager
     }
 
@@ -81,22 +73,18 @@ struct TimeMachineSnapshotManager {
             return nil
         }
 
-        guard policy.shouldCreateBackup(
-            currentVersion: currentVersion,
-            currentBuild: currentBuild,
-            triggerMode: backupTriggerMode
-        ) else {
+        guard policy.shouldCreateBackup(currentBuild: currentBuild) else {
             AppLogDebug(
                 "[TimeMachine] Backup policy skipped version \(currentVersion) build \(currentBuild); " +
-                "trigger \(backupTriggerDescription(for: policy))."
+                "trigger build \(policy.backupTriggerBuild)."
             )
             return nil
         }
 
         let catalog = try catalogStore.load()
-        guard !hasHandledBackup(in: catalog, for: policy) else {
+        guard !catalog.hasHandledBackup(triggerBuild: policy.backupTriggerBuild) else {
             AppLogInfo(
-                "[TimeMachine] Backup already exists for trigger \(backupTriggerDescription(for: policy)); " +
+                "[TimeMachine] Backup already exists for trigger build \(policy.backupTriggerBuild); " +
                 "skipping duplicate snapshot."
             )
             return nil
@@ -176,23 +164,6 @@ struct TimeMachineSnapshotManager {
                 record = recordWithoutSize
             }
             let duration = elapsedDuration(since: startedAt)
-            backupTraceReporter(
-                TimeMachineBackupTrace(
-                    result: .succeeded,
-                    backupID: id,
-                    bundleIdentifier: paths.bundleIdentifier,
-                    currentVersion: currentVersion,
-                    currentBuild: currentBuild,
-                    backupTriggerBuild: policy.backupTriggerBuild,
-                    rollbackVersion: policy.rollbackVersion,
-                    rollbackBuild: policy.rollbackBuild,
-                    includeChromiumData: policy.includeChromiumData,
-                    duration: duration,
-                    snapshotSizeBytes: snapshotSizeBytes,
-                    errorDescription: nil,
-                    errorType: nil
-                )
-            )
             AppLogInfo(
                 "[TimeMachine] Backup \(id.uuidString) completed in \(formatDuration(duration)); " +
                 "size=\(snapshotSizeBytes.map(String.init) ?? "unknown") bytes."
@@ -200,25 +171,6 @@ struct TimeMachineSnapshotManager {
             return record
         } catch {
             let duration = elapsedDuration(since: startedAt)
-            let snapshotSizeBytes = TimeMachineFileMetrics.sizeBytes(at: stagingURL, fileManager: fileManager)
-                ?? TimeMachineFileMetrics.sizeBytes(at: snapshotURL, fileManager: fileManager)
-            backupTraceReporter(
-                TimeMachineBackupTrace(
-                    result: .failed,
-                    backupID: id,
-                    bundleIdentifier: paths.bundleIdentifier,
-                    currentVersion: currentVersion,
-                    currentBuild: currentBuild,
-                    backupTriggerBuild: policy.backupTriggerBuild,
-                    rollbackVersion: policy.rollbackVersion,
-                    rollbackBuild: policy.rollbackBuild,
-                    includeChromiumData: policy.includeChromiumData,
-                    duration: duration,
-                    snapshotSizeBytes: snapshotSizeBytes,
-                    errorDescription: error.localizedDescription,
-                    errorType: String(describing: type(of: error))
-                )
-            )
             AppLogError("[TimeMachine] Backup \(id.uuidString) failed after \(formatDuration(duration)): \(error.localizedDescription)")
             try? fileManager.removeItem(at: stagingURL)
             try? fileManager.removeItem(at: snapshotURL)
@@ -331,28 +283,6 @@ struct TimeMachineSnapshotManager {
 
     private func scopeDescription(_ includeChromiumData: Bool) -> String {
         includeChromiumData ? "full" : "phi-only"
-    }
-
-    private func hasHandledBackup(in catalog: TimeMachineCatalog, for policy: TimeMachineRollbackPolicy) -> Bool {
-        switch backupTriggerMode {
-        case .build:
-            return catalog.hasHandledBackup(triggerBuild: policy.backupTriggerBuild)
-        case .version:
-            return catalog.hasHandledBackup(creatingVersion: policy.backupTriggerVersion)
-        }
-    }
-
-    private func backupTriggerDescription(for policy: TimeMachineRollbackPolicy) -> String {
-        switch backupTriggerMode {
-        case .build:
-            return "build \(policy.backupTriggerBuild)"
-        case .version:
-            return "version \(policy.backupTriggerVersion)"
-        }
-    }
-
-    private func formatDuration(since startedAt: TimeInterval) -> String {
-        formatDuration(elapsedDuration(since: startedAt))
     }
 
     private func elapsedDuration(since startedAt: TimeInterval) -> TimeInterval {

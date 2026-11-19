@@ -18,8 +18,6 @@ struct WebContentHeaderView: View {
     let onRefreshTap: () -> Void
     let onStopLoadingTap: () -> Void
     let onChatTap: () -> Void
-    let onFeedbackTap: () -> Void
-    let onMemoryTap: () -> Void
     let onDownloadTap: () -> Void
     let onOpenLocationBar: (NSView?) -> Void
     var onAnchorResolved: ((NSView?) -> Void)?
@@ -49,8 +47,6 @@ struct WebContentHeaderView: View {
         onRefreshTap: @escaping () -> Void,
         onStopLoadingTap: @escaping () -> Void,
         onChatTap: @escaping () -> Void,
-        onFeedbackTap: @escaping () -> Void,
-        onMemoryTap: @escaping () -> Void = {},
         onDownloadTap: @escaping () -> Void = {},
         onOpenLocationBar: @escaping (NSView?) -> Void,
         onAnchorResolved: ((NSView?) -> Void)? = nil,
@@ -67,8 +63,6 @@ struct WebContentHeaderView: View {
         self.onRefreshTap = onRefreshTap
         self.onStopLoadingTap = onStopLoadingTap
         self.onChatTap = onChatTap
-        self.onFeedbackTap = onFeedbackTap
-        self.onMemoryTap = onMemoryTap
         self.onDownloadTap = onDownloadTap
         self.onOpenLocationBar = onOpenLocationBar
         self.onAnchorResolved = onAnchorResolved
@@ -110,18 +104,13 @@ struct WebContentHeaderView: View {
                     availableWidth: trailingAvailableWidth,
                     pinnedExtensions: extensionsModel.visiblePinnedExtensions,
                     showDownload: state.showDownloadButton,
-                    showMemory: state.showMemoryButton,
-                    showFeedback: state.showFeedbackButton,
                     showChat: state.showChatButton,
-                    isInPlaceholderMode: state.isInPlaceholderMode,
                     extensionManager: browserState?.extensionManager,
                     browserState: browserState,
                     downloadViewModel: downloadViewModel,
                     isDownloadPopoverShown: $state.isDownloadPopoverShown,
                     isExtensionPopoverShown: $isExtensionPopoverShown,
-                    onFeedbackTap: onFeedbackTap,
                     onChatTap: onChatTap,
-                    onMemoryTap: onMemoryTap,
                     onDownloadTap: onDownloadTap,
                     onChatAnchorResolved: onChatAnchorResolved
                 )
@@ -155,8 +144,6 @@ struct WebContentHeaderView: View {
             availableWidth: trailingAvailableWidth,
             pinnedCount: extensionsModel.visiblePinnedExtensions.count,
             showDownload: state.showDownloadButton,
-            showMemory: state.showMemoryButton,
-            showFeedback: state.showFeedbackButton,
             showChat: state.showChatButton
         )
     }
@@ -361,7 +348,6 @@ struct HeaderControlAnchorView: NSViewRepresentable {
     state.showNavigationButtons = true
     state.showChatButton = true
     state.showSidebarButton = true
-    state.showFeedbackButton = true
     state.showDownloadButton = true
     state.canGoBack = true
     state.canGoForward = true
@@ -381,7 +367,6 @@ struct HeaderControlAnchorView: NSViewRepresentable {
         onRefreshTap: {},
         onStopLoadingTap: {},
         onChatTap: {},
-        onFeedbackTap: {},
         onOpenLocationBar: { _ in }
     )
     .frame(height: 40)
@@ -394,7 +379,6 @@ struct HeaderControlAnchorView: NSViewRepresentable {
     state.showNavigationButtons = true
     state.showChatButton = true
     state.showSidebarButton = false
-    state.showFeedbackButton = true
     state.canGoBack = false
     state.canGoForward = true
     state.loadingProgress = 0
@@ -412,7 +396,6 @@ struct HeaderControlAnchorView: NSViewRepresentable {
         onRefreshTap: {},
         onStopLoadingTap: {},
         onChatTap: {},
-        onFeedbackTap: {},
         onOpenLocationBar: { _ in }
     )
     .frame(height: 60)
@@ -443,7 +426,6 @@ struct HeaderControlAnchorView: NSViewRepresentable {
         onRefreshTap: {},
         onStopLoadingTap: {},
         onChatTap: {},
-        onFeedbackTap: {},
         onOpenLocationBar: { _ in }
     )
     .frame(height: 30)

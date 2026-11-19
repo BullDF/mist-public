@@ -113,11 +113,6 @@ class GradientColorLabelState: ObservableObject {
 struct GradientColorLabelView: View {
     @ObservedObject var state: GradientColorLabelState
     
-    /// Primary initializer with state object for dynamic updates
-    init(state: GradientColorLabelState) {
-        self.state = state
-    }
-    
     /// Convenience initializer for simpler usage
     init(
         text: String,
@@ -256,7 +251,6 @@ struct GradientColorLabelView: View {
     .padding(40)
     .background(Color.black)
 }
-
 #Preview("Custom Colors") {
     VStack(spacing: 20) {
         GradientColorLabelView(
@@ -283,7 +277,6 @@ struct GradientColorLabelView: View {
     .padding(40)
     .background(Color.black)
 }
-
 #Preview("Single Color") {
     GradientColorLabelView(
         text: "Single Color Text",
@@ -345,120 +338,4 @@ struct GradientColorLabelView: View {
     }
     .padding(40)
     .background(Color.black)
-}
-
-// MARK: - NSView Wrapper for AppKit
-class GradientColorLabel: NSView {
-    private let state = GradientColorLabelState()
-    private var hostingView: NSHostingView<GradientColorLabelView>?
-    
-    var text: String {
-        get { state.text }
-        set { state.text = newValue }
-    }
-    
-    /// Set colors for gradient text. Use single color array for solid color.
-    var gradientColors: [Color] {
-        get { state.gradientColors }
-        set { state.gradientColors = newValue }
-    }
-    
-    var gradientDirection: GradientDirection {
-        get { state.gradientDirection }
-        set { state.gradientDirection = newValue }
-    }
-    
-    var fontSize: CGFloat {
-        get { state.fontSize }
-        set { state.fontSize = newValue }
-    }
-    
-    var fontWeight: Font.Weight {
-        get { state.fontWeight }
-        set { state.fontWeight = newValue }
-    }
-    
-    /// Custom font name. If nil, uses system font.
-    var fontName: String? {
-        get { state.fontName }
-        set { state.fontName = newValue }
-    }
-    
-    var alignment: TextAlignment {
-        get { state.alignment }
-        set { state.alignment = newValue }
-    }
-    
-    var lineLimit: Int? {
-        get { state.lineLimit }
-        set { state.lineLimit = newValue }
-    }
-    
-    var minimumScaleFactor: CGFloat {
-        get { state.minimumScaleFactor }
-        set { state.minimumScaleFactor = newValue }
-    }
-    
-    var kerning: CGFloat {
-        get { state.kerning }
-        set { state.kerning = newValue }
-    }
-    
-    /// Click action callback
-    var clickAction: (() -> Void)? {
-        get { state.clickAction }
-        set {
-            state.clickAction = newValue
-            state.isTappable = newValue != nil
-        }
-    }
-    
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        setupHostingView()
-    }
-    
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setupHostingView()
-    }
-    
-    /// Convenience initializer with configuration
-    convenience init(
-        text: String,
-        gradientColors: [Color]? = nil,
-        gradientDirection: GradientDirection = .horizontal,
-        fontSize: CGFloat = 16,
-        fontWeight: Font.Weight = .regular,
-        fontName: String? = nil,
-        action: (() -> Void)? = nil
-    ) {
-        self.init(frame: .zero)
-        self.text = text
-        if let colors = gradientColors {
-            self.gradientColors = colors
-        }
-        self.gradientDirection = gradientDirection
-        self.fontSize = fontSize
-        self.fontWeight = fontWeight
-        self.fontName = fontName
-        self.clickAction = action
-    }
-    
-    private func setupHostingView() {
-        let swiftUIView = GradientColorLabelView(state: state)
-        
-        let hosting = NSHostingView(rootView: swiftUIView)
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hosting)
-        
-        NSLayoutConstraint.activate([
-            hosting.topAnchor.constraint(equalTo: topAnchor),
-            hosting.bottomAnchor.constraint(equalTo: bottomAnchor),
-            hosting.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: trailingAnchor)
-        ])
-        
-        hostingView = hosting
-    }
 }

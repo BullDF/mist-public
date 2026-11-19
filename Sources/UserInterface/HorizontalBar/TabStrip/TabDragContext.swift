@@ -26,10 +26,6 @@ final class TabDragContext {
     let initialTabFrame: CGRect
     /// Width of the dragged tab, used when sizing the gap.
     let draggedTabWidth: CGFloat
-    /// Index of the dragged tab's split partner in the same zone, if any.
-    /// Set so the partner lifts alongside the dragged tab and the layout
-    /// engine excludes both indices.
-    let siblingSourceIndex: Int?
     /// All source indices that should leave layout flow during this drag.
     /// Single-tab drags contain `sourceIndex`; split-pair and multi-selection
     /// drags contain every represented tab index.
@@ -136,13 +132,6 @@ final class TabDragContext {
         draggingTabIds.count > 1
     }
 
-    var currentTabFrame: CGRect {
-        var frame = initialTabFrame
-        let deltaX = currentMouseLocation.x - initialMouseLocation.x
-        frame.origin.x += deltaX
-        return frame
-    }
-
     /// Whether the drag would result in a real move OR a group
     /// membership change. Drops at the same physical slot as the
     /// source (`targetIndex == sourceIndex` or `sourceIndex + 1`)
@@ -182,7 +171,6 @@ final class TabDragContext {
         self.initialMouseLocation = initialMouseLocation
         self.initialTabFrame = initialTabFrame
         self.draggedTabWidth = initialTabFrame.width
-        self.siblingSourceIndex = siblingSourceIndex
         if let sourceExcludedIndices {
             self.sourceExcludedIndices = sourceExcludedIndices
         } else {

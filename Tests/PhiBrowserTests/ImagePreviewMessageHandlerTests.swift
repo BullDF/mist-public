@@ -62,16 +62,12 @@ final class ImagePreviewMessageHandlerTests: XCTestCase {
         XCTAssertTrue(messenger.broadcasts.isEmpty)
     }
 
-    func testRequestsAlwaysOpenStandalonePreviewAndPreserveAuthorizedItems() throws {
-        let senderID = "fenmfiepnpdlhplemgijlimpbebebljo"
+    func testRequestsOpenStandalonePreviewAndPreserveLocalItems() throws {
         for windowID in [42, -1] {
             let messenger = TestMessenger()
             let existingWindows = Set(NSApp.windows.map { ObjectIdentifier($0) })
             ImagePreviewMessageHandler.handle(
-                context(
-                    #"{"windowId":\#(windowID),"items":["/tmp/preview-first.png","/api/v1/files/preview-second.png"],"currentIndex":99}"#,
-                    senderID: senderID
-                ),
+                context(#"{"windowId":\#(windowID),"items":["/tmp/preview-first.png","/tmp/preview-second.png"],"currentIndex":99}"#),
                 messenger: messenger
             )
 
@@ -86,9 +82,8 @@ final class ImagePreviewMessageHandlerTests: XCTestCase {
             XCTAssertTrue(try XCTUnwrap(controller.window).isVisible)
             XCTAssertEqual(controller.state.items.count, 2)
             XCTAssertEqual(controller.state.currentIndex, 1)
-            XCTAssertEqual(controller.state.activeItem?.source, .phiAgentFile(
-                path: "/api/v1/files/preview-second.png", senderID: senderID
-            ))
+            XCTAssertEqual(controller.state.activeItem?.source,
+                           .localFile(URL(fileURLWithPath: "/tmp/preview-second.png").standardizedFileURL))
             XCTAssertEqual(messenger.responses.count, 1)
             XCTAssertEqual(messenger.responses.first?.response, "{}")
             XCTAssertEqual(messenger.responses.first?.requestId, "preview-request")

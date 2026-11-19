@@ -28,8 +28,10 @@ final class OmniBoxThemeTests: XCTestCase {
         self.store = store
         let state = BrowserState(windowId: UUID().hashValue, localStore: store, profileId: "Default")
         let context = state.themeContext
-        let red = Theme(id: "omnibox-red", name: "Red", colorPalette: [.windowOverlayBackground: ColorPair(.red)])
-        let yellow = Theme(id: "omnibox-yellow", name: "Yellow", colorPalette: [.windowOverlayBackground: ColorPair(.yellow)])
+        let red = Theme(id: "omnibox-red", name: "Red", colorPalette: [.windowBackground: ColorPair(.red)])
+        let yellow = Theme(id: "omnibox-yellow", name: "Yellow", colorPalette: [.windowBackground: ColorPair(.yellow)])
+        // The panel is the kit's card, a step lighter than a dark page.
+        func card(_ theme: Theme) -> NSColor { ThemedColor.mistCardFill.resolve(theme: theme, appearance: .dark) }
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -51,16 +53,16 @@ final class OmniBoxThemeTests: XCTestCase {
         let panel = try XCTUnwrap(controller.attachAndShowOmniBoxHostPanel())
         let omnibox = OmniBoxViewController(viewModel: .init(windowState: state), state: state)
         panel.contentView?.addSubview(omnibox.view)
-        let background = try XCTUnwrap(omnibox.view.subviews.first)
+        let background = try XCTUnwrap(omnibox.view.subviews.first as? MistCardView)
         XCTAssertTrue(panel.themeStateProvider === context)
         XCTAssertTrue(background.themeStateProvider === context)
         XCTAssertEqual(panel.effectiveAppearance.phiAppearance, .dark)
-        assertBackground(background, .red)
+        assertBackground(background, card(red))
 
         // Updating the active Space's window context must refresh an already mounted overlay.
         context.setTheme(yellow)
         drainThemeUpdates()
-        assertBackground(background, .yellow)
+        assertBackground(background, card(yellow))
 
         // Reuse the same panel and views, as the production dismiss/show path does.
         omnibox.view.removeFromSuperview()
@@ -71,7 +73,7 @@ final class OmniBoxThemeTests: XCTestCase {
         XCTAssertTrue(controller.attachAndShowOmniBoxHostPanel() === panel)
         panel.contentView?.addSubview(omnibox.view)
         XCTAssertEqual(panel.effectiveAppearance.phiAppearance, .dark)
-        assertBackground(background, .red)
+        assertBackground(background, card(red))
 
         context.setUserAppearanceChoice(.light)
         drainThemeUpdates()
@@ -80,7 +82,35 @@ final class OmniBoxThemeTests: XCTestCase {
         context.setUserAppearanceChoice(.dark)
         drainThemeUpdates()
         XCTAssertEqual(panel.effectiveAppearance.phiAppearance, .dark)
-        assertBackground(background, .red)
+        assertBackground(background, card(red))
+    }
+
+    func testFloatingFieldTakesTheKitSelection() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        self.directory = directory
+        let store = LocalStore(account: Account(userID: UUID().uuidString), storeDirectoryURL: directory)
+        self.store = store
+        let state = BrowserState(windowId: UUID().hashValue, localStore: store, profileId: "Default")
+        let omnibox = OmniBoxViewController(viewModel: .init(windowState: state), state: state)
+        let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 700, height: 300),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.orderFrontRegardless()
+        window.contentView?.addSubview(omnibox.view)
+        omnibox.view.frame = NSRect(x: 0, y: 0, width: 680, height: 57)
+        omnibox.focusTextField()
+        for _ in 0..<5 { try await Task.sleep(for: .milliseconds(10)) }
+        func fields(in view: NSView) -> [OmniBoxTextField] {
+            (view as? OmniBoxTextField).map { [$0] } ?? view.subviews.flatMap(fields(in:))
+        }
+        let input = try XCTUnwrap(fields(in: omnibox.view).first)
+        let editor = try XCTUnwrap(input.textFiled.currentEditor() as? NSTextView)
+        let themed = ThemedColor.mistTextSelection.resolve(theme: omnibox.view.themeStateProvider.currentTheme,
+                                                           appearance: omnibox.view.currentAppearance)
+        XCTAssertEqual(editor.selectedTextAttributes[.backgroundColor] as? NSColor, themed,
+                       "The panel's inline completion shows in the kit's selection, never the accent color")
     }
 
     func testIncognitoOmniBoxUsesLightInputTextWhenAppAppearanceIsLight() throws {
@@ -110,9 +140,10 @@ final class OmniBoxThemeTests: XCTestCase {
         let panel = try XCTUnwrap(controller.attachAndShowOmniBoxHostPanel())
         let omnibox = OmniBoxViewController(viewModel: .init(windowState: state), state: state)
         panel.contentView?.addSubview(omnibox.view)
-        let background = try XCTUnwrap(omnibox.view.subviews.first)
-        let input = try XCTUnwrap(background.subviews.flatMap(\.subviews)
-            .compactMap { $0 as? OmniBoxTextField }.first)
+        func fields(in view: NSView) -> [OmniBoxTextField] {
+            (view as? OmniBoxTextField).map { [$0] } ?? view.subviews.flatMap(fields(in:))
+        }
+        let input = try XCTUnwrap(fields(in: omnibox.view).first)
         input.updateDisplayText("google.com")
         omnibox.focusTextField()
         let editor = try XCTUnwrap(input.textFiled.currentEditor() as? NSTextView)
@@ -137,39 +168,36 @@ final class OmniBoxThemeTests: XCTestCase {
         XCTAssertTrue(panel.themeStateProvider === ThemeManager.shared)
     }
 
-    func testReusedEngineRowRestoresThemeColorsForAnUnknownKeyword() throws {
-        func suggestion(keyword: String, name: String) -> OmniBoxSuggestion {
-            OmniBoxSuggestion(chromiumDic: [
-                "type": "search-other-engine", "contents": "music", "description": name,
-                "keywordSearchKeyword": keyword, "keywordSearchName": name,
-                "destinationUrl": "", "fillIntoEdit": "", "line": 0
-            ])
-        }
-        let spotify = suggestion(keyword: "spotify.com", name: "My music")
-        let cell = OmniBoxSuggestionCellView(suggestion: spotify, index: 0, showsSwitchToTabHint: false)
-        let background = try XCTUnwrap(cell.subviews.first as? HoverableView)
-        let red = Theme(id: "engine-red", name: "Red", colorPalette: [.themeColor: ColorPair(.red)])
-        let blue = Theme(id: "engine-blue", name: "Blue", colorPalette: [.themeColor: ColorPair(.blue)])
+    func testOtherEngineSuggestionsAreUnsupported() {
+        let otherEngine = OmniBoxSuggestion(chromiumDic: [
+            "type": "search-other-engine", "contents": "spotify.com cats",
+            "description": "Spotify", "destinationUrl": "https://open.spotify.com/search/cats",
+            "fillIntoEdit": "spotify.com cats", "line": 0
+        ])
+        let defaultEngine = OmniBoxSuggestion(chromiumDic: [
+            "type": "search-what-you-typed", "contents": "spotify.com cats",
+            "description": "", "destinationUrl": "https://default.example/search?q=spotify.com+cats",
+            "fillIntoEdit": "spotify.com cats", "line": 1
+        ])
 
-        cell.configure(with: spotify, index: 0)
-        let brandMapper = try XCTUnwrap(background.phi.selectedColor)
-        XCTAssertEqual(brandMapper[red, .light], NSColor(hex: 0x1DB954))
-        XCTAssertEqual(brandMapper[blue, .dark], NSColor(hex: 0x1DB954))
+        XCTAssertEqual(otherEngine.type, .searchEngine)
+        XCTAssertFalse(otherEngine.isSupportedType)
+        XCTAssertEqual(defaultEngine.type, .searchSuggest)
+        XCTAssertTrue(defaultEngine.isSupportedType)
+    }
 
-        // A custom engine named Spotify must not inherit a previously used row's brand.
-        cell.configure(with: suggestion(keyword: "example.com", name: "Spotify"), index: 1)
-        let fallbackMapper = try XCTUnwrap(background.phi.selectedColor)
-        let hoverMapper = try XCTUnwrap(background.phi.hoveredColor)
-        for theme in [red, blue] {
-            for appearance in [Appearance.light, .dark] {
-                let expected = ThemedColor.themeColor.resolve(theme: theme, appearance: appearance)
-                XCTAssertEqual(fallbackMapper[theme, appearance], expected)
-                XCTAssertEqual(hoverMapper[theme, appearance], expected.withAlphaComponent(0.16))
-            }
-        }
+    func testOnlyNewTabOmniBoxSwitchesToOpenTabsByDefault() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        self.directory = directory
+        let store = LocalStore(account: Account(userID: UUID().uuidString), storeDirectoryURL: directory)
+        self.store = store
+        let viewModel = OmniBoxViewModel(windowState: BrowserState(windowId: UUID().hashValue, localStore: store, profileId: "Default"))
 
-        cell.configure(with: suggestion(keyword: "twitter.com", name: "X"), index: 2)
-        XCTAssertEqual(try XCTUnwrap(background.phi.selectedColor)[blue, .dark], NSColor(hex: 0x000000))
+        viewModel.opennedFromCurrentTab = false
+        XCTAssertTrue(viewModel.switchesToOpenTabByDefault)
+        viewModel.opennedFromCurrentTab = true
+        XCTAssertFalse(viewModel.switchesToOpenTabByDefault)
     }
 
     private func drainThemeUpdates() {
@@ -178,9 +206,11 @@ final class OmniBoxThemeTests: XCTestCase {
         wait(for: [drained], timeout: 1)
     }
 
-    private func assertBackground(_ view: NSView, _ expected: NSColor,
+    /// The card's fill is its surface layer's, drawn above its shadow layers and below its content view's layer.
+    private func assertBackground(_ card: MistCardView, _ expected: NSColor,
                                   file: StaticString = #filePath, line: UInt = #line) {
-        guard let cgColor = view.layer?.backgroundColor,
+        let surface = card.layer?.sublayers?.last { layer in !card.subviews.contains { $0.layer === layer } }
+        guard let cgColor = surface?.backgroundColor,
               let actual = NSColor(cgColor: cgColor)?.usingColorSpace(.sRGB),
               let expected = expected.usingColorSpace(.sRGB) else {
             XCTFail("Expected an sRGB omnibox background", file: file, line: line)

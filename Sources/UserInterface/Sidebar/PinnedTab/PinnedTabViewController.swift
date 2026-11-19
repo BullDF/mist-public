@@ -393,9 +393,7 @@ class PinnedTabViewController: NSViewController {
         }
         isActive = true
         guard let browserState else {
-            #if DEBUG
             loadMockDataIfNeeded()
-            #endif
             return
         }
         cancellables.removeAll()
@@ -425,13 +423,6 @@ class PinnedTabViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] focusingTab in
                 self?.updateAllItemsSelectionState(focusingTab)
-            }
-            .store(in: &cancellables)
-
-        browserState.$groupOverviewState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self, weak browserState] _ in
-                self?.updateAllItemsSelectionState(browserState?.focusingTab)
             }
             .store(in: &cancellables)
 
@@ -951,14 +942,6 @@ class PinnedTabViewController: NSViewController {
             return guid
         }()
 
-        guard browserState?.groupOverviewState == nil else {
-            collectionView.visibleItems().forEach { visible in
-                if let tabItem = visible as? PinnedTabItem { tabItem.isSelected = false }
-                if let splitItem = visible as? PinnedSplitItem { splitItem.isSelected = false }
-            }
-            return
-        }
-
         guard focusingDBGuid != nil else {
             collectionView.visibleItems().forEach { visible in
                 if let tabItem = visible as? PinnedTabItem { tabItem.isSelected = false }
@@ -1013,7 +996,6 @@ class PinnedTabViewController: NSViewController {
         modifierFlags: NSEvent.ModifierFlags
     ) {
         guard let browserState else { return }
-        browserState.clearGroupOverview()
         if modifierFlags.isPureOptionClick,
            MainActor.assumeIsolated({
                tab.performSplitAction(in: browserState)
@@ -2116,9 +2098,6 @@ extension PinnedTabViewController {
 }
 
 // MARK: - Notification Names
-extension Notification.Name {
-    static let switchToTab = Notification.Name("switchToTab")
-}
 
 class DragAwareView: NSView {
     weak var dragController: (any NSDraggingDestination)?

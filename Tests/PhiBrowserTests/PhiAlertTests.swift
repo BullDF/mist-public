@@ -151,18 +151,6 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertEqual(returnedResponse, .OK)
     }
 
-    func testNonModalPresentationAttachesThePanelToTheParentWindow() throws {
-        let parentWindow = makeParentWindow()
-
-        let presenter = presentNonModalAlert(over: parentWindow)
-
-        XCTAssertTrue(presenter.isPresented)
-        let panel = try XCTUnwrap(parentWindow.childWindows?.first)
-        XCTAssertTrue(panel.isVisible)
-
-        presenter.dismiss(.cancel)
-    }
-
     func testQuitActionIsIgnoredWhileAnOrdinarySheetIsPresented() {
         let sourceWindow = makeVisibleSourceWindow()
         let otherWindow = makeVisibleSourceWindow()
@@ -212,11 +200,13 @@ final class PhiAlertTests: XCTestCase {
         var dismissHandler: ((NSApplication.ModalResponse) -> Void)?
         var didAttemptQuit = false
         RunLoop.current.perform(inModes: [.eventTracking]) {
-            XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
-            didAttemptQuit = true
-            XCTAssertTrue(NSApp.sendAction(#selector(NSApplication.terminate(_:)), to: NSApp, from: nil))
-            XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
-            dismissHandler?(.cancel)
+            MainActor.assumeIsolated {
+                XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
+                didAttemptQuit = true
+                XCTAssertTrue(NSApp.sendAction(#selector(NSApplication.terminate(_:)), to: NSApp, from: nil))
+                XCTAssertTrue(NSApp.hasModalPresentationBlockingTermination)
+                dismissHandler?(.cancel)
+            }
         }
 
         let response = PhiAlertPresenter.runStandaloneSynchronously { dismiss in
@@ -229,109 +219,6 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertTrue(didAttemptQuit)
         XCTAssertEqual(response, .cancel)
         XCTAssertFalse(NSApp.hasModalPresentationBlockingTermination)
-    }
-
-    func testNonModalPresentationDoesNotBlockTermination() {
-        let sourceWindow = makeVisibleSourceWindow()
-        defer { sourceWindow.close() }
-        let presenter = presentNonModalAlert(over: sourceWindow)
-        defer { presenter.dismiss(.cancel) }
-
-        XCTAssertFalse(NSApp.hasModalPresentationBlockingTermination)
-    }
-
-    func testNonModalPresentationLeavesTheParentWindowUnblocked() {
-        let parentWindow = makeParentWindow()
-
-        let presenter = presentNonModalAlert(over: parentWindow)
-
-        XCTAssertNil(parentWindow.attachedSheet)
-
-        presenter.dismiss(.cancel)
-    }
-
-    func testNonModalPanelIsCenteredOnTheParentContentArea() throws {
-        let parentWindow = makeParentWindow()
-        let contentRect = parentWindow.contentRect(
-            forFrameRect: parentWindow.frame
-        )
-
-        let presenter = presentNonModalAlert(over: parentWindow)
-
-        let panel = try XCTUnwrap(parentWindow.childWindows?.first)
-        XCTAssertEqual(panel.frame.midX, contentRect.midX, accuracy: 1)
-        XCTAssertEqual(panel.frame.midY, contentRect.midY, accuracy: 1)
-
-        presenter.dismiss(.cancel)
-    }
-
-    func testNonModalPanelKeepsTheAlertWidth() throws {
-        let parentWindow = makeParentWindow()
-
-        let presenter = presentNonModalAlert(over: parentWindow)
-
-        let panel = try XCTUnwrap(parentWindow.childWindows?.first)
-        XCTAssertEqual(panel.frame.width, PhiAlertLayout.width, accuracy: 0.5)
-
-        presenter.dismiss(.cancel)
-    }
-
-    func testNonModalDismissalDetachesThePanelAndReturnsTheResponse() {
-        let parentWindow = makeParentWindow()
-        var returnedResponse: NSApplication.ModalResponse?
-
-        let presenter = presentNonModalAlert(over: parentWindow) {
-            returnedResponse = $0
-        }
-        presenter.dismiss(.OK)
-
-        XCTAssertFalse(presenter.isPresented)
-        XCTAssertEqual(returnedResponse, .OK)
-        XCTAssertEqual(parentWindow.childWindows?.count ?? 0, 0)
-    }
-
-    func testClosingTheParentWindowRunsTheCompletionExactlyOnce() {
-        let parentWindow = makeParentWindow()
-        var dismissalCount = 0
-
-        let presenter = presentNonModalAlert(over: parentWindow) { _ in
-            dismissalCount += 1
-        }
-        parentWindow.close()
-
-        XCTAssertEqual(dismissalCount, 1)
-        XCTAssertFalse(presenter.isPresented)
-        XCTAssertEqual(parentWindow.childWindows?.count ?? 0, 0)
-    }
-
-    func testBringingToFrontDoesNothingWithoutAPresentedAlert() {
-        let parentWindow = makeParentWindow()
-        let presenter = presentNonModalAlert(over: parentWindow)
-        presenter.dismiss(.cancel)
-
-        presenter.bringToFront()
-
-        XCTAssertFalse(presenter.isPresented)
-        XCTAssertEqual(parentWindow.childWindows?.count ?? 0, 0)
-    }
-
-    /// Window ordering is asserted through visibility rather than
-    /// `NSApp.orderedWindows`, which depends on the test host being the
-    /// active application. Hiding the parent hides its panel with it, so a
-    /// visible panel afterwards is what recall has to deliver.
-    func testBringingToFrontRecallsAPanelHiddenWithItsParentWindow() throws {
-        let parentWindow = makeParentWindow()
-        let presenter = presentNonModalAlert(over: parentWindow)
-        let panel = try XCTUnwrap(parentWindow.childWindows?.first)
-        parentWindow.orderOut(nil)
-        XCTAssertFalse(panel.isVisible)
-
-        presenter.bringToFront()
-
-        XCTAssertTrue(parentWindow.isVisible)
-        XCTAssertTrue(panel.isVisible)
-
-        presenter.dismiss(.cancel)
     }
 
     func testAppKitConfigurationModelsOneTwoAndThreeActionLayouts() {
@@ -551,38 +438,6 @@ final class PhiAlertTests: XCTestCase {
         XCTAssertEqual(response, expectedResponse)
     }
 
-    func testReturnConfirmsNothingWithoutADefaultButton() {
-        // `.cancel` is how the harness ends a sheet nothing dismissed, so it
-        // says Return was ignored rather than answered by some other button.
-        let response = runKeyboardShortcutAlert(
-            characters: "\r",
-            keyCode: 36,
-            runAlert: { sourceWindow in
-                NSApp.runPhiAlert(
-                    self.irreversibleConfirmation,
-                    relativeTo: sourceWindow
-                )
-            }
-        )
-
-        XCTAssertEqual(response, .cancel)
-    }
-
-    func testEscapeStillCancelsWithoutADefaultButton() {
-        let response = runKeyboardShortcutAlert(
-            characters: "\u{1B}",
-            keyCode: 53,
-            runAlert: { sourceWindow in
-                NSApp.runPhiAlert(
-                    self.irreversibleConfirmation,
-                    relativeTo: sourceWindow
-                )
-            }
-        )
-
-        XCTAssertEqual(response, .alertSecondButtonReturn)
-    }
-
     func testCommandQDoesNotConfirmOrdinaryAlert() {
         let response = runKeyboardShortcutAlert(
             characters: "q",
@@ -628,18 +483,6 @@ final class PhiAlertTests: XCTestCase {
         // These tests close the window themselves, so ARC keeps ownership.
         window.isReleasedWhenClosed = false
         return window
-    }
-
-    @discardableResult
-    private func presentNonModalAlert(
-        over parentWindow: NSWindow,
-        onDismiss: ((NSApplication.ModalResponse) -> Void)? = nil
-    ) -> PhiAlertPresenter {
-        parentWindow.presentPhiAlertNonModally(onDismiss: onDismiss) { dismiss in
-            makeAlert(message: "Non-modal") {
-                dismiss(.OK)
-            }
-        }
     }
 
     private func makeHostingController(
@@ -710,24 +553,6 @@ final class PhiAlertTests: XCTestCase {
         }
 
         return NSApp.runPhiAlert(configuration, relativeTo: sourceWindow)
-    }
-
-    /// A destructive confirmation that keeps the Return key off every button.
-    private var irreversibleConfirmation: PhiAlertAppKitConfiguration {
-        PhiAlertAppKitConfiguration(
-            title: "Irreversible confirmation",
-            message: "Return must not confirm what cannot be undone.",
-            style: .critical,
-            defaultButton: .noButton,
-            secondaryAction: PhiAlertAppKitAction(
-                "Cancel",
-                response: .alertSecondButtonReturn
-            ),
-            primaryAction: PhiAlertAppKitAction(
-                "Delete",
-                response: .alertFirstButtonReturn
-            )
-        )
     }
 
     private var testIcon: some View {

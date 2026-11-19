@@ -306,31 +306,6 @@ struct SecondaryClickPassthrough: NSViewRepresentable {
     }
 }
 
-struct SecondaryClickContainer<Content: View>: NSViewRepresentable {
-    let onSecondaryClick: (() -> Void)?
-    let content: Content
-
-    init(
-        onSecondaryClick: (() -> Void)?,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.onSecondaryClick = onSecondaryClick
-        self.content = content()
-    }
-
-    func makeNSView(context: Context) -> SecondaryClickContainerNSView {
-        let view = SecondaryClickContainerNSView()
-        view.onSecondaryClick = onSecondaryClick
-        view.setRootView(AnyView(content))
-        return view
-    }
-
-    func updateNSView(_ nsView: SecondaryClickContainerNSView, context: Context) {
-        nsView.onSecondaryClick = onSecondaryClick
-        nsView.setRootView(AnyView(content))
-    }
-}
-
 final class SecondaryClickPassthroughNSView: NSView {
     var onSecondaryClick: (() -> Void)?
 
@@ -354,60 +329,9 @@ final class SecondaryClickPassthroughNSView: NSView {
     }
 }
 
-final class SecondaryClickContainerNSView: NSView {
-    private let hostingView = HoverableHostingView(rootView: AnyView(EmptyView()))
-
-    var onSecondaryClick: (() -> Void)?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        translatesAutoresizingMaskIntoConstraints = false
-        setupHostingView()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func setRootView(_ rootView: AnyView) {
-        hostingView.rootView = rootView
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard onSecondaryClick != nil else { return super.hitTest(point) }
-        guard let event = NSApp.currentEvent else { return super.hitTest(point) }
-        switch event.type {
-        case .rightMouseDown, .rightMouseUp:
-            return self
-        default:
-            return super.hitTest(point)
-        }
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        guard let onSecondaryClick else {
-            super.rightMouseDown(with: event)
-            return
-        }
-        onSecondaryClick()
-    }
-
-    private func setupHostingView() {
-        addSubview(hostingView)
-        NSLayoutConstraint.activate([
-            hostingView.topAnchor.constraint(equalTo: topAnchor),
-            hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-    }
-}
-
 class HoverableButtonNSView: NSView {
     private var hostingView: HoverableHostingView?
     private var button: HoverableButton!
-    private weak var target: AnyObject?
-    private var selector: Selector?
     private let buttonState: HoverableButtonState
     private var themeObserver = ThemeObserver.shared
 
@@ -424,8 +348,6 @@ class HoverableButtonNSView: NSView {
         target: AnyObject? = nil,
         selector: Selector? = nil
     ) {
-        self.target = target
-        self.selector = selector
         self.buttonState = HoverableButtonState(isEnabled: isEnabled)
         
         super.init(frame: .zero)

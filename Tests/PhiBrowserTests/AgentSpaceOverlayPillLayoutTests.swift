@@ -55,8 +55,6 @@ final class AgentSpaceOverlayPillLayoutTests: XCTestCase {
         AgentTask(
             taskId: "overlay-layout-test",
             spaceId: "space",
-            profileId: "profile",
-            origin: .cdp,
             driverPrincipalId: nil,
             number: 1,
             windowId: 1,

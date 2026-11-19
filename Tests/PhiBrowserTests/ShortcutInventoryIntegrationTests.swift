@@ -29,6 +29,77 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
 
     private var previousConfiguration: ShortcutConfiguration?
 
+    func testLegacySavedConfigurationMatchesProductDefaultsWithoutRewriting() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("CustomShortcuts.json")
+        let data = Data(#"[{"commandId":141,"key":null},{"commandId":34027,"key":{"characters":"y","modifiersRaw":1048576}},{"commandId":40010,"key":null},{"commandId":90001,"key":{"characters":"e","modifiersRaw":1048576}}]"#.utf8)
+        try data.write(to: url)
+        var configuration = ShortcutConfiguration()
+        try configuration.reload(from: url)
+        Shortcuts.configuration = configuration
+        let model = ShortcutsViewModel(additionalBindings: { [] }, availableCommands: { [.IDS_EDIT_USE_SELECTION_MAC, .IDC_SHOW_HISTORY] })
+        for command in [CommandWrapper.IDS_EDIT_USE_SELECTION_MAC, .IDC_SHOW_HISTORY] {
+            XCTAssertNil(Shortcuts.key(for: command))
+            XCTAssertFalse(model.sections.flatMap(\.items).contains { $0.command == command })
+            XCTAssertEqual(Shortcuts.chromiumOverrideState(for: command.rawValue), .disabled)
+        }
+        for (command, character) in [(CommandWrapper.IDC_DUPLICATE_TAB, "y"), (.PHI_TOGGLE_CHATBAR, "e")] {
+            XCTAssertEqual(Shortcuts.key(for: command), .init(characters: character, modifiers: .command))
+        }
+        XCTAssertEqual(try Data(contentsOf: url), data)
+    }
+
+    func testChromiumReceivesProductDefaultsAndResolvesExclusions() throws {
+        for command in Shortcuts.productDefaultCommands {
+            let key = try XCTUnwrap(Shortcuts.DefaultShortcuts[command])
+            install([:])
+            XCTAssertEqual(Shortcuts.chromiumOverrideState(for: command.rawValue), .custom(key))
+            install([command: .excluding([key])])
+            XCTAssertEqual(Shortcuts.chromiumOverrideState(for: command.rawValue), .disabled)
+            let other = ShortcutsKey(characters: "k", modifiers: .control)
+            install([command: .excluding([other])])
+            XCTAssertEqual(Shortcuts.chromiumOverrideState(for: command.rawValue), .custom(key))
+            install([command: .custom(other)])
+            XCTAssertEqual(Shortcuts.chromiumOverrideState(for: command.rawValue), .custom(other))
+            install([command: .disabled])
+            XCTAssertEqual(Shortcuts.chromiumOverrideState(for: command.rawValue), .disabled)
+        }
+        XCTAssertEqual(Shortcuts.chromiumOverrideState(for: CommandWrapper.IDC_SELECT_TAB_0.rawValue), .disabled)
+    }
+
+    func testNativeReleasedKeysKeepMasksAndQuitAndStayOutOfInventory() {
+        let menu = NSMenu()
+        for (action, flags, released) in [
+            ("hide:", NSEvent.ModifierFlags.command, true),
+            ("hideOtherApplications:", [.command, .option], true),
+            ("performMiniaturize:", .command, true),
+            ("miniaturizeAll:", [.command, .option], true),
+            ("showGuessPanel:", .command, true),
+            ("checkSpelling:", .command, true),
+            ("toggleFullScreen:", [.command, .control], true),
+            ("terminate:", [.command, .option], true),
+            ("terminate:", .command, false)
+        ] {
+            let item = NSMenuItem(title: action, action: NSSelectorFromString(action), keyEquivalent: "q")
+            item.keyEquivalentModifierMask = flags
+            menu.addItem(item)
+            Shortcuts.suppressReleasedNativeShortcut(on: item)
+            Shortcuts.suppressReleasedNativeShortcut(on: item)
+            XCTAssertEqual(item.keyEquivalent, released ? "" : "q")
+            XCTAssertEqual(item.keyEquivalentModifierMask, flags)
+            XCTAssertEqual((item.copy() as? NSMenuItem)?.keyEquivalent, released ? "" : "q")
+        }
+        XCTAssertEqual(Shortcuts.menuBindings(in: menu).map(\.owner), [.nativeAction("terminate:")])
+        let tagged = NSMenuItem(title: "Disabled command", action: NSSelectorFromString("commandDispatch:"), keyEquivalent: "1")
+        tagged.tag = CommandWrapper.IDC_SELECT_TAB_0.rawValue
+        tagged.keyEquivalentModifierMask = .command
+        Shortcuts.suppressReleasedNativeShortcut(on: tagged)
+        XCTAssertTrue(tagged.keyEquivalent.isEmpty)
+        XCTAssertEqual(tagged.keyEquivalentModifierMask, .command)
+    }
+
     override func setUp() {
         previousConfiguration = Shortcuts.configuration
         install([:])
@@ -131,7 +202,7 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
         }
     }
 
-    func testRebuiltInventoryPreservesNonCommandOwnersAndFiltersUnavailableSpaces() {
+    func testRebuiltInventoryPreservesNonCommandOwnersAndFiltersDisabledSpaces() {
         let key = ShortcutsKey(characters: "d", modifiers: [.control, .option])
         let enabled = ShortcutBinding(commandID: CommandWrapper.IDC_DUPLICATE_TAB.rawValue,
                                       key: key, scope: .browser, source: .hidden)
@@ -148,8 +219,8 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
         for binding in [enabled, unknown, native, system] {
             XCTAssertTrue(model.inventory.bindings.contains(binding))
         }
-        for (index, binding) in spaceBindings.enumerated() {
-            XCTAssertEqual(model.inventory.bindings.contains(binding), index < SpaceManager.shared.spaces.count)
+        for binding in spaceBindings {
+            XCTAssertFalse(model.inventory.bindings.contains(binding))
         }
         let expected = model.inventory.bindings
         XCTAssertEqual(expected.count, Set(expected).count)
@@ -197,22 +268,6 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
         XCTAssertTrue(reload.conflictingCommandNames.contains(duplicate.name))
     }
 
-    func testHiddenAliasConflictsInBothDirectionsDespiteDifferentPrimaryKey() throws {
-        let pageDown = ShortcutsKey(characters: "\u{F72D}", modifiers: .control)
-        install([.IDC_OPTIONS: .custom(pageDown)])
-        let model = ShortcutsViewModel(additionalBindings: {
-            [ShortcutBinding(commandID: CommandWrapper.IDC_SELECT_NEXT_TAB.rawValue,
-                             key: pageDown, scope: .browser, source: .hidden)]
-        })
-        let settings = try item(.IDC_OPTIONS, in: model)
-        let next = try item(.IDC_SELECT_NEXT_TAB, in: model)
-        XCTAssertTrue(settings.conflictingCommandNames.contains(next.name))
-        XCTAssertTrue(next.conflictingCommandNames.contains(settings.name))
-        XCTAssertNotEqual(next.shortcutKey, pageDown)
-        XCTAssertEqual(Set(model.inventory.occupants(of: pageDown).map(\.commandID)),
-                       [CommandWrapper.IDC_OPTIONS.rawValue, CommandWrapper.IDC_SELECT_NEXT_TAB.rawValue])
-    }
-
     func testDisabledCustomOnlyOwnerIsRemovedFromConflicts() throws {
         let key = ShortcutsKey(characters: "d", modifiers: [.control, .option])
         install([.IDC_DUPLICATE_TAB: .custom(key), .IDC_WINDOW_MUTE_SITE: .disabled])
@@ -242,8 +297,6 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
                   key: .init(characters: "a", modifiers: .command), scope: .all, source: .menu, title: "Select All"),
             .init(commandID: CommandWrapper.IDC_CONTENT_CONTEXT_UNDO.rawValue,
                   key: .init(characters: "z", modifiers: .command), scope: .all, source: .menu, title: "Undo"),
-            .init(commandID: CommandWrapper.IDS_EDIT_CHECK_DOCUMENT_MAC.rawValue,
-                  key: .init(characters: ";", modifiers: .command), scope: .all, source: .menu, title: "Check Document Now"),
             .init(owner: .nativeAction("orderFrontCharacterPalette:"),
                   key: .init(characters: " ", modifiers: [.command, .control]),
                   scope: .all, source: .menu, title: "Emoji & Symbols")
@@ -259,7 +312,7 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
             XCTAssertNil(conflict.command)
             XCTAssertEqual(conflict.name, try XCTUnwrap(binding.title))
         }
-        for command in [CommandWrapper.IDC_FIND, .IDC_FIND_NEXT, .IDC_FIND_PREVIOUS, .IDC_FOCUS_SEARCH] {
+        for command in [CommandWrapper.IDC_FIND, .IDC_FIND_NEXT, .IDC_FIND_PREVIOUS] {
             XCTAssertNotNil(try item(command, in: model).shortcutKey)
         }
     }
@@ -269,27 +322,25 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
         let focus = ShortcutsKey(characters: "c", modifiers: [.command, .control])
         let model = ShortcutsViewModel(additionalBindings: {
             [.init(commandID: CommandWrapper.IDC_MOVE_TAB_PREVIOUS.rawValue, key: move, scope: .browser, source: .hidden),
-             .init(commandID: CommandWrapper.IDC_ADD_NEW_TAB_TO_GROUP.rawValue, key: focus, scope: .browser, source: .hidden)]
+             .init(commandID: CommandWrapper.IDC_MOVE_TAB_TO_NEW_WINDOW.rawValue, key: focus, scope: .browser, source: .hidden)]
         })
-        XCTAssertEqual(try item(.IDC_MOVE_TAB_PREVIOUS, in: model).shortcutKey, move)
-        XCTAssertEqual(try item(.IDC_ADD_NEW_TAB_TO_GROUP, in: model).shortcutKey, focus)
+        XCTAssertFalse(model.sections.flatMap(\.items).contains { $0.command == .IDC_MOVE_TAB_PREVIOUS })
+        XCTAssertEqual(try item(.IDC_MOVE_TAB_TO_NEW_WINDOW, in: model).shortcutKey, focus)
         XCTAssertEqual(try item(.IDC_RELOAD_BYPASSING_CACHE, in: model).shortcutKey,
                        ShortcutsKey(characters: "r", modifiers: [.command, .shift]))
         install([.IDC_DUPLICATE_TAB: .custom(focus)])
         model.rebuildSections()
-        XCTAssertTrue(model.conflicts(for: .IDC_DUPLICATE_TAB).contains { $0.command == .IDC_ADD_NEW_TAB_TO_GROUP })
+        XCTAssertTrue(model.conflicts(for: .IDC_DUPLICATE_TAB).contains { $0.command == .IDC_MOVE_TAB_TO_NEW_WINDOW })
 
-        install([.IDC_ADD_NEW_TAB_TO_GROUP: .disabled])
+        install([.IDC_MOVE_TAB_TO_NEW_WINDOW: .disabled])
         let disabled = ShortcutsViewModel(additionalBindings: { [] }, availableCommands: { [] })
-        XCTAssertNil(try item(.IDC_ADD_NEW_TAB_TO_GROUP, in: disabled).shortcutKey)
-        XCTAssertTrue(disabled.inventory.bindings(for: CommandWrapper.IDC_ADD_NEW_TAB_TO_GROUP.rawValue).isEmpty)
+        XCTAssertNil(try item(.IDC_MOVE_TAB_TO_NEW_WINDOW, in: disabled).shortcutKey)
+        XCTAssertTrue(disabled.inventory.bindings(for: CommandWrapper.IDC_MOVE_TAB_TO_NEW_WINDOW.rawValue).isEmpty)
     }
 
     func testProductPolicyOverridesSavedKeysAndStaleRuntimeBindings() throws {
         let releasedKey = ShortcutsKey(characters: "m", modifiers: [.command, .shift])
-        let commands: [CommandWrapper] = [.IDC_FOCUS_NEXT_PANE, .IDC_FOCUS_PREVIOUS_PANE,
-            .IDC_FOCUS_INACTIVE_POPUP_FOR_ACCESSIBILITY, .IDC_SHOW_AVATAR_MENU,
-            .IDC_TOGGLE_FULLSCREEN_TOOLBAR, .IDC_HELP_PAGE_VIA_MENU, .IDC_NEW_SPLIT_TAB]
+        let commands = Array(Shortcuts.disabledShortcutCommands)
         install(Dictionary(uniqueKeysWithValues: commands.map { ($0, .custom(releasedKey)) }))
         let saved = Shortcuts.configuration.overrides
         let stale = commands.flatMap { command in
@@ -324,15 +375,12 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
 
     func testDiscoveredCommandsJoinTheirFunctionalSectionsWithoutDuplicates() throws {
         let expected: [(Shortcuts.Group, [CommandWrapper])] = [
-            (.file, [.IDC_SAVE_PAGE, .IDC_BASIC_PRINT]),
-            (.view, [.IDC_FULLSCREEN]),
-            (.history, [.IDC_CLEAR_BROWSING_DATA]),
-            (.bookmarks, [.IDC_BOOKMARK_THIS_TAB, .IDC_BOOKMARK_ALL_TABS, .IDC_SHOW_BOOKMARK_MANAGER]),
+            (.file, [.IDC_SAVE_PAGE]),
+            (.bookmarks, [.IDC_BOOKMARK_THIS_TAB, .IDC_SHOW_BOOKMARK_MANAGER]),
             (.window, [.IDC_TASK_MANAGER]),
             (.tab, [.IDC_WINDOW_PIN_TAB, .IDC_WINDOW_CLOSE_OTHER_TABS,
                     .IDC_WINDOW_CLOSE_TABS_TO_RIGHT, .IDC_MOVE_TAB_TO_NEW_WINDOW,
-                    .IDC_CREATE_NEW_TAB_GROUP, .IDC_ADD_NEW_TAB_TO_GROUP, .IDC_WINDOW_GROUP_TAB,
-                    .IDC_FOCUS_PREV_TAB_GROUP, .IDC_FOCUS_NEXT_TAB_GROUP, .IDC_CLOSE_TAB_GROUP])
+                    .IDC_WINDOW_GROUP_TAB])
         ]
         let key = ShortcutsKey(characters: "g", modifiers: [.control, .option])
         let commands = expected.flatMap { $0.1 }
@@ -413,15 +461,55 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
         XCTAssertEqual(model.filteredSections.flatMap(\.items).map(\.command), [.IDC_SHOW_BOOKMARK_BAR])
     }
 
+    @MainActor func testAppsSectionListsEachAppAfterViewWithOnlyDrifterBound() throws {
+        let commands = MistApps.all.map(\.openCommand) + [.PHI_NEW_DRIFTER_CHAT]
+        let drifterKey = ShortcutsKey(characters: "d", modifiers: [.command, .shift])
+        XCTAssertEqual(Shortcuts.Group.apps.commands, commands)
+        XCTAssertTrue(Set(commands).isDisjoint(with: Shortcuts.disabledShortcutCommands))
+        XCTAssertEqual(Shortcuts.DefaultShortcuts.filter { commands.contains($0.key) }, [.PHI_OPEN_DRIFTER: drifterKey])
+        let model = ShortcutsViewModel(additionalBindings: { [] }, availableCommands: { [] })
+        let titles = model.sections.map(\.category)
+        let apps = try XCTUnwrap(model.sections.first { $0.category == Shortcuts.Group.apps.title })
+        XCTAssertEqual(titles.firstIndex(of: apps.category), try XCTUnwrap(titles.firstIndex(of: Shortcuts.Group.view.title)) + 1)
+        XCTAssertEqual(apps.items.map(\.command), commands)
+        XCTAssertEqual(apps.items.map(\.name), MistAppID.allCases.map(\.name) + ["New Drifter Chat"])
+        XCTAssertEqual(apps.items.map(\.shortcutKey), commands.map { $0 == .PHI_OPEN_DRIFTER ? drifterKey : nil })
+        XCTAssertEqual(CommandWrapper.PHI_OPEN_MAIL.shortcutDescription, "Open Mail.")
+    }
+
+    func testNewDrifterChatIsAssignableWithoutDefaultKey() throws {
+        let command = CommandWrapper.PHI_NEW_DRIFTER_CHAT
+        XCTAssertTrue(Shortcuts.Group.apps.commands.contains(command))
+        XCTAssertNil(Shortcuts.DefaultShortcuts[command])
+        XCTAssertFalse(Shortcuts.disabledShortcutCommands.contains(command))
+        XCTAssertEqual(command.shortcutScope, .browser)
+        let model = ShortcutsViewModel(additionalBindings: { [] }, availableCommands: { [] })
+        XCTAssertNil(try item(command, in: model).shortcutKey)
+        XCTAssertEqual(command.shortcutDescription, "Opens a new empty Drifter chat in a tab.")
+    }
+
+    func testMakePrimaryWindowIsAssignableInWindowSectionWithoutDefaultKey() throws {
+        let command = CommandWrapper.PHI_MAKE_PRIMARY_WINDOW
+        XCTAssertTrue(Shortcuts.Group.window.commands.contains(command))
+        XCTAssertNil(Shortcuts.DefaultShortcuts[command])
+        XCTAssertFalse(Shortcuts.disabledShortcutCommands.contains(command))
+        XCTAssertEqual(command.shortcutScope, .browser)
+        let model = ShortcutsViewModel(additionalBindings: { [] }, availableCommands: { [] })
+        let window = try XCTUnwrap(model.sections.first { $0.category == Shortcuts.Group.window.title })
+        XCTAssertTrue(window.items.contains { $0.command == command })
+        XCTAssertNil(try item(command, in: model).shortcutKey)
+        XCTAssertEqual(command.shortcutDescription, "Make the focused window the primary window, where links from other apps open.")
+    }
+
     func testCategorizedSavedCommandsKeepDisabledStateAndConflictNavigation() throws {
         let key = try XCTUnwrap(Shortcuts.DefaultShortcuts[.IDC_NEW_TAB])
-        install([.IDC_CREATE_NEW_TAB_GROUP: .disabled, .IDC_BOOKMARK_THIS_TAB: .custom(key)])
+        install([.IDC_MOVE_TAB_TO_NEW_WINDOW: .disabled, .IDC_BOOKMARK_THIS_TAB: .custom(key)])
         let saved = Shortcuts.configuration.overrides
         let model = ShortcutsViewModel(additionalBindings: { [] }, availableCommands: { [] })
         let tab = try XCTUnwrap(model.sections.first { $0.category == Shortcuts.Group.tab.title })
-        XCTAssertTrue(tab.items.contains { $0.command == .IDC_CREATE_NEW_TAB_GROUP })
-        XCTAssertNil(try item(.IDC_CREATE_NEW_TAB_GROUP, in: model).shortcutKey)
-        XCTAssertTrue(try item(.IDC_CREATE_NEW_TAB_GROUP, in: model).isOverridden)
+        XCTAssertTrue(tab.items.contains { $0.command == .IDC_MOVE_TAB_TO_NEW_WINDOW })
+        XCTAssertNil(try item(.IDC_MOVE_TAB_TO_NEW_WINDOW, in: model).shortcutKey)
+        XCTAssertTrue(try item(.IDC_MOVE_TAB_TO_NEW_WINDOW, in: model).isOverridden)
         let bookmarks = try XCTUnwrap(model.sections.first { $0.category == Shortcuts.Group.bookmarks.title })
         XCTAssertTrue(bookmarks.items.contains { $0.command == .IDC_BOOKMARK_THIS_TAB })
         XCTAssertEqual(try item(.IDC_BOOKMARK_THIS_TAB, in: model).shortcutKey, key)
@@ -436,7 +524,7 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
 
         install([:])
         model.rebuildSections()
-        XCTAssertFalse(model.sections.flatMap(\.items).contains { $0.command == .IDC_CREATE_NEW_TAB_GROUP })
+        XCTAssertFalse(model.sections.flatMap(\.items).contains { $0.command == .IDC_MOVE_TAB_TO_NEW_WINDOW })
         XCTAssertFalse(model.sections.flatMap(\.items).contains { $0.command == .IDC_BOOKMARK_THIS_TAB })
     }
 

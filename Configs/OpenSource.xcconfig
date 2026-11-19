@@ -1,10 +1,14 @@
 // Open Source Configuration for PhiBrowser
-#include "Shared.xcconfig"
 
 // Product Settings
 PRODUCT_NAME = Phi
-PRODUCT_BUNDLE_IDENTIFIER = com.phibrowser.opensource.Mac
+PRODUCT_MODULE_NAME = Phi
+MIST_BUNDLE_ID = com.bulldf.mist
+PRODUCT_BUNDLE_IDENTIFIER = $(MIST_BUNDLE_ID)
 APP_ENTITLEMENTS = Resources/PhiBrowser-OpenSource.entitlements
+
+// Product Directory Name
+CR_PRODUCT_DIR_NAME = ${PRODUCT_BUNDLE_IDENTIFIER}
 
 // Asset Catalog
 ASSETCATALOG_COMPILER_APPICON_NAME = PhiIcon
@@ -15,4 +19,3 @@ ONLY_ACTIVE_ARCH = YES
 SWIFT_OPTIMIZATION_LEVEL = -Onone
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) PHI_OSS_BUILD
 GCC_PREPROCESSOR_DEFINITIONS = $(inherited) PHI_OSS_BUILD=1
-EXCLUDED_SOURCE_FILE_NAMES = $(inherited) Sparkle.framework

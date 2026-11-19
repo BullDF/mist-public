@@ -18,17 +18,6 @@ public enum Appearance: Int, RawRepresentable, Equatable, CustomStringConvertibl
         }
     }
     
-    public mutating func toggle() {
-        self = opposite
-    }
-    
-    public var opposite: Appearance {
-        switch self {
-        case .light: return .dark
-        case .dark: return .light
-        }
-    }
-    
     public var isLight: Bool { self == .light }
     public var isDark: Bool { self == .dark }
 }

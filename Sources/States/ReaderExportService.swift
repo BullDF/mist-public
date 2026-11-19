@@ -6,12 +6,6 @@
 import Foundation
 import UniformTypeIdentifiers
 
-enum ReaderExportError: Error {
-    case noTarget
-    case transportUnavailable
-    case captureFailed
-}
-
 /// Saves what the reader is showing, as a single file.
 ///
 /// Two exports, because the reader is a view of a page rather than a
@@ -20,41 +14,6 @@ enum ReaderExportError: Error {
 /// not really a saved copy.
 @MainActor
 enum ReaderExportService {
-
-    /// MHTML has no system-declared type, so it is described by extension.
-    /// Falling back to `.data` keeps the save panel usable rather than
-    /// refusing the export outright.
-    static let mhtmlType = UTType(filenameExtension: "mhtml") ?? .data
-
-    /// The live page as MHTML: markup and every subresource in one file, which
-    /// is Chromium's own complete-page format. Captured over the app's CDP
-    /// session, the same transport extraction uses, so this needs nothing new
-    /// from the framework.
-    static func captureOriginalPage(tab: Tab) async throws -> Data {
-        guard let wrapper = tab.webContentWrapper,
-              let targetId = wrapper.devToolsTargetId,
-              !targetId.isEmpty else {
-            throw ReaderExportError.noTarget
-        }
-
-        let session: AppDevToolsPageSession
-        do {
-            session = try await AppDevToolsPageSession.open(targetId: targetId)
-        } catch {
-            throw ReaderExportError.transportUnavailable
-        }
-        defer { session.close() }
-
-        // A large page with many subresources takes a while to serialise.
-        let reply = try? await session.command("Page.captureSnapshot",
-                                               params: ["format": "mhtml"],
-                                               timeout: 60)
-        guard let text = reply?["data"] as? String,
-              let data = text.data(using: .utf8), !data.isEmpty else {
-            throw ReaderExportError.captureFailed
-        }
-        return data
-    }
 
     /// The distilled article as one HTML file.
     ///
@@ -83,8 +42,7 @@ enum ReaderExportService {
         "\(sanitizedBaseName(title: title)).\(ext)"
     }
 
-    /// A filesystem-safe basename built from a title. Shared with screenshots
-    /// and Save for Later, whose file pair derives both names from one basename.
+    /// A filesystem-safe basename built from a title. Shared with screenshots.
     ///
     /// Path separators and the characters Finder and the common filesystems
     /// object to are replaced rather than stripped, so words do not run

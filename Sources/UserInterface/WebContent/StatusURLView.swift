@@ -122,7 +122,6 @@ final class StatusURLHostingView: ThemedHostingView {
     }
 }
 
-#if DEBUG
 struct StatusURLView_Previews: PreviewProvider {
     static var previews: some View {
         let viewModel1 = StatusURLViewModel()
@@ -148,4 +147,3 @@ struct StatusURLView_Previews: PreviewProvider {
         .background(Color.gray.opacity(0.1))
     }
 }
-#endif

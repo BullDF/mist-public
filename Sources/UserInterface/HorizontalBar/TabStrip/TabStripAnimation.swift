@@ -97,15 +97,4 @@ enum TabStripAnimationHelper {
         }
     }
 
-    /// Restores the default appearance after drag completes.
-    static func animateDrop(_ view: NSView, finalZOrder: CGFloat = 0) {
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.2
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            
-            view.layer?.transform = CATransform3DIdentity
-            view.layer?.shadowOpacity = 0
-            view.layer?.zPosition = finalZOrder
-        }
-    }
 }

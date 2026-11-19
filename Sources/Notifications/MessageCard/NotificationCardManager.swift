@@ -18,15 +18,15 @@ final class NotificationCardManager: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     @Published private(set) var latestCard: Card?
-    
+
     /// All cards in order (newest first)
     @Published private(set) var allCards: [Card] = []
-    
+
     /// Current displayed card index for pagination
     @Published var currentIndex: Int = 0
-    
+
     // MARK: - Display Mode Management
-    
+
     /// Presentation mode used for notification cards.
     enum CardDisplayMode {
         /// Card is shown inside the sidebar UI.
@@ -34,16 +34,16 @@ final class NotificationCardManager: ObservableObject {
         /// Card is shown in the overlay toast container for legacy layouts.
         case legacy
     }
-    
+
     /// Currently active presentation mode.
     @Published private(set) var activeDisplayMode: CardDisplayMode = .sidebar
-    
+
     /// Tracks whether cards were explicitly shown by the user.
     @Published private(set) var isManuallyShown: Bool = false
-    
+
     /// Tracks whether the current card stack was explicitly dismissed by the user.
     @Published private(set) var isExplicitlyHidden: Bool = false
-    
+
     /// Visibility publisher for sidebar presentation.
     var shouldShowInSidebar: AnyPublisher<Bool, Never> {
         Publishers.CombineLatest4($latestCard, $isManuallyShown, $activeDisplayMode, $isExplicitlyHidden)
@@ -54,7 +54,7 @@ final class NotificationCardManager: ObservableObject {
             .removeDuplicates()
             .eraseToAnyPublisher()
     }
-    
+
     /// Visibility publisher for legacy overlay presentation.
     var shouldShowInLegacy: AnyPublisher<Bool, Never> {
         Publishers.CombineLatest4($latestCard, $isManuallyShown, $activeDisplayMode, $isExplicitlyHidden)
@@ -62,7 +62,7 @@ final class NotificationCardManager: ObservableObject {
                 let hasCard = latestCard != nil
                 let isLegacy = activeMode == .legacy
                 let isPopupEnabled = self?.isNotificationPopupEnabled == true
-                
+
                 guard hasCard, isLegacy, !isExplicitlyHidden else {
                     AppLogDebug("[CardDisplay] shouldShowInLegacy=false: hasCard=\(hasCard), isLegacy=\(isLegacy), isExplicitlyHidden=\(isExplicitlyHidden)")
                     return false
@@ -74,10 +74,10 @@ final class NotificationCardManager: ObservableObject {
             .removeDuplicates()
             .eraseToAnyPublisher()
     }
-    
+
     /// Whether automatic popup mode is enabled for the current account.
     private var isNotificationPopupEnabled: Bool {
-        guard let account = AccountController.shared.account else { return true }
+        let account = AccountController.shared.localDataAccount
         return account.userDefaults.notificationPopupMode == .popup
     }
 
@@ -85,15 +85,13 @@ final class NotificationCardManager: ObservableObject {
         let taskId: String
         let messageId: String
         let taskType: String?
-        let timestamp: Int64
         let title: String
         let message: String
         let buttonTitle: String?
         let expiresAt: Int64
-        let correlationId: String?
         var timer: DispatchSourceTimer?
         var driverPrincipalId: String? = nil
-        
+
         enum Decision: String {
             case accept, reject, timeout, ignore
         }
@@ -107,14 +105,14 @@ final class NotificationCardManager: ObservableObject {
         self.maxQueueSize = maxQueueSize
         self.now = now
         self.messenger = messenger
-        
+
         Task { @MainActor in
             setupLayoutModeObserver()
         }
     }
-    
+
     // MARK: - Display Mode Control
-    
+
     /// Marks the card stack as manually shown in the requested mode.
     func showManually(for mode: CardDisplayMode) {
         guard latestCard != nil else {
@@ -126,14 +124,14 @@ final class NotificationCardManager: ObservableObject {
         isManuallyShown = true
         isExplicitlyHidden = false
     }
-    
+
     /// Marks the current card stack as explicitly hidden.
     func hideCard() {
         AppLogDebug("[CardDisplay] hideCard: setting isManuallyShown=false, isExplicitlyHidden=true")
         isManuallyShown = false
         isExplicitlyHidden = true
     }
-    
+
     /// Updates the active display mode when layout changes.
     private func setDisplayMode(_ mode: CardDisplayMode) {
         if activeDisplayMode != mode {
@@ -142,12 +140,12 @@ final class NotificationCardManager: ObservableObject {
         }
         activeDisplayMode = mode
     }
-    
+
     // MARK: - Layout Mode Observer
     @MainActor
     private func setupLayoutModeObserver() {
         updateDisplayModeFromLayoutMode()
-        
+
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -155,7 +153,7 @@ final class NotificationCardManager: ObservableObject {
             }
             .store(in: &cancellables)
     }
-    
+
     @MainActor
     private func updateDisplayModeFromLayoutMode() {
         let layoutMode = BrowserState.buildLayoutMode()
@@ -179,7 +177,7 @@ final class NotificationCardManager: ObservableObject {
         guard let data = context.payload.data(using: .utf8),
               let payloadDict = try? JSONDecoder().decode([String: AnyCodable].self, from: data)
         else { return }
-        
+
         let result = enqueueCard(envelope: payloadDict, correlationId: context.requestId)
         messenger.sendResponse(result ?? "", requestId: context.requestId)
     }
@@ -232,7 +230,6 @@ final class NotificationCardManager: ObservableObject {
         let messageId = envelope["messageId"]?.stringValue ?? ""
         let expiresAt = payload["expires_at"]?.int64Value ?? 0
         let taskType = payload["task_type"]?.stringValue
-        let timestamp = payload["timestamp"]?.int64Value ?? 0
         let title = payload["title"]?.stringValue ?? ""
         let message = payload["description"]?.stringValue ?? ""
         let rawButtonTitle = payload["button_title"]?.stringValue
@@ -243,12 +240,10 @@ final class NotificationCardManager: ObservableObject {
                 taskId: taskId,
                 messageId: messageId,
                 taskType: taskType,
-                timestamp: timestamp,
                 title: title,
                 message: message,
                 buttonTitle: buttonTitle,
                 expiresAt: expiresAt,
-                correlationId: correlationId,
                 timer: nil,
                 driverPrincipalId: driverPrincipalId
             )
@@ -279,12 +274,10 @@ final class NotificationCardManager: ObservableObject {
                 taskId: taskId,
                 messageId: messageId,
                 taskType: taskType,
-                timestamp: timestamp,
                 title: title,
                 message: message,
                 buttonTitle: buttonTitle,
                 expiresAt: expiresAt,
-                correlationId: correlationId,
                 timer: nil,
                 driverPrincipalId: driverPrincipalId
             )
@@ -304,31 +297,21 @@ final class NotificationCardManager: ObservableObject {
             sendDecision(card: card, decision: decision)
         }
     }
-    
-    /// Dismiss a card without sending a decision
-    func dismiss(_ card: Card) {
-        queue.sync {
-            guard cards.removeValue(forKey: card.taskId) != nil else { return }
-            order.removeAll { $0 == card.taskId }
-            card.timer?.cancel()
-            publishLatestLocked()
-        }
-    }
-    
+
     // MARK: - Pagination
-    
+
     /// Shows the previous card, wrapping around when needed.
     func showPrevious() {
         guard allCards.count > 1 else { return }
         currentIndex = (currentIndex - 1 + allCards.count) % allCards.count
     }
-    
+
     /// Shows the next card, wrapping around when needed.
     func showNext() {
         guard allCards.count > 1 else { return }
         currentIndex = (currentIndex + 1) % allCards.count
     }
-    
+
     /// Get current displayed card based on currentIndex
     var currentCard: Card? {
         guard !allCards.isEmpty else { return nil }
@@ -381,7 +364,7 @@ final class NotificationCardManager: ObservableObject {
             "timestamp": .string("\(Date.now.timeIntervalSince1970)"),
             "task_type": .string(card.taskType ?? "")
         ]
-        
+
         let response: [String: AnyCodable] = [
             "action": .string("notification.card.response"),
             "messageId": .string(card.messageId),
@@ -398,15 +381,15 @@ final class NotificationCardManager: ObservableObject {
         let cardCount = orderedCards.count
         let previousLatestId = latestCard?.taskId
         let newLatestId = latest?.taskId
-        
+
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            
+
             let hasNewCard = newLatestId != nil && newLatestId != previousLatestId
             if hasNewCard {
                 self.isExplicitlyHidden = false
             }
-            
+
             self.latestCard = latest
             self.allCards = orderedCards
             if cardCount == 0 {

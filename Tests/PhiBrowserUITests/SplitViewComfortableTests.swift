@@ -52,7 +52,7 @@ final class SplitViewComfortableTests: XCTestCase {
     private static let bookmarkBarItemIdentifier = "bookmarkBarItem"
 
     /// Launched once per class and reused across tests. A cold relaunch per
-    /// test (Chromium cold start + session restore + Sentinel) dominated the
+    /// test (Chromium cold start + session restore) dominated the
     /// suite's runtime; every test re-establishes a known state through
     /// `resetToSingleTab`, so a shared app is safe.
     private static var sharedApp: XCUIApplication!
@@ -98,7 +98,7 @@ final class SplitViewComfortableTests: XCTestCase {
 
         let window = app.windows.firstMatch
         // Cold launch is slow: Chromium cold start + session restore +
-        // Sentinel can take well over 45s on the first test of a run. Later
+        // Chromium can take well over 45s on the first test of a run. Later
         // tests reuse the already-running app, so this returns immediately.
         XCTAssertTrue(window.waitForExistence(timeout: 120),
                       "Main window did not appear (Phi cold start + session restore can be slow)")

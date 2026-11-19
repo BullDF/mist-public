@@ -276,6 +276,15 @@ private final class SpaceThemeEditorPanelPresenter {
 }
 
 extension AppController {
+    @MainActor @objc func openMistApp(_ sender: NSMenuItem) {
+        guard let rawID = sender.representedObject as? String, let id = MistAppID(rawValue: rawID) else { return }
+        SpaceSessionControllersManager.shared.getActiveWindowState()?.openApp(id)
+    }
+
+    @MainActor @objc func newDrifterChatFromMenu(_ sender: Any?) {
+        SpaceSessionControllersManager.shared.getActiveWindowState()?.openNewDrifterChat()
+    }
+
     static let extensionInfoItemTag = 500002
     static let exportLogsItemTag = 500011
     static let manageUserDataHelpSeparatorTag = 500012
@@ -286,6 +295,7 @@ extension AppController {
     static let layoutModeNavigationAtTopItemTag = 500006
     static let layoutModeTraditionalItemTag = 500007
     static let layoutModeTitleItemTag = 500008
+    private static let reportIssueCommandTag = 40008 // Chromium IDC_FEEDBACK
     static let whatsNewItemTag = 500009
     static let improveTranslationsItemTag = 500028
     static let bookmarksMenuItemTag = 500010
@@ -297,33 +307,30 @@ extension AppController {
     // 500025: was 500036, which collided with spacesChangeProfileParentTag
     // (harmless across submenus, but tags must stay unique to grep sanely).
     static let agentTranscriptItemTag = 500025
-    static let uninstallPhiItemTag = 500026
-    static let browserMigrationItemTag = 500038
-    static let fileSaveForLaterLibraryItemTag = 500039
     static let viewLibraryItemTag = 500040
     static let debugMenuItemTag = 500027
     static let spacesProfileSeparatorTag = 500020
     static let deleteProfileSubmenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.deleteProfile")
+    static let appsMenuItemTag = 500019
     static let spacesMenuItemTag = 500018
     static let spacesNewSpaceItemTag = 500030
     static let spacesRenameItemTag = 500031
     static let spacesChangeThemeParentTag = 500033
-    static let spacesNextItemTag = 500034
-    static let spacesPreviousItemTag = 500035
     static let spacesChangeProfileParentTag = 500036
     static let spacesDeleteSpaceItemTag = 500037
-    static let spacesListItemTagBase = 510000
     static let spacesURLRulesItemTag = 500021
     static let spacesURLRulesSeparatorTag = 500022
     static let spacesMenuIdentifier = NSUserInterfaceItemIdentifier("phi.spaces.menu")
     static let timeMachineBackupsMenuIdentifier = NSUserInterfaceItemIdentifier("phi.time-machine.backups.menu")
-    
+
     func startObservingMainMenu() {
         guard let app = NSApplication.shared as NSApplication? else {
             AppLogWarn("⚠️ NSApp is nil — startObservingMainMenu() called too early.")
             return
         }
+        startStrippingRemovedMenuItems()
         startObservingServiceShortcuts()
+        MistHistoryMenuReopen.install()
         menuObservation = app.observe(\.mainMenu, options: [.new, .old]) { [weak self] app, change in
             AppLogDebug("Main menu changed: \(change)")
             self?.hookAndRebuildMainMenu()
@@ -346,7 +353,19 @@ extension AppController {
         }
     }
 
-    /// Reserve Tab Search's default chord within Phi, without changing the
+    /// Strips framework items for deleted features from every menu, including
+    /// Chromium's web content context menus, as it starts tracking.
+    func startStrippingRemovedMenuItems() {
+        guard removedMenuItemsObservation == nil else { return }
+        removedMenuItemsObservation = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil
+        ) { notification in
+            // Synchronous on the tracking (main) thread, before the menu draws.
+            if let menu = notification.object as? NSMenu { MistRemovedMenuItems.strip(menu) }
+        }
+    }
+
+    /// Enforce released native keys and reserve Tab Search's chord without changing the
     /// user's Services preferences or removing the service's menu action.
     func startObservingServiceShortcuts() {
         let center = NotificationCenter.default
@@ -377,6 +396,9 @@ extension AppController {
 
     private static func suppressReservedServiceShortcut(on item: NSMenuItem) {
         if let submenu = item.submenu { suppressReservedServiceShortcut(in: submenu) }
+        var menu = item.menu
+        while let parent = menu?.supermenu { menu = parent }
+        if menu === NSApp.mainMenu { Shortcuts.suppressReleasedNativeShortcut(on: item) }
         // AppKit dispatches Services through this selector, including items in
         // replacement menus that no longer equal NSApp.servicesMenu.
         guard item.action == NSSelectorFromString("_processRequest:") else { return }
@@ -391,7 +413,7 @@ extension AppController {
         item.keyEquivalent = ""
         item.keyEquivalentModifierMask = []
     }
-    
+
     /// Schedules the main-menu hook so pref-gated items appear or disappear
     /// without waiting for Chromium's next menu swap — the View ▸ agent items
     /// follow the agent CDP switch (`AgentCDPListener.setEnabled` calls this),
@@ -433,6 +455,7 @@ extension AppController {
                 submenu.items.removeAll { item in
                     item.tag == CommandWrapper.PHI_TOGGLE_SIDEBAR.rawValue ||
                     item.tag == CommandWrapper.PHI_TOGGLE_CHATBAR.rawValue ||
+                    item.tag == CommandWrapper.PHI_SWITCH_CHAT_PANEL_AND_TAB.rawValue ||
                     item.tag == CommandWrapper.PHI_NEW_CONVERSATION.rawValue ||
                     item.tag == CommandWrapper.PHI_TOGGLE_READER.rawValue ||
                     item.tag == AppController.viewLibraryItemTag ||
@@ -476,14 +499,14 @@ extension AppController {
                 let layoutTtitle = NSMenuItem.sectionHeader(title: NSLocalizedString("app.viewMenu.layoutModeSectionTitle", value: "Layout Mode", comment: "View menu - Layout mode section header in View menu"))
                 layoutTtitle.tag = AppController.layoutModeTitleItemTag
                 submenu.addItem(layoutTtitle)
-                
+
                 let navigationAtTopItem = NSMenuItem(title: LayoutMode.balanced.displayName,
                                                      action: #selector(selectLayoutMode(_:)),
                                                      keyEquivalent: "")
                 navigationAtTopItem.tag = AppController.layoutModeNavigationAtTopItemTag
                 navigationAtTopItem.target = self
                 submenu.addItem(navigationAtTopItem)
-                
+
                 let defaultLayoutItem = NSMenuItem(title: LayoutMode.performance.displayName,
                                                    action: #selector(selectLayoutMode(_:)),
                                                    keyEquivalent: "")
@@ -527,16 +550,23 @@ extension AppController {
                 toggleSidebarItem.target = self
                 submenu.addItem(toggleSidebarItem)
 
-                let toggleChatbarItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.toggleChatbar", value: "Toggle Chatbar", comment: "View menu - Menu item to show or hide the AI chat bar"),
+                let toggleChatbarItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.toggleChatbar", value: "Toggle Chat Panel", comment: "View menu - Menu item to show or hide the chat panel"),
                                                    action: #selector(toggleChatbar(_:)),
-                                                   keyEquivalent: "s")
-                toggleChatbarItem.keyEquivalentModifierMask = [.command, .shift]
+                                                   keyEquivalent: "e")
+                toggleChatbarItem.keyEquivalentModifierMask = .command
                 toggleChatbarItem.tag = CommandWrapper.PHI_TOGGLE_CHATBAR.rawValue
                 Shortcuts.updateShortcut(for: toggleChatbarItem)
                 toggleChatbarItem.target = self
                 submenu.addItem(toggleChatbarItem)
 
-                let newConversationItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.newConversation", value: "New Conversation", comment: "View menu - Menu item to start a new AI conversation in the sidebar"),
+                let switchChatPanelAndTabItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.switchChatPanelAndTab", value: "Switch Between Chat Panel and Tab", comment: "View menu and shortcuts - Go from the chat panel to the chat's own tab, or from a chat tab back to the tab whose chat panel shows it"),
+                                                          action: #selector(switchChatPanelAndTab(_:)),
+                                                          keyEquivalent: "")
+                applyEffectiveShortcut(.PHI_SWITCH_CHAT_PANEL_AND_TAB, to: switchChatPanelAndTabItem)
+                switchChatPanelAndTabItem.target = self
+                submenu.addItem(switchChatPanelAndTabItem)
+
+                let newConversationItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.newConversation", value: "New Chat", comment: "View menu - Menu item to start a new Browser Agent chat in the chat panel"),
                                                    action: #selector(newConversation(_:)),
                                                    keyEquivalent: "o")
                 newConversationItem.keyEquivalentModifierMask = [.command, .shift]
@@ -568,29 +598,12 @@ extension AppController {
                     submenu.addItem(agentTranscriptItem)
                 }
             } else
-            
+
             if menuRole == .app, let subMenu = menuItem.submenu {
-                #if !PHI_OSS_BUILD
-                subMenu.items.removeAll { $0.tag == AppController.checkForUpdateItemTag }
-
-                for (index, item) in subMenu.items.enumerated() {
-                    if item.tag == CommandWrapper.IDC_OPTIONS.rawValue {
-                        let checkForUpdateItem = NSMenuItem(title: NSLocalizedString("app.phiMenu.checkForUpdatesMenuItem", value: "Check for Update...", comment: "Phi menu - Menu item to check for app updates"),
-                                                           action: #selector(checkForUpdate(_:)),
-                                                           keyEquivalent: "")
-                        checkForUpdateItem.tag = AppController.checkForUpdateItemTag
-                        checkForUpdateItem.target = self
-                        subMenu.insertItem(checkForUpdateItem, at: index + 1)
-                        break
-                    }
-                }
-                #endif
-
                 // "Import from Another Browser..." is built here rather than
                 // by Chromium, which drops it under the Phi build flag: an item
                 // Chromium builds is validated by its own command controller,
-                // which the client cannot drive, and this one has to grey out
-                // while a Migration is in flight. It keeps the command
+                // which the client cannot drive. It keeps the command
                 // identifier as its tag, so the shortcut the user assigns to
                 // that command still reaches it.
                 // Remove-then-insert keeps this idempotent across menu rebuilds
@@ -615,27 +628,8 @@ extension AppController {
                     subMenu.addItem(importItem)
                 }
 
-                // Sits beside "Import from Another Browser...", the item this
-                // one is the structural counterpart to. Remove-then-insert
-                // keeps it idempotent across menu rebuilds too.
-                subMenu.items.removeAll { $0.tag == AppController.browserMigrationItemTag }
-                let migrationItem = NSMenuItem(
-                    title: NSLocalizedString("app.phiMenu.migrateFromAnotherBrowser", value: "Migrate from Another Browser…",
-                        comment: "Phi menu - Menu item opening the wizard that recreates another browser's profiles and spaces in Phi"),
-                    action: #selector(showBrowserMigrationWizard(_:)),
-                    keyEquivalent: ""
-                )
-                migrationItem.tag = AppController.browserMigrationItemTag
-                migrationItem.target = self
-                if let importIndex = subMenu.items.firstIndex(where: {
-                    $0.tag == CommandWrapper.IDC_IMPORT_SETTINGS.rawValue
-                }) {
-                    subMenu.insertItem(migrationItem, at: importIndex + 1)
-                } else {
-                    subMenu.addItem(migrationItem)
-                }
             } else
-            
+
             if menuRole == .edit, let subMenu = menuItem.submenu {
                 installOrUpdateCopyURLMenuItem(in: subMenu)
                 installOrUpdateSelectionShortcuts(in: subMenu)
@@ -644,7 +638,11 @@ extension AppController {
             if menuRole == .file, let subMenu = menuItem.submenu {
                 Self.installOrUpdateFileMenuItems(in: subMenu, target: self)
             } else
-            
+
+            if menuRole == .window, let subMenu = menuItem.submenu {
+                installOrUpdateWindowMenuItems(in: subMenu)
+            } else
+
             if menuRole == .profiles {
                 menuItem.isHidden = true
             }
@@ -675,20 +673,18 @@ extension AppController {
                 }
                 Self.applyNewTabOrientation(in: subMenu)
             } else
-            
+
             if menuRole == .help, let subMenu = menuItem.submenu {
                 // Remove existing custom items to avoid duplication on menu rebuild
                 subMenu.items.removeAll {
                     $0.tag == AppController.extensionInfoItemTag ||
                     $0.tag == AppController.exportLogsItemTag ||
-                    $0.tag == AppController.whatsNewItemTag ||
                     $0.tag == AppController.improveTranslationsItemTag ||
                     $0.tag == AppController.manageUserDataHelpSeparatorTag ||
                     $0.tag == AppController.timeMachineBackupsParentItemTag ||
-                    $0.tag == AppController.manageUserDataParentItemTag ||
-                    $0.tag == AppController.uninstallPhiItemTag
+                    $0.tag == AppController.manageUserDataParentItemTag
                 }
-                
+
                 let extensionInfoItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.extensionInfo", value: "Extension Info", comment: "Help menu - Menu item to show extension version info, only visible when holding Option key"),
                                                    action: #selector(showExtensionInfo(_:)),
                                                    keyEquivalent: "")
@@ -696,13 +692,13 @@ extension AppController {
                 extensionInfoItem.isHidden = true
                 extensionInfoItem.target = self
 
-                let exportLogsItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.exportLogs", value: "Export Logs...", comment: "Help menu - Menu item to export Phi and Sentinel logs as a zip archive; visible only when holding Option key"),
+                let exportLogsItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.exportLogs", value: "Export Logs...", comment: "Help menu - Menu item to export Phi logs as a zip archive; visible only when holding Option key"),
                                                 action: #selector(exportLogs(_:)),
                                                 keyEquivalent: "")
                 exportLogsItem.tag = AppController.exportLogsItemTag
                 exportLogsItem.isHidden = true
                 exportLogsItem.target = self
-                
+
                 if subMenu.items.count > 0 {
                     subMenu.insertItem(extensionInfoItem, at: 0)
                     subMenu.insertItem(exportLogsItem, at: 1)
@@ -711,15 +707,19 @@ extension AppController {
                     subMenu.addItem(exportLogsItem)
                 }
 
-                let whatsNewItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.whatsNew", value: "What's New", comment: "Help menu - Menu item that opens the chrome://whats-new page in a new tab, placed right below 'Report an Issue'"),
+                let whatsNewItem = NSMenuItem(title: NSLocalizedString("app.helpMenu.whatsNew", value: "What's New", comment: "Help menu - Menu item that opens the chrome://whats-new page in a new tab, replacing 'Report an Issue'"),
                                               action: #selector(showWhatsNew(_:)),
                                               keyEquivalent: "")
                 whatsNewItem.tag = AppController.whatsNewItemTag
                 whatsNewItem.target = self
-                // Insert right below the Chromium-provided "Report an Issue" item (IDC_FEEDBACK).
-                // Fallback to appending at the end if that item is not present.
-                if let reportIssueIndex = subMenu.items.firstIndex(where: { $0.tag == CommandWrapper.IDC_FEEDBACK.rawValue }) {
-                    subMenu.insertItem(whatsNewItem, at: reportIssueIndex + 1)
+                if subMenu.item(withTag: AppController.reportIssueCommandTag) != nil {
+                    subMenu.items.removeAll { $0.tag == AppController.whatsNewItemTag }
+                }
+                if let reportIssueIndex = subMenu.items.firstIndex(where: {
+                    $0.tag == AppController.reportIssueCommandTag || $0.tag == AppController.whatsNewItemTag
+                }) {
+                    subMenu.removeItem(at: reportIssueIndex)
+                    subMenu.insertItem(whatsNewItem, at: reportIssueIndex)
                 } else {
                     subMenu.addItem(whatsNewItem)
                 }
@@ -770,19 +770,6 @@ extension AppController {
                 manageUserDataItem.submenu = userDataSubmenu
                 subMenu.addItem(manageUserDataItem)
 
-                let uninstallItem = NSMenuItem(
-                    title: NSLocalizedString(
-                        "app.helpMenu.uninstallPhi",
-                        value: "Uninstall Phi...",
-                        comment: "Help menu - Menu item below Manage User Data that opens the critical confirmation for uninstalling Phi and its local data"
-                    ),
-                    action: #selector(uninstallPhi(_:)),
-                    keyEquivalent: ""
-                )
-                uninstallItem.tag = AppController.uninstallPhiItemTag
-                uninstallItem.target = self
-                subMenu.addItem(uninstallItem)
-                
                 subMenu.delegate = self
             }
         }
@@ -792,16 +779,13 @@ extension AppController {
         }
 
         installOrUpdateSpacesMenu(in: mainMenu)
+        MainActor.assumeIsolated { Self.installOrUpdateAppsMenu(in: mainMenu, target: self) }
 
         if mainMenu.items.first(where: { $0.tag == AppController.debugMenuItemTag }) == nil {
             let item = buildDebugMenuItem()
-            #if DEBUG || NIGHTLY_BUILD
-            mainMenu.addItem(item)
-            #else
             if UserDefaults.standard.bool(forKey: PhiPreferences.phiMainDebugMenuEnabled.rawValue) == true {
                 mainMenu.addItem(item)
             }
-            #endif // DEBUG || NIGHTLY_BUILD
         }
     }
 
@@ -850,7 +834,7 @@ extension AppController {
 
         // Chromium's File menu ships its own Share submenu on macOS. Phi
         // replaces it with a single picker-backed item so sharing has one
-        // owner (File menu, address bar menu, and shortcut all route through
+        // owner (File menu and address bar menu both route through
         // PageSharingPresenter). The submenu parent is the only Chromium File
         // row without a command: its title is localized and its tag is not
         // stable across Chromium versions, but every other Chromium row
@@ -880,31 +864,14 @@ extension AppController {
         }
 
         // Chromium can replace the main menu wholesale. Remove and reinsert
-        // Phi's rows so rebuilding remains idempotent and keeps Kiosk directly
-        // below New Incognito Window.
+        // Phi's rows so rebuilding remains idempotent.
         subMenu.items.removeAll { item in
-            item.tag == CommandWrapper.PHI_NEW_KIOSK_WINDOW.rawValue
-                || item.tag == CommandWrapper.PHI_NEW_INCOGNITO_SPACE.rawValue
+            item.tag == CommandWrapper.PHI_NEW_INCOGNITO_SPACE.rawValue
+                || item.tag == CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue
                 || item.tag == CommandWrapper.PHI_SHARE_PAGE.rawValue
                 || item.action == #selector(AppController.copyFullPageScreenshotFromMenu(_:))
                 || item.action == #selector(AppController.capturePageAreaFromMenu(_:))
-                || item.tag == CommandWrapper.PHI_SAVE_FOR_LATER.rawValue
-                || item.tag == AppController.fileSaveForLaterLibraryItemTag
         }
-
-        let newKioskWindowItem = NSMenuItem(
-            title: NSLocalizedString(
-                "app.fileMenu.createNewKioskWindow",
-                value: "New Kiosk Window",
-                comment: "File menu - Create a Kiosk window and open its omnibox"
-            ),
-            action: #selector(AppController.newKioskWindowFromMenu(_:)),
-            keyEquivalent: "n"
-        )
-        newKioskWindowItem.keyEquivalentModifierMask = [.command, .option]
-        newKioskWindowItem.tag = CommandWrapper.PHI_NEW_KIOSK_WINDOW.rawValue
-        Shortcuts.updateShortcut(for: newKioskWindowItem)
-        newKioskWindowItem.target = target
 
         let newIncognitoSpaceItem = NSMenuItem(
             title: NSLocalizedString(
@@ -923,8 +890,26 @@ extension AppController {
         let insertionIndex = subMenu.items.firstIndex(where: {
             $0.tag == CommandWrapper.IDC_NEW_INCOGNITO_WINDOW.rawValue
         }).map { $0 + 1 } ?? subMenu.items.count
-        subMenu.insertItem(newKioskWindowItem, at: insertionIndex)
-        subMenu.insertItem(newIncognitoSpaceItem, at: insertionIndex + 1)
+        subMenu.insertItem(newIncognitoSpaceItem, at: insertionIndex)
+
+        let alternateNewTabItem = NSMenuItem(
+            title: NSLocalizedString(
+                "app.fileMenu.alternateNewTab",
+                value: "Alternate New Tab",
+                comment: "File menu and Shortcuts settings - Command title for opening the opposite of the configured New Tab action"
+            ),
+            action: #selector(AppController.alternateNewTabFromMenu(_:)),
+            keyEquivalent: "t"
+        )
+        alternateNewTabItem.keyEquivalentModifierMask = [.command, .option]
+        alternateNewTabItem.tag = CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue
+        Shortcuts.updateShortcut(for: alternateNewTabItem)
+        alternateNewTabItem.target = target
+
+        let alternateInsertionIndex = subMenu.items.firstIndex(where: {
+            $0.tag == CommandWrapper.IDC_NEW_TAB.rawValue
+        }).map { $0 + 1 } ?? 0
+        subMenu.insertItem(alternateNewTabItem, at: alternateInsertionIndex)
 
         let sharePageItem = NSMenuItem(
             title: NSLocalizedString(
@@ -972,58 +957,6 @@ extension AppController {
             subMenu.addItem(screenshotItem)
             subMenu.addItem(areaScreenshotItem)
             subMenu.addItem(sharePageItem)
-        }
-
-        // Folio disabled: the rows above were already removed and nothing is
-        // reinserted — the feature leaves no trace in the menu.
-        guard SaveForLaterService.featureEnabled else { return }
-
-        let saveForLaterItem = NSMenuItem(
-            title: NSLocalizedString(
-                "app.fileMenu.saveToFolio",
-                value: "Save to Folio",
-                comment: "File menu - Saves the current page into the Folio folder as a markdown article plus a webpage copy"
-            ),
-            action: #selector(AppController.saveTabForLater(_:)),
-            keyEquivalent: "s"
-        )
-        saveForLaterItem.keyEquivalentModifierMask = [.command, .option]
-        saveForLaterItem.tag = CommandWrapper.PHI_SAVE_FOR_LATER.rawValue
-        Shortcuts.updateShortcut(for: saveForLaterItem)
-        saveForLaterItem.target = target
-
-        let libraryItem = NSMenuItem(
-            title: NSLocalizedString(
-                "app.fileMenu.openFolio",
-                value: "Open Folio",
-                comment: "File menu - Opens the library page listing the pages saved with Folio"
-            ),
-            action: #selector(AppController.openSaveForLaterLibrary(_:)),
-            keyEquivalent: ""
-        )
-        libraryItem.tag = AppController.fileSaveForLaterLibraryItemTag
-        libraryItem.target = target
-
-        // Next to Chromium's own Save Page, where a save action is looked
-        // for.
-        let savePageIndex = subMenu.items.firstIndex(where: {
-            $0.tag == CommandWrapper.IDC_SAVE_PAGE.rawValue
-        })
-        if let savePageIndex {
-            subMenu.insertItem(saveForLaterItem, at: savePageIndex + 1)
-        } else {
-            subMenu.addItem(saveForLaterItem)
-        }
-
-        // The library opens a place rather than saving one: it lives right
-        // under Open Location…, not among the save rows.
-        let openLocationIndex = subMenu.items.firstIndex(where: {
-            $0.tag == CommandWrapper.IDC_FOCUS_LOCATION.rawValue
-        }).map { $0 + 1 }
-        if let openLocationIndex {
-            subMenu.insertItem(libraryItem, at: openLocationIndex)
-        } else {
-            subMenu.addItem(libraryItem)
         }
     }
 
@@ -1252,23 +1185,21 @@ extension AppController {
             menu.addItem(item)
         }
     }
-    
+
     @objc func toggleSidebar(_ sender: Any?) {
         guard let state = SpaceSessionControllersManager.shared
-            .activeWindowController?.browserState,
-              !state.isKioskWindow else {
+            .activeWindowController?.browserState else {
             return
         }
         state.toggleSidebar()
     }
-    
+
     @objc func toggleChatbar(_ sendar: Any?) {
         guard let state = SpaceSessionControllersManager.shared
-            .activeWindowController?.browserState,
-              !state.isKioskWindow else {
+            .activeWindowController?.browserState else {
             return
         }
-        state.toggleAIChat(trigger: .shortcut)
+        state.toggleAIChat()
     }
 
     @MainActor
@@ -1277,29 +1208,14 @@ extension AppController {
               let tab = state.readerViewTarget(focusingTab: state.focusingTab) else {
             return
         }
-        state.toggleReaderView(for: tab, from: .viewMenu)
+        state.toggleReaderView(for: tab)
     }
 
     @MainActor
     @objc func openLibrary(_ sender: Any?) {
         guard let owner = SpaceSessionControllersManager.shared.activeWindowController,
-              !owner.browserState.isKioskWindow,
               let source = owner.window?.contentView else { return }
         owner.showLibrary(from: source)
-    }
-
-    @MainActor
-    @objc func saveTabForLater(_ sender: Any?) {
-        guard let state = SpaceSessionControllersManager.shared.activeWindowController?.browserState,
-              let tab = state.pageCommandTarget else {
-            return
-        }
-        SaveForLaterService.save(tab: tab, in: state)
-    }
-
-    @MainActor
-    @objc func openSaveForLaterLibrary(_ sender: Any?) {
-        SaveForLaterService.openLibrary()
     }
 
     @MainActor
@@ -1326,34 +1242,33 @@ extension AppController {
     }
 
     @MainActor
+    @objc func alternateNewTabFromMenu(_ sender: Any?) {
+        // Mouse clicks and scripted actions can have a non-key event or no event.
+        if let event = NSApp.currentEvent,
+           event.type == .keyDown || event.type == .keyUp,
+           event.isARepeat { return }
+        SpaceSessionControllersManager.shared.activeWindowController?.newAlternateBrowserTab()
+    }
+
+    @MainActor
     @objc func sharePageFromMenu(_ sender: Any?) {
         SpaceSessionControllersManager.shared.activeWindowController?.sharePage(sender)
     }
 
-    /// Starts a new AI conversation in the focused tab's sidebar.
-    ///
-    /// The actual "new conversation" logic lives inside the Sidecar extension
-    /// (React), so we can't run it natively. Instead we broadcast a message the
-    /// extension listens for. Validation (`validateUserInterfaceItem`) already
-    /// guarantees focus is inside the AI sidebar when this fires, so the sidebar
-    /// is open and visible — no need to open it here.
-    ///
-    /// Each browser tab has its own AI sidebar WebContents (one Sidecar instance
-    /// per tab), and they all share the same `windowId`. So we carry the focused
-    /// tab's `tabId` (its Chromium `guid`, the same value embedded as `?tabId=`
-    /// when the sidebar is created) to let exactly that tab's Sidecar respond.
+    @MainActor @objc func switchChatPanelAndTab(_ sender: Any?) {
+        guard let controller = SpaceSessionControllersManager.shared.activeWindowController else { return }
+        MistChatPanelViewController.performPanelTabSwitch(in: controller)
+    }
+
+    /// Starts a new native chat in the focused page's panel.
     @MainActor
     @objc func newConversation(_ sender: Any?) {
         guard let windowController = SpaceSessionControllersManager.shared.activeWindowController,
               let tabId = windowController.browserState.focusingTab?.guid else {
             return
         }
-        let payload: [String: Any] = ["tabId": tabId]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let json = String(data: data, encoding: .utf8) else {
-            return
-        }
-        ExtensionMessaging.shared.broadcast(type: "newConversation", payload: json)
+        windowController.mainSplitViewController.webContentContainerViewController
+            .findController(forTabId: tabId)?.newPanelChat()
     }
 
     @objc func toggleBookmarkBar(_ sender: Any?) {
@@ -1726,18 +1641,16 @@ extension AppController {
         alert.addButton(withTitle: NSLocalizedString("app.timeMachineRestore.failure.dismissButton", value: "OK", comment: "Time Machine restore - Failure alert dismiss button"))
         alert.runModal()
     }
-    
+
     @objc func exportLogs(_ sender: Any?) {
         let phiLogsURL = URL(fileURLWithPath: FileSystemUtils.phiBrowserDataDirectory(), isDirectory: true)
             .appendingPathComponent("PhiLogs", isDirectory: true)
-        let sentinelLogsURL = SentinelHelper.sentinelLogsDirectoryURL()
         let fm = FileManager.default
         let hasPhi = fm.fileExists(atPath: phiLogsURL.path)
-        let hasSentinel = fm.fileExists(atPath: sentinelLogsURL.path)
-        guard hasPhi || hasSentinel else {
+        guard hasPhi else {
             let alert = NSAlert()
             alert.messageText = NSLocalizedString("app.logExport.noLogsFound.title", value: "Export Logs", comment: "Help menu - Log export alert title when no log folders exist")
-            alert.informativeText = NSLocalizedString("app.logExport.noLogsFound.message", value: "No Phi or Sentinel log folders were found.", comment: "Help menu - Log export alert when both PhiLogs and Sentinel log directory are missing")
+            alert.informativeText = NSLocalizedString("app.logExport.noLogsFound.message", value: "No Phi log folder was found.", comment: "Help menu - Log export alert when the PhiLogs directory is missing")
             alert.alertStyle = .informational
             alert.addButton(withTitle: NSLocalizedString("app.logExport.noLogsFound.dismissButton", value: "OK", comment: "Log export - No-log-folders alert dismiss button"))
             alert.runModal()
@@ -1752,7 +1665,7 @@ extension AppController {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyy-MM-dd"
-        panel.nameFieldStringValue = "Phi_Logs_\(formatter.string(from: Date())).zip"
+        panel.nameFieldStringValue = "Mist_Logs_\(formatter.string(from: Date())).zip"
         panel.title = NSLocalizedString("app.logExport.savePanel.title", value: "Export Logs", comment: "Help menu - NSSavePanel window title for saving the log export zip")
         panel.prompt = NSLocalizedString("app.logExport.savePanel.exportButton", value: "Export", comment: "Help menu - NSSavePanel primary button title for confirming log export save location")
 
@@ -1761,9 +1674,6 @@ extension AppController {
             do {
                 try self.zipPhiLogsExport(
                     phiLogsURL: phiLogsURL,
-                    sentinelLogsURL: sentinelLogsURL,
-                    includePhi: hasPhi,
-                    includeSentinel: hasSentinel,
                     destinationZIP: destURL
                 )
             } catch {
@@ -1786,9 +1696,6 @@ extension AppController {
 
     private func zipPhiLogsExport(
         phiLogsURL: URL,
-        sentinelLogsURL: URL,
-        includePhi: Bool,
-        includeSentinel: Bool,
         destinationZIP: URL
     ) throws {
         let fm = FileManager.default
@@ -1796,18 +1703,8 @@ extension AppController {
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: staging) }
 
-        var zipRoots: [String] = []
-        if includePhi {
-            let dest = staging.appendingPathComponent("PhiLogs", isDirectory: true)
-            try fm.copyItem(at: phiLogsURL, to: dest)
-            zipRoots.append("PhiLogs")
-        }
-        if includeSentinel {
-            let dest = staging.appendingPathComponent("SentinelLogs", isDirectory: true)
-            try fm.copyItem(at: sentinelLogsURL, to: dest)
-            zipRoots.append("SentinelLogs")
-        }
-        guard !zipRoots.isEmpty else { return }
+        let dest = staging.appendingPathComponent("PhiLogs", isDirectory: true)
+        try fm.copyItem(at: phiLogsURL, to: dest)
 
         if fm.fileExists(atPath: destinationZIP.path) {
             try fm.removeItem(at: destinationZIP)
@@ -1816,7 +1713,7 @@ extension AppController {
         let stderrPipe = Pipe()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-        process.arguments = ["-r", "-q", destinationZIP.path] + zipRoots
+        process.arguments = ["-r", "-q", destinationZIP.path, "PhiLogs"]
         process.currentDirectoryURL = staging
         process.standardError = stderrPipe
         try process.run()
@@ -1831,10 +1728,10 @@ extension AppController {
 
     @objc func showExtensionInfo(_ sender: Any?) {
         let versionsDict = SpaceSessionControllersManager.shared.activeWindowController?.browserState.extensionManager.phiExtensionVersions
-        
+
         let alert = NSAlert()
         alert.messageText = NSLocalizedString("app.extensionInfoAlert.title", value: "Extension Info", comment: "Extension info alert - Title of the alert showing extension version information")
-        
+
         let informativeText: String
         if let dict = versionsDict, !dict.isEmpty {
             let lines = dict.sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
@@ -1843,7 +1740,7 @@ extension AppController {
         } else {
             informativeText = NSLocalizedString("app.extensionInfoAlert.emptyMessage", value: "No extensions found or versions unavailable.", comment: "Extension info alert - Fallback when no extension versions are available")
         }
-        
+
         alert.informativeText = informativeText
         alert.alertStyle = .informational
         alert.addButton(withTitle: NSLocalizedString("app.extensionInfoAlert.dismissButton", value: "OK", comment: "Extension info alert - OK button to dismiss the alert"))
@@ -1879,16 +1776,8 @@ extension AppController {
     /// or (far more often) an agent Space appearing or ending. Rebuilds the
     /// installed Spaces menu immediately.
     ///
-    /// Each Space item in that menu carries BOTH the spaceId that sat at its
-    /// position when the menu was last built and that position's ⌃-number key
-    /// equivalent — and AppKit fires key equivalents whether or not the menu
-    /// has ever been opened. Rebuilding only in `menuWillOpen` therefore froze
-    /// the position → Space mapping at the last time the user pulled the menu
-    /// down: after an agent Space came or went, ⌃N activated whatever Space
-    /// used to occupy that slot, while clicking the pip — which carries its
-    /// own Space's id — still landed correctly. Several agents running at once
-    /// churn the list continuously with no reason for the user to ever open
-    /// this menu, which is why the drift showed up there first.
+    /// Space items cache their IDs and positions. Refresh them when the list
+    /// changes so every installed presentation stays current.
     ///
     /// Only ever refreshes a menu that is already installed: this can fire
     /// from `SpaceManager`'s first store read, which happens before the main
@@ -1917,10 +1806,64 @@ extension AppController {
     /// `.activeBrowserWindowDidChange`) so the menu drops out for incognito
     /// windows and returns for normal ones.
     @objc func refreshSpacesMenuVisibility() {
-        guard let item = NSApp.mainMenu?.items.first(where: {
-            $0.tag == AppController.spacesMenuItemTag
-        }) else { return }
-        item.isHidden = !shouldShowSpacesMenu
+        NSApp.mainMenu?.items.first { $0.tag == AppController.spacesMenuItemTag }?.isHidden = !shouldShowSpacesMenu
+        NSApp.mainMenu?.items.first { $0.tag == AppController.appsMenuItemTag }?.isHidden =
+            SpaceSessionControllersManager.shared.getActiveWindowState()?.isIncognito == true
+    }
+
+    @MainActor static func installOrUpdateAppsMenu(in mainMenu: NSMenu, target: AppController?) {
+        let item = mainMenu.items.first { $0.tag == appsMenuItemTag } ?? NSMenuItem()
+        if item.menu != nil { mainMenu.removeItem(item) }
+        item.title = NSLocalizedString("app.mainMenu.apps", value: "Apps", comment: "Main menu - Top-level Apps menu title")
+        item.tag = appsMenuItemTag
+        item.isHidden = SpaceSessionControllersManager.shared.getActiveWindowState()?.isIncognito == true
+        let submenu = item.submenu ?? NSMenu(title: item.title)
+        submenu.removeAllItems()
+        for app in MistApps.all {
+            let row = NSMenuItem(title: app.id.name, action: #selector(openMistApp(_:)), keyEquivalent: "")
+            row.target = target
+            row.representedObject = app.id.rawValue
+            row.tag = app.openCommand.rawValue
+            let icon = app.icon(nil)
+            row.image = NSImage(named: icon.asset)?.copy() as? NSImage
+            row.image?.size = NSSize(width: 16, height: 16)
+            row.image?.isTemplate = icon.isTemplate
+            Shortcuts.updateShortcut(for: row)
+            submenu.addItem(row)
+        }
+        submenu.addItem(.separator())
+        let newChat = NSMenuItem(
+            title: NSLocalizedString("app.mainMenu.apps.newDrifterChat", value: "New Drifter Chat", comment: "Apps menu and shortcuts - Start a new empty Drifter chat"),
+            action: #selector(newDrifterChatFromMenu(_:)), keyEquivalent: "")
+        newChat.tag = CommandWrapper.PHI_NEW_DRIFTER_CHAT.rawValue
+        newChat.target = target
+        newChat.image = NSImage(named: DrifterApp.logo)?.copy() as? NSImage
+        newChat.image?.size = NSSize(width: 16, height: 16)
+        Shortcuts.updateShortcut(for: newChat)
+        submenu.addItem(newChat)
+        item.submenu = submenu
+        let index = mainMenu.items.firstIndex { $0.tag == spacesMenuItemTag }.map { $0 + 1 } ?? mainMenu.items.count
+        mainMenu.insertItem(item, at: index)
+    }
+
+    private func installOrUpdateWindowMenuItems(in menu: NSMenu) {
+        let command = CommandWrapper.PHI_MAKE_PRIMARY_WINDOW
+        for item in menu.items where item.tag == command.rawValue { menu.removeItem(item) }
+        let item = NSMenuItem(
+            title: NSLocalizedString("app.windowMenu.makePrimaryWindow", value: "Make Primary Window", comment: "Window menu item for making the focused window primary"),
+            action: #selector(makePrimaryWindowFromMenu(_:)), keyEquivalent: "")
+        item.tag = command.rawValue
+        item.target = self
+        Shortcuts.updateShortcut(for: item)
+        let anchor = menu.items.firstIndex { $0.action == #selector(NSWindow.performZoom(_:)) }
+            ?? menu.items.firstIndex { $0.tag == CommandWrapper.IDC_MINIMIZE_WINDOW.rawValue }
+        menu.insertItem(item, at: anchor.map { $0 + 1 } ?? 0)
+    }
+
+    @objc func makePrimaryWindowFromMenu(_ sender: Any?) {
+        if let slot = SpaceSessionControllersManager.shared.activeWindowController?.slot {
+            SpaceManager.shared.markPrimary(slot)
+        }
     }
 
     /// Finds the existing Spaces top-level menu item by tag and refreshes its
@@ -2089,8 +2032,7 @@ extension AppController {
         item.isEnabled = false
     }
 
-    /// Fills `menu` with one item per Space — its icon, ⌃-number switch shortcut,
-    /// and a checkmark on the active one — that switches the focused window to
+    /// Fills `menu` with one item per Space — its icon and a checkmark on the active one — that switches the focused window to
     /// that Space, plus a trailing "New Space" item. Drives the horizontal tab
     /// strip's active-Space chip, whose left-click presents this as a switcher
     /// menu (the menu rendition of the old switcher popover; hovering the chip
@@ -2098,7 +2040,7 @@ extension AppController {
     /// affordance, so both layouts share one switcher UI. Items target the
     /// controller and reuse the Spaces menu's activate / create actions, so
     /// switching here behaves exactly like the menu-bar Spaces menu.
-    func populateSpaceSwitcherMenu(_ menu: NSMenu, includesNewSpaceAction: Bool = true) {
+    func populateSpaceSwitcherMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         let activeSpaceId = currentActiveSpace()?.spaceId
 
@@ -2123,7 +2065,6 @@ extension AppController {
             menu.addItem(item)
         }
 
-        guard includesNewSpaceAction else { return }
         if menu.numberOfItems > 0 {
             menu.addItem(.separator())
         }
@@ -2135,76 +2076,6 @@ extension AppController {
         newSpaceItem.target = self
         newSpaceItem.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
         menu.addItem(newSpaceItem)
-    }
-
-    /// Builds the shared account-button menu using the same window and command
-    /// routing as the main menu and the Space switcher.
-    func populateProfileMenu(_ menu: NSMenu) {
-        populateSpaceSwitcherMenu(menu, includesNewSpaceAction: false)
-
-        func add(_ title: String, action: Selector, command: CommandWrapper? = nil, target: AnyObject? = nil) {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-            item.target = target
-            if let command {
-                item.tag = command.rawValue
-                applyEffectiveShortcut(command, to: item)
-                #if compiler(>=6.4)
-                if #available(macOS 27.0, *), command == .IDC_OPTIONS {
-                    item.preferredImageVisibility = .hidden
-                }
-                #else
-                if command == .IDC_OPTIONS {
-                    item.image = nil
-                }
-                #endif
-            }
-            menu.addItem(item)
-        }
-
-        menu.addItem(.separator())
-        if let space = currentActiveSpace() {
-            let themeItem = NSMenuItem()
-            let editor = SpaceThemeEditorView(spaceId: space.spaceId, isEmbeddedInMenu: true) { [weak menu] in
-                menu?.cancelTracking()
-            }
-            .disabled(focusedSpaceIsAgentControlled())
-            let themeSource = currentSpacesSlot()?.visibleController?.browserState.themeContext
-            let hostingView = ThemedHostingView(rootView: editor, themeSource: themeSource)
-            // Menu windows have no browser controller; retain the owning Space's theme.
-            hostingView.subtreeThemeSource = themeSource
-            hostingView.sizingOptions = []
-            hostingView.autoresizingMask = [.width]
-            hostingView.frame = NSRect(origin: .zero, size: SpaceThemeEditorView.menuContentSize)
-            themeItem.view = hostingView
-            menu.addItem(themeItem)
-            menu.addItem(.separator())
-        }
-        add(NSLocalizedString("profile.menu.downloads", value: "Download List", comment: "Profile menu - Download List action"),
-            action: #selector(commandDispatch(_:)), command: .IDC_SHOW_DOWNLOADS, target: nil)
-        add(NSLocalizedString("profile.menu.bookmarks", value: "Manage Bookmarks", comment: "Profile menu - Manage Bookmarks action"),
-            action: #selector(openBookmarkManager(_:)), target: self)
-        add(NSLocalizedString("profile.menu.extensions", value: "Manage Extensions", comment: "Profile menu - Manage Extensions action"),
-            action: #selector(commandDispatch(_:)), command: .IDC_MANAGE_EXTENSIONS, target: nil)
-        menu.addItem(.separator())
-        add(NSLocalizedString("profile.menu.newTab", value: "New Tab", comment: "Profile menu - New Tab action"),
-            action: #selector(commandDispatch(_:)), command: .IDC_NEW_TAB, target: nil)
-        add(NSLocalizedString("profile.menu.newIncognitoSpace", value: "New Incognito Space", comment: "Profile menu - New Incognito Space action"),
-            action: #selector(newIncognitoSpaceFromMenu(_:)), command: .PHI_NEW_INCOGNITO_SPACE, target: self)
-        add(NSLocalizedString("profile.menu.newIncognitoWindow", value: "New Incognito Window", comment: "Profile menu - New Incognito Window action"),
-            action: #selector(commandDispatch(_:)), command: .IDC_NEW_INCOGNITO_WINDOW, target: nil)
-        menu.addItem(.separator())
-        add(NSLocalizedString("profile.menu.settings", value: "Settings", comment: "Profile menu - Settings action"),
-            action: #selector(showPreferences(_:)), command: .IDC_OPTIONS, target: self)
-        if PhiBuildCapabilities.supportsAuthentication, !ApplicationState.shared.isAuthenticated {
-            add(NSLocalizedString("profile.menu.signIn", value: "Sign in", comment: "Profile menu - Sign in action when not signed in"),
-                action: #selector(signInFromProfileMenu(_:)), target: self)
-        }
-    }
-
-    @objc private func signInFromProfileMenu(_ sender: NSMenuItem) {
-        Task { @MainActor in
-            LoginController.shared.showLoginWindow()
-        }
     }
 
     /// A menu-ready icon for a Space row. A Space with a live agent task wears
@@ -2220,7 +2091,7 @@ extension AppController {
             guard let task = AgentSpaceManager.shared.tasksBySpaceId[space.spaceId] else {
                 return SpaceIconView.menuImage(for: space.iconName)
             }
-            let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+            let badge = AgentDriverBadge.make(agentName: task.agentName)
             if let asset = badge.assetName,
                let image = NSImage(named: asset)?.copy() as? NSImage {
                 // Menu glyphs are 16pt; the brand assets pad their ink to
@@ -2583,7 +2454,7 @@ extension AppController {
             profile.displayName
         )
         let pinnedTabScope = MainActor.assumeIsolated {
-            AccountController.shared.localDataAccount?.localStorage.pinnedTabScope() ?? .profile
+            AccountController.shared.localDataAccount.localStorage.pinnedTabScope()
         }
         switch pinnedTabScope {
         case .space:
@@ -2631,7 +2502,7 @@ extension AppController {
         // Menu actions always arrive on the main thread; assume isolation
         // rather than annotating the @objc selector (same pattern as
         // SpaceManager.applyTheme).
-        MainActor.assumeIsolated {
+        _ = MainActor.assumeIsolated {
             SpaceManager.shared.requestCloseIncognitoSpace(spaceId: spaceId)
         }
     }
@@ -2648,7 +2519,7 @@ extension AppController {
 
     @MainActor
     func openNewIncognitoSpace() {
-        let timing = SpaceSwitchTiming(operation: "new_incognito")
+        let timing = SpaceSwitchTiming()
         let manager = SpaceManager.shared
         let spaceId = manager.createIncognitoSpace(timing: timing)
         timing.mark("incognito.slot_lookup.begin")
@@ -2681,213 +2552,6 @@ extension AppController {
                 manager.closeIncognitoSpace(spaceId: spaceId)
             }, timing: timing)
         }
-    }
-
-    /// Opens about:blank in a Kiosk that inherits the focused window's exact
-    /// profile, then presents the native omnibox once AppKit leaves menu
-    /// tracking. With no browser window open, Chromium's last-used profile is
-    /// used instead, matching the windowless New Window commands.
-    @objc func newKioskWindowFromMenu(_ sender: Any?) {
-        MainActor.assumeIsolated {
-            openNewKioskWindow(bringToFront: false)
-        }
-    }
-
-    func newKioskWindowFromGlobalShortcut() {
-        MainActor.assumeIsolated {
-            openNewKioskWindow(bringToFront: true)
-        }
-    }
-
-    @MainActor
-    @discardableResult
-    func openNewKioskWindow(
-        url: String = "about:blank",
-        bringToFront: Bool,
-        profileId: String? = nil,
-        preferredSpaceId: String? = nil
-    ) -> Bool {
-        let manager = SpaceSessionControllersManager.shared
-        let bridge = ChromiumLauncher.sharedInstance().bridge
-        AppLogDebug(
-            "[ExternalKioskRouting] openNewKioskWindow "
-                + "requestedProfile=\(profileId ?? "inherited") "
-                + "preferredSpace=\(preferredSpaceId ?? "none") "
-                + "activeProfile=\(manager.activeWindowController?.profileId ?? "none") "
-                + "canOpenKiosk=\(ApplicationState.shared.canOpenExternalLinksInKiosk) "
-                + "guestTransitionBlocked=\(manager.isGuestTransitionInteractionBlocked) "
-                + "bridgeAvailable=\(bridge != nil)"
-        )
-        guard ApplicationState.shared.canOpenExternalLinksInKiosk,
-              !manager.isGuestTransitionInteractionBlocked,
-              let bridge else {
-            AppLogDebug(
-                "[ExternalKioskRouting] openNewKioskWindow rejected by precondition"
-            )
-            return false
-        }
-        if manager.activeWindowController == nil,
-           SpaceManager.shared.isSessionRestoreInFlight {
-            AppLogDebug(
-                "[ExternalKioskRouting] openNewKioskWindow rejected because "
-                    + "session restore is in flight without an active window"
-            )
-            return false
-        }
-
-        let kioskController: KioskBrowserWindowController?
-        if let profileId {
-            kioskController = openWindowlessKiosk(
-                url: url,
-                profileId: profileId,
-                bridge: bridge,
-                manager: manager
-            )
-        } else if let source = manager.activeWindowController {
-            kioskController = openKioskWindow(
-                url: url,
-                from: source,
-                bridge: bridge,
-                manager: manager
-            )
-        } else {
-            kioskController = openWindowlessKiosk(
-                url: url,
-                bridge: bridge,
-                manager: manager
-            )
-        }
-        guard let kioskController else {
-            AppLogDebug(
-                "[ExternalKioskRouting] Kiosk creation returned no controller"
-            )
-            return false
-        }
-
-        let windowId = kioskController.windowId
-        if let state = kioskController.browserState as? KioskBrowserState {
-            state.preferredSpaceId = preferredSpaceId
-            AppLogDebug(
-                "[ExternalKioskRouting] configured Open in Space target "
-                    + "windowId=\(windowId) "
-                    + "preferredSpace=\(state.preferredSpaceId ?? "none") "
-                    + "activeSpace=\(SpaceManager.shared.activeSpaceId ?? "none")"
-            )
-        }
-        DispatchQueue.main.async { [weak kioskController] in
-            guard let kioskController,
-                  manager.controller(for: windowId) === kioskController else {
-                return
-            }
-            if bringToFront, let window = kioskController.window {
-                Self.bringKioskWindowToFront(window)
-            }
-            if url == "about:blank" {
-                kioskController.presentOmniBoxCentered()
-            }
-        }
-        return true
-    }
-
-    @MainActor
-    static func bringKioskWindowToFront(
-        _ window: NSWindow
-    ) {
-        window.orderFrontRegardless()
-        window.makeKey()
-    }
-
-    @MainActor
-    private func openKioskWindow(
-        url: String,
-        from source: SpaceSessionController,
-        bridge: PhiChromiumBridgeProtocol,
-        manager: SpaceSessionControllersManager
-    ) -> KioskBrowserWindowController? {
-        let selector = NSSelectorFromString("openURLInKiosk:sourceWindowId:")
-        guard bridge.responds(to: selector) else { return nil }
-
-        let existingWindowIds = Set(manager.getAllWindows().map(\.windowId))
-        guard bridge.openURL(
-            inKiosk: url,
-            sourceWindowId: Int64(source.windowId)
-        ) else {
-            return nil
-        }
-        return manager.getAllWindows()
-            .compactMap { $0 as? KioskBrowserWindowController }
-            .first { !existingWindowIds.contains($0.windowId) }
-    }
-
-    @MainActor
-    private func openWindowlessKiosk(
-        url: String,
-        profileId: String? = nil,
-        bridge: PhiChromiumBridgeProtocol,
-        manager: SpaceSessionControllersManager
-    ) -> KioskBrowserWindowController? {
-        guard let result = bridge.createBrowser(
-            withWindowType: .kiosk,
-            profileId: profileId,
-            hidden: false
-        ) else {
-            AppLogDebug(
-                "[ExternalKioskRouting] createBrowser returned nil "
-                    + "profile=\(profileId ?? "last-used")"
-            )
-            return nil
-        }
-        guard let windowIdNumber = result["windowId"] as? NSNumber else {
-            AppLogDebug(
-                "[ExternalKioskRouting] createBrowser result has no windowId "
-                    + "reportedProfile=\(result["profileId"] as? String ?? "none")"
-            )
-            return nil
-        }
-
-        let windowId = windowIdNumber.intValue
-        let reportedProfileId = result["profileId"] as? String ?? "none"
-        AppLogDebug(
-            "[ExternalKioskRouting] createBrowser returned "
-                + "windowId=\(windowId) requestedProfile=\(profileId ?? "last-used") "
-                + "reportedProfile=\(reportedProfileId)"
-        )
-        guard let controller = manager.controller(for: windowId)
-                as? KioskBrowserWindowController else {
-            AppLogDebug(
-                "[ExternalKioskRouting] created Kiosk was not registered "
-                    + "windowId=\(windowId)"
-            )
-            bridge.executeCommand(
-                Int32(CommandWrapper.IDC_CLOSE_WINDOW.rawValue),
-                windowId: Int64(windowId)
-            )
-            return nil
-        }
-        AppLogDebug(
-            "[ExternalKioskRouting] registered Kiosk controller "
-                + "windowId=\(windowId) controllerProfile=\(controller.profileId)"
-        )
-        guard bridge.createNewTabStrictly(
-            withUrl: url,
-            windowId: Int64(windowId),
-            focusAfterCreate: true
-        ) else {
-            AppLogDebug(
-                "[ExternalKioskRouting] strict tab creation failed "
-                    + "windowId=\(windowId)"
-            )
-            bridge.executeCommand(
-                Int32(CommandWrapper.IDC_CLOSE_WINDOW.rawValue),
-                windowId: Int64(windowId)
-            )
-            return nil
-        }
-        AppLogDebug(
-            "[ExternalKioskRouting] strict tab creation succeeded "
-                + "windowId=\(windowId)"
-        )
-        return controller
     }
 
     @objc func activateNextSpace(_ sender: Any?) {
@@ -2934,79 +2598,6 @@ extension AppController {
         window.makeKeyAndOrderFront(nil)
     }
 
-    static let browserMigrationWindowIdentifier =
-        NSUserInterfaceItemIdentifier("Phi Browser Migration Window")
-
-    /// The Migration wizard is on screen. Like the import window it is not
-    /// released when it closes, and a miniaturised window reports itself
-    /// invisible, so neither test answers this on its own.
-    @MainActor
-    static var browserMigrationWizardIsOnScreen: Bool {
-        guard let window = NSApp.windows.first(where: {
-            $0.identifier == browserMigrationWindowIdentifier
-        }) else { return false }
-        return window.isVisible || window.isMiniaturized
-    }
-
-    /// Opens the Migration wizard. Like the import window it is a singleton, so
-    /// a second invocation returns to the one that is already open rather than
-    /// starting a second run against the same source.
-    @MainActor
-    @objc func showBrowserMigrationWizard(_ sender: Any?) {
-        if let existing = NSApp.windows.first(where: {
-            $0.identifier == Self.browserMigrationWindowIdentifier
-        }) {
-            if existing.isMiniaturized { existing.deminiaturize(nil) }
-            existing.makeKeyAndOrderFront(nil)
-            return
-        }
-
-        let window = NSWindow(
-            contentRect: .zero,
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.identifier = Self.browserMigrationWindowIdentifier
-        // Kept although nothing draws it: the window still reports the title to
-        // accessibility and to the Window menu, while the wizard's own per-step
-        // heading does the naming on screen.
-        window.title = NSLocalizedString("app.browserMigration.windowTitle", value: "Migrate to Phi",
-            comment: "Browser migration wizard - window title")
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
-        window.isReleasedWhenClosed = false
-        // The wizard wears the import window's dress and is hard-coded dark
-        // with it. That window can leave the system appearance alone because it
-        // hand-paints every label and carries almost no system controls; this
-        // one has a bridged mixed checkbox, a disclosure and two progress
-        // views, each of which would draw for a light system on a dark ground.
-        // One line here is cheaper and more complete than painting all four.
-        window.appearance = NSAppearance(named: .darkAqua)
-        let wizard = BrowserMigrationWizardView(
-            model: BrowserMigrationWizardModel()
-        ) { [weak window] in
-            window?.close()
-        }
-        let hosting = ThemedHostingController(rootView: wizard)
-        // The view still declares the size — a root view that asked to fill
-        // would report a runaway fitting size and grow the window visibly, the
-        // way migration ticket 04's 640 x 1713 did. What changes is where that
-        // size lands: the wizard draws under the transparent titlebar, so it is
-        // the whole window's frame rather than the content rect the hosting
-        // controller would push out as its preferred size, which adds the
-        // titlebar's height on top of it.
-        let declaredSize = hosting.view.fittingSize
-        hosting.sizingOptions = []
-        window.contentViewController = hosting
-        window.setFrame(
-            NSRect(origin: window.frame.origin, size: declaredSize),
-            display: false)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-    }
-
     /// Runs the import command the Chromium-built menu item used to carry.
     /// The item keeps that command as its tag, so handing the item itself to
     /// the dispatcher takes exactly the route it took before — including the
@@ -3044,12 +2635,17 @@ extension AppController {
         window.isReleasedWhenClosed = false
         window.center()
         window.makeKeyAndOrderFront(nil)
-        
+
     }
 
     // MARK: - Menu Validation
 
     @objc func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(makePrimaryWindowFromMenu(_:)) {
+            let role = SpaceSessionControllersManager.shared.activeWindowController?.slot?.primaryRole
+            (item as? NSMenuItem)?.state = role == .primary ? .on : .off
+            return role == .markable
+        }
         if item.action == #selector(toggleSidebar(_:))
             || item.action == #selector(toggleChatbar(_:)) {
             guard let currentWindow = NSApp.keyWindow ?? NSApp.mainWindow,
@@ -3057,21 +2653,6 @@ extension AppController {
                   !sessionController.isLibraryOverlayVisible else {
                 return false
             }
-        }
-
-        if SpaceSessionControllersManager.shared
-            .isGuestTransitionInteractionBlocked {
-            let lifecycleSafeActions: [Selector] = [
-                #selector(orderFrontStandardAboutPanel(_:)),
-                #selector(NSApplication.terminate(_:)),
-                #selector(NSApplication.hide(_:)),
-                #selector(NSApplication.hideOtherApplications(_:)),
-                #selector(NSApplication.unhideAllApplications(_:)),
-            ]
-            if let action = item.action {
-                return lifecycleSafeActions.contains(action)
-            }
-            return false
         }
 
         // Placeholder mode: tab-targeted menu items must not act on the
@@ -3115,32 +2696,32 @@ extension AppController {
         // Their shortcuts are separately swallowed in
         // `CommandDispatcher.handleKeyEquivalent`. Take control re-enables them.
         if let menuItem = item as? NSMenuItem, focusedSpaceIsAgentControlled() {
-            if menuItem.tag == CommandWrapper.IDC_NEW_TAB.rawValue { return false }
+            if menuItem.tag == CommandWrapper.IDC_NEW_TAB.rawValue
+                || menuItem.tag == CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue { return false }
             if itemIsInAgentLockedMenu(menuItem) { return false }
         }
 
+        if item.action == #selector(openMistApp(_:)) {
+            return SpaceSessionControllersManager.shared.getActiveWindowState().map { !$0.isIncognito } ?? false
+        }
         if item.action == #selector(toggleChatbar(_:)) {
-            let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
             let state = SpaceSessionControllersManager.shared.getActiveWindowState()
-            if !phiAIEnabled || state?.isKioskWindow == true
-                || state?.isIncognito ?? false || state?.groupOverviewState != nil
-                || state?.focusingTab?.aiChatEnabled == false {
-                return false
-            }
+            return state?.canShowChatPanel(for: state?.focusingTab) == true
+        }
+        if item.action == #selector(switchChatPanelAndTab(_:)) {
+            return SpaceSessionControllersManager.shared.getActiveWindowState().map { state in
+                MainActor.assumeIsolated { MistChatPanelViewController.panelTabSwitch(in: state) != nil }
+            } ?? false
         }
 
         // New Conversation only applies while focus is inside the AI sidebar;
         // otherwise disable the item so its shortcut falls through to the
         // original behavior.
         if item.action == #selector(newConversation(_:)) {
-            let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
             let state = SpaceSessionControllersManager.shared.getActiveWindowState()
-            guard phiAIEnabled,
-                  let state,
-                  !state.isKioskWindow,
-                  !state.isIncognito,
-                  state.groupOverviewState == nil,
-                  state.focusingTab?.aiChatEnabled == true,
+            guard let state,
+                  state.canShowChatPanel(for: state.focusingTab),
+                  state.focusingTab?.aiChatCollapsed == false,
                   state.focusingTab?.lastFocusTarget == .aiChat else {
                 return false
             }
@@ -3148,55 +2729,23 @@ extension AppController {
 
         // Toggle Sidebar is unavailable in the traditional layout.
         if item.action == #selector(toggleSidebar(_:)) {
-            if SpaceSessionControllersManager.shared
-                .getActiveWindowState()?.isKioskWindow == true
-                || PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional {
+            if PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional {
                 return false
             }
         }
-        
+
         if item.action == #selector(showPreferences(_:)) {
-            return ApplicationState.shared.canUseBrowser
+            return true
         }
 
-        // Migration and browser-data import must never write into the user's
-        // data at the same time, so each greys the other out for as long as it
-        // is in flight — window closed included. The import item additionally
-        // needs a window, because that is where it reads its target Space from.
         if item.action == #selector(showImportDataWindowFromMenu(_:)) {
-            guard SpaceSessionControllersManager.shared
-                .activeWindowController != nil else { return false }
-            // `validateUserInterfaceItem` is a nonisolated @objc entry point
-            // but always arrives on the main thread, so assume isolation here
-            // rather than annotating it (same pattern as
-            // closeIncognitoSpaceFromMenu).
-            return MainActor.assumeIsolated { !BrowserDataActivity.migrationBlocksImport }
-        }
-
-        // Nothing to migrate from: no Migration Source is installed here.
-        if item.action == #selector(showBrowserMigrationWizard(_:)) {
-            guard !BrowserMigrationSourceKind.installed.isEmpty else { return false }
-            return MainActor.assumeIsolated { !BrowserDataActivity.importBlocksMigration }
+            return SpaceSessionControllersManager.shared.activeWindowController != nil
         }
 
         if item.action == #selector(openBookmarkManager(_:)) {
-            return ApplicationState.shared.canUseBrowser &&
-                SpaceSessionControllersManager.shared.activeWindowController != nil &&
+            return SpaceSessionControllersManager.shared.activeWindowController != nil &&
                 !isActiveWindowIncognito()
         }
-        
-        #if !PHI_OSS_BUILD
-        if item.action == #selector(checkForUpdate(_:)) {
-            guard updater?.canCheckForUpdates == true else { return false }
-
-            switch updateState {
-            case .downloading, .checking:
-                return false
-            default:
-                return true
-            }
-        }
-        #endif
 
         if item.action == #selector(selectLayoutMode(_:)) {
             if let menuItem = item as? NSMenuItem {
@@ -3212,14 +2761,14 @@ extension AppController {
                 default:
                     break
                 }
-                return ApplicationState.shared.canUseBrowser
+                return true
             }
         }
 
         if item.action == #selector(toggleAgentAutoView(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.state = PhiPreferences.AgentSpaces.autoViewEnabled ? .on : .off
-                return ApplicationState.shared.canUseBrowser
+                return true
             }
         }
 
@@ -3234,7 +2783,7 @@ extension AppController {
                 // Nothing to distill on the native NTP: it has no WebContents,
                 // so there is no page to run extraction against.
                 guard let tab, !tab.isShowingNativeNTP else { return false }
-                return ApplicationState.shared.canUseBrowser
+                return true
             }
         }
 
@@ -3243,23 +2792,9 @@ extension AppController {
                 guard let owner = SpaceSessionControllersManager.shared.activeWindowController else {
                     return false
                 }
-                return !owner.browserState.isKioskWindow && owner.window?.contentView != nil
+                return owner.window?.contentView != nil
             }
-            return canOpen && ApplicationState.shared.canUseBrowser
-        }
-
-        if item.action == #selector(saveTabForLater(_:)) {
-            let canSave = MainActor.assumeIsolated {
-                SaveForLaterService.canSave(
-                    SpaceSessionControllersManager.shared
-                        .activeWindowController?.browserState.pageCommandTarget)
-            }
-            return canSave && ApplicationState.shared.canUseBrowser
-        }
-
-        if item.action == #selector(openSaveForLaterLibrary(_:)) {
-            return SaveForLaterService.featureEnabled
-                && ApplicationState.shared.canUseBrowser
+            return canOpen
         }
 
         if item.action == #selector(toggleAgentTranscript(_:)) {
@@ -3267,7 +2802,7 @@ extension AppController {
                 menuItem.state = MainActor.assumeIsolated {
                     AgentTranscriptPanelController.shared.isVisible
                 } ? .on : .off
-                return ApplicationState.shared.canUseBrowser
+                return true
             }
         }
 
@@ -3302,37 +2837,21 @@ extension AppController {
             if let menuItem = item as? NSMenuItem {
                 menuItem.isHidden = !spacesFeatureEnabled
             }
-            return spacesFeatureEnabled && ApplicationState.shared.canUseBrowser
+            return spacesFeatureEnabled
         }
         if item.action == #selector(newIncognitoSpaceFromMenu(_:)) {
             if let menuItem = item as? NSMenuItem {
                 menuItem.isHidden = !spacesFeatureEnabled
             }
-            return spacesFeatureEnabled && ApplicationState.shared.canUseBrowser
-        }
-        if item.action == #selector(newKioskWindowFromMenu(_:)) {
-            guard ApplicationState.shared.canOpenExternalLinksInKiosk,
-                  ChromiumLauncher.sharedInstance().bridge != nil else {
-                return false
-            }
-            return SpaceSessionControllersManager.shared
-                .activeWindowController != nil
-                || !SpaceManager.shared.isSessionRestoreInFlight
+            return spacesFeatureEnabled
         }
         if item.action == #selector(deleteSelectedProfile(_:)) {
             guard spacesFeatureEnabled,
-                  ApplicationState.shared.canUseBrowser,
                   let menuItem = item as? NSMenuItem,
                   let profile = menuItem.representedObject as? PhiBrowserProfile else {
                 return false
             }
-            // Local references AND account references (§9.4): a Profile whose only
-            // Space lives on another Mac must not look deletable here either.
-            let localReference = SpaceManager.shared.isProfileInUse(profile.profileId)
-            let accountReference = MainActor.assumeIsolated {
-                PhiSpaceSyncState.shared.blocksProfileDeletion(localProfileId: profile.profileId)
-            }
-            return !localReference && !accountReference
+            return !SpaceManager.shared.isProfileInUse(profile.profileId)
         }
         let spacesActions: [Selector] = [
             #selector(newSpaceFromMenu(_:)),
@@ -3348,7 +2867,7 @@ extension AppController {
             #selector(openURLRulesEditor(_:)),
         ]
         if let action = item.action, spacesActions.contains(action) {
-            guard spacesFeatureEnabled, ApplicationState.shared.canUseBrowser else { return false }
+            guard spacesFeatureEnabled else { return false }
             // An Incognito Space's name, profile binding and existence are
             // fixed: its name is derived ("Incognito" / "Incognito N"), its
             // shared OTR profile can't be re-bound, and the Space ends via
@@ -3390,13 +2909,8 @@ extension AppController {
                 return SpaceManager.shared.spaces.count > 1 && currentSpacesSlot() != nil
             }
             if action == #selector(activateSpaceFromMenu(_:)) {
-                // Validated on the LIVE list, never on the id alone: AppKit
-                // validates before firing a key equivalent, so an item left
-                // over from a Space that has since gone away (an ended agent
-                // Space is the common one) reads as disabled and its ⌃-number
-                // falls through to `CommandDispatcher` instead of activating
-                // nothing. Rebuilds keep this rare — this is the backstop for
-                // the window between the change and the rebuild.
+                // Reject a Space removed since the last rebuild. Agent Spaces
+                // can disappear while a menu still carries their IDs.
                 guard let menuItem = item as? NSMenuItem,
                       let spaceId = menuItem.representedObject as? String,
                       currentPresentedSpaces()
@@ -3422,10 +2936,13 @@ extension AppController {
         }
         if item.action == #selector(copyFullPageScreenshotFromMenu(_:)) || item.action == #selector(capturePageAreaFromMenu(_:)) {
             return MainActor.assumeIsolated {
-                guard ApplicationState.shared.canUseBrowser,
-                      let state = SpaceSessionControllersManager.shared.getActiveWindowState() else { return false }
+                guard let state = SpaceSessionControllersManager.shared.getActiveWindowState() else { return false }
                 return PageScreenshotService.shared.canCapture(in: state, area: item.action == #selector(capturePageAreaFromMenu(_:)))
             }
+        }
+        if item.action == #selector(alternateNewTabFromMenu(_:)) {
+            return SpaceSessionControllersManager.shared.getActiveWindowState() != nil
+                && !focusedSpaceIsAgentControlled()
         }
         if item.action == #selector(sharePageFromMenu(_:)) {
             guard let state = SpaceSessionControllersManager.shared.getActiveWindowState() else {
@@ -3451,35 +2968,6 @@ extension AppController {
             }
             return !bookmark.isFolder
         }
-        if item.action == #selector(signInFromProfileMenu(_:)) {
-            return PhiBuildCapabilities.supportsAuthentication && !ApplicationState.shared.isAuthenticated
-        }
-        let canUseBrowser = ApplicationState.shared.canUseBrowser
-        if !canUseBrowser {
-            let allowedActions: [Selector] = [
-                #selector(orderFrontStandardAboutPanel(_:)),
-                #selector(NSApplication.terminate(_:)),
-                #selector(NSApplication.hide(_:)),
-                #selector(NSApplication.hideOtherApplications(_:)),
-                #selector(NSApplication.unhideAllApplications(_:)),
-                #selector(showSentryDebugWindow(_:)),
-                #selector(triggerDeeplink(_:)),
-                #selector(clearLoginStatus(_:)),
-                #selector(clearAllUserData(_:)),
-                #selector(showExtensionInfo(_:)),
-                #selector(exportLogs(_:)),
-                #selector(restoreTimeMachineBackup(_:)),
-                #selector(exportUserData(_:)),
-                #selector(importUserDataFromBackup(_:)),
-                #selector(uninstallPhi(_:))
-            ]
-
-            if let action = item.action {
-                return allowedActions.contains(action)
-            }
-            return false
-        }
-
         // Command-dispatched main-menu items that reach the app delegate had no
         // key browser window to handle them. Defer their enabled state to
         // PhiAppController (no-window CommandUpdater: New Tab/New Window enabled,
@@ -3499,7 +2987,7 @@ extension AppController {
         }
         return ChromiumLauncher.sharedInstance().bridge?.validateUserInterfaceItem(fromMenu: item) ?? false
     }
-    
+
     // New-window/new-tab commands that spawn a window when none is open. They
     // are dropped while a session restore is in flight so their Chromium window
     // cannot race the restore's per-profile session commit (see below).
@@ -3510,10 +2998,6 @@ extension AppController {
     ]
 
     @IBAction @objc func commandDispatch(_ sender: Any?) {
-        guard !SpaceSessionControllersManager.shared
-            .isGuestTransitionInteractionBlocked else {
-            return
-        }
         // A windowless session restore is in flight: dropping a new-window/tab
         // command here keeps its Chromium window from racing the restore's
         // per-profile commit (which would conclude the profile still has a
@@ -3574,7 +3058,7 @@ extension AppController: NSMenuDelegate {
         guard menu.identifier == AppController.spacesMenuIdentifier else { return }
         AppController.isSpacesMenuTracking = false
         // Apply a list change that arrived while the menu was down, so the
-        // ⌃-number bindings are current again before the next keystroke.
+        // Space rows are current before the menu opens again.
         guard AppController.spacesMenuNeedsRebuild else { return }
         AppController.spacesMenuNeedsRebuild = false
         rebuildSpacesMenu(menu)

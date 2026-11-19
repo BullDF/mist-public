@@ -1,16 +1,26 @@
 {
-  "images" : [
+  "images": [
     {
-      "filename" : "Vector.pdf",
-      "idiom" : "universal"
+      "filename": "mist@1x.png",
+      "idiom": "universal",
+      "scale": "1x"
+    },
+    {
+      "filename": "mist@2x.png",
+      "idiom": "universal",
+      "scale": "2x"
+    },
+    {
+      "filename": "mist@3x.png",
+      "idiom": "universal",
+      "scale": "3x"
     }
   ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
+  "info": {
+    "author": "xcode",
+    "version": 1
   },
-  "properties" : {
-    "preserves-vector-representation" : true,
-    "template-rendering-intent" : "template"
+  "properties": {
+    "template-rendering-intent": "template"
   }
 }

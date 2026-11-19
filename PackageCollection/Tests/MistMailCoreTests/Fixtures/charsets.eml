@@ -1,0 +1,31 @@
+From: =?UTF-8?B?SsOpcsO0bWU=?= <sender@example.com>
+To: me@example.com
+Subject: =?UTF-8?B?Q2Fmw6kg5Lit5paH?=
+Message-ID: <charsets@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="parts"
+
+--parts
+Content-Type: text/plain; charset=ISO-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+caf=E9
+--parts
+Content-Type: text/plain; charset=windows-1252
+Content-Disposition: attachment; filename="windows.txt"
+Content-Transfer-Encoding: quoted-printable
+
+=93Hello=94 =80
+--parts
+Content-Type: text/plain; charset=GB2312
+Content-Disposition: attachment; filename="chinese.txt"
+Content-Transfer-Encoding: base64
+
+1tDOxA==
+--parts
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename*=UTF-8''caf%C3%A9.txt
+Content-Transfer-Encoding: base64
+
+AAECAwQ=
+--parts--

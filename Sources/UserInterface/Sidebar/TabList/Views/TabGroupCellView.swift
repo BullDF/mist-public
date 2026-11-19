@@ -34,9 +34,6 @@ protocol TabGroupCellViewDelegate: AnyObject {
     func tabGroupCellDidRequestCloseGroup(_ cell: TabGroupCellView,
                                           group: WebContentGroupInfo)
 
-    func tabGroupCellDidRequestOverview(_ cell: TabGroupCellView,
-                                        group: WebContentGroupInfo)
-
     func tabGroupCell(_ cell: TabGroupCellView,
                       beginDraggingGroup group: WebContentGroupInfo,
                       from headerView: NSView,
@@ -234,7 +231,6 @@ protocol GroupTabsDragSource: AnyObject {
 private protocol TabGroupHeaderHostingViewDelegate: AnyObject {
     func tabGroupHeaderHostingViewDidToggleCollapse(_ view: TabGroupHeaderHostingView)
     func tabGroupHeaderHostingViewDidRequestCloseGroup(_ view: TabGroupHeaderHostingView)
-    func tabGroupHeaderHostingViewDidRequestOverview(_ view: TabGroupHeaderHostingView)
     func tabGroupHeaderHostingView(_ view: TabGroupHeaderHostingView,
                                    beginDraggingWith mouseDownEvent: NSEvent)
 }
@@ -316,7 +312,7 @@ private final class TabGroupHeaderHostingView: NSHostingView<TabGroupHeaderView>
         let upPoint = convert(event.locationInWindow, from: nil)
         guard bounds.contains(upPoint) else { return }
 
-        // Cmd+click never opens the overview: a collapsed group expands,
+        // Cmd+click expands a collapsed group;
         // an expanded group does nothing (in particular it must not clear
         // an active multi-selection).
         if event.modifierFlags.contains(.command) {
@@ -326,7 +322,7 @@ private final class TabGroupHeaderHostingView: NSHostingView<TabGroupHeaderView>
             return
         }
 
-        dragDelegate?.tabGroupHeaderHostingViewDidRequestOverview(self)
+        dragDelegate?.tabGroupHeaderHostingViewDidToggleCollapse(self)
     }
 }
 
@@ -395,12 +391,8 @@ final class TabGroupCellView: SidebarCellView {
     /// updateSelected` — leaving the merged cell's "selected" pill stuck
     /// on after the user switched away from one of the panes.
     private var splitPairsByKey: [Int: SplitPairSidebarItem] = [:]
-    private var activeDragTabGuid: Int?
-
     private var isDropTargetHighlighted = false
     private var isHovered = false
-    private var isOverviewSelected = false
-    private var lastGroupColor: GroupColor = .grey
     private let hoverRegionView = SidebarTabHoverRegionView()
 
     private var collapseSubscription: AnyCancellable?
@@ -443,12 +435,9 @@ final class TabGroupCellView: SidebarCellView {
         tabsByGuid = [:]
         currentMemberOrder = []
         splitPairsByKey = [:]
-        activeDragTabGuid = nil
         isDropTargetHighlighted = false
         isHovered = false
-        isOverviewSelected = false
         viewModel.isHeaderHovered = false
-        viewModel.isOverviewSelected = false
         isTemporarilyCollapsedForDrag = false
         configuredGroup = nil
         configuredBrowserState = nil
@@ -595,6 +584,7 @@ final class TabGroupCellView: SidebarCellView {
                     cell.identifier = identifier
                 }
                 cell.browserState = self.configuredBrowserState
+                cell.showsGroupStartPageAction = true
                 cell.owner = self.groupCellDelegate as? SidebarTabListItemOwner
                 cell.configure(with: pair)
                 return cell
@@ -612,8 +602,8 @@ final class TabGroupCellView: SidebarCellView {
                 cell.identifier = identifier
             }
             cell.delegate = self
+            cell.showsGroupStartPageAction = true
             cell.configure(with: tab)
-            cell.setActiveSuppressed(isOverviewSelected)
             return cell
         }
         dataSource.dragSource = self
@@ -635,8 +625,7 @@ final class TabGroupCellView: SidebarCellView {
         configuredGroup = groupItem.group
         configuredBrowserState = state
         isTemporarilyCollapsedForDrag = false
-        viewModel.configure(with: groupItem.group, in: state)
-        lastGroupColor = groupItem.group.color
+        viewModel.configure(with: groupItem.group)
         applyHighlightVisuals()
 
         let initialMembers = state.normalTabs.filter {
@@ -665,7 +654,6 @@ final class TabGroupCellView: SidebarCellView {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] color in
                 guard let self, self.token == captureToken else { return }
-                self.lastGroupColor = color
                 self.applyHighlightVisuals()
             }
 
@@ -691,7 +679,7 @@ final class TabGroupCellView: SidebarCellView {
     }
 
     private var effectiveIsCollapsed: Bool {
-        (configuredGroup?.isCollapsed ?? false) || isTemporarilyCollapsedForDrag
+        ((item as? TabGroupSidebarItem)?.isCollapsed ?? false) || isTemporarilyCollapsedForDrag
     }
 
     private func applyEffectiveCollapseState() {
@@ -723,6 +711,8 @@ final class TabGroupCellView: SidebarCellView {
     /// delegate so the outer outline can request a coordinated row
     /// resize.
     func applyMembers(_ newMembers: [Tab], animated: Bool) {
+        let newMembers = (item as? TabGroupSidebarItem)?.visibleMembers(from: newMembers) ?? newMembers
+        applyEffectiveCollapseState()
         tabsByGuid = Dictionary(
             uniqueKeysWithValues: newMembers.map { ($0.guid, $0) })
         // Detect non-pinned split pairs whose both panes live in this
@@ -807,12 +797,10 @@ final class TabGroupCellView: SidebarCellView {
     /// transitions to keep the displayed height in sync.
     static func desiredHeight(for groupItem: TabGroupSidebarItem,
                               browserState: BrowserState) -> CGFloat {
-        if groupItem.group.isCollapsed {
+        if groupItem.isCollapsed {
             return collapsedRowHeight
         }
-        let members = browserState.normalTabs.filter {
-            $0.groupToken == groupItem.group.token
-        }
+        let members = groupItem.visibleMembers(from: browserState.normalTabs)
         // Non-pinned split pairs collapse to a single row in the inner
         // table (mirrors `applyMembers`); the height must shrink with it
         // or we leave an empty slot below the merged row.
@@ -858,27 +846,6 @@ final class TabGroupCellView: SidebarCellView {
         guard isDropTargetHighlighted != highlighted else { return }
         isDropTargetHighlighted = highlighted
         applyHighlightVisuals()
-    }
-
-    func setOverviewSelected(_ selected: Bool) {
-        guard isOverviewSelected != selected else { return }
-        isOverviewSelected = selected
-        viewModel.isOverviewSelected = selected
-        updateVisibleMemberActiveSuppression()
-        applyHighlightVisuals()
-    }
-
-    private func updateVisibleMemberActiveSuppression() {
-        for row in 0..<innerTable.numberOfRows {
-            guard let cell = innerTable.view(
-                atColumn: 0,
-                row: row,
-                makeIfNecessary: false
-            ) as? SidebarTabCellView else {
-                continue
-            }
-            cell.setActiveSuppressed(isOverviewSelected)
-        }
     }
 
     private func applyHighlightVisuals() {
@@ -927,12 +894,11 @@ final class TabGroupCellView: SidebarCellView {
         if row >= 0,
            currentMemberOrder.indices.contains(row) {
             let key = currentMemberOrder[row]
-            // Merged in-group split row: route through the left pane so
-            // the user sees split-aware items (Pin Split, Remove from
-            // Split, Add Split to Bookmark, …) instead of the group
-            // menu that fires when the lookup falls through.
+            // A merged row still has a tab on each side. Use the clicked
+            // pane so its menu can edit that tab's start page.
             if let pair = splitPairsByKey[key] {
-                return pair.leftTab
+                let cellFrame = innerTable.frameOfCell(atColumn: 0, row: row)
+                return pointInTable.x < cellFrame.midX ? pair.leftTab : pair.rightTab
             }
             if let tab = tabsByGuid[key] {
                 return tab
@@ -1018,15 +984,6 @@ extension TabGroupCellView: TabGroupHeaderHostingViewDelegate {
         groupCellDelegate?.tabGroupCellDidRequestCloseGroup(self, group: group)
     }
 
-    fileprivate func tabGroupHeaderHostingViewDidRequestOverview(_ view: TabGroupHeaderHostingView) {
-        guard let group = configuredGroup else { return }
-        // A plain click while multi-selecting exits the selection
-        if let state = configuredBrowserState, state.multiSelection.isActive {
-            state.clearMultiSelection()
-        }
-        groupCellDelegate?.tabGroupCellDidRequestOverview(self, group: group)
-    }
-
     fileprivate func tabGroupHeaderHostingView(_ view: TabGroupHeaderHostingView,
                                                beginDraggingWith mouseDownEvent: NSEvent) {
         guard let group = configuredGroup else { return }
@@ -1091,7 +1048,6 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
             return
         }
         (rowView as? TabPreviewInteractionCancelling)?.cancelTabPreviewForInteraction()
-        activeDragTabGuid = tab.guid
         AppLogDebug(
             "[TAB_GROUPS][INNER_DRAG] cell.beginDragging tab=\(tab.guid) token=\(token)"
         )
@@ -1173,6 +1129,14 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
     func tableView(_ tableView: GroupTabsTableView,
                    didRequest target: GroupTabsTableInteractionTarget,
                    row: Int) {
+        if case .startPage(let tabID) = target {
+            guard let state = configuredBrowserState, let tab = state.resolveTab(tabID) else { return }
+            (tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? TabPreviewInteractionCancelling)?
+                .cancelTabPreviewForInteraction()
+            state.navigateGroupedTabToStartPage(tab)
+            return
+        }
+
         guard currentMemberOrder.indices.contains(row),
               let tab = tabsByGuid[currentMemberOrder[row]] else {
             return
@@ -1188,6 +1152,8 @@ extension TabGroupCellView: GroupTabsTableViewDelegate {
             groupCellDelegate?.tabGroupCell(self, tabDidRequestClose: tab)
         case .mute:
             tab.toggleAudioMuted()
+        case .startPage:
+            break
         }
     }
 }
@@ -1253,7 +1219,6 @@ extension TabGroupCellView: GroupTabsDragSource {
         } else {
             return
         }
-        activeDragTabGuid = tab.guid
         installDraggingImage(forRow: firstRow,
                              session: session,
                              screenPoint: screenPoint)
@@ -1270,7 +1235,6 @@ extension TabGroupCellView: GroupTabsDragSource {
             "[TAB_GROUPS][INNER_DRAG] dataSource.ended screen=\(screenPoint) " +
             "operation=\(operation.rawValue)"
         )
-        activeDragTabGuid = nil
         groupCellDelegate?.tabGroupCell(self,
                                         draggingSessionEnded: session,
                                         at: screenPoint,
@@ -1312,6 +1276,7 @@ extension TabGroupCellView: GroupTabsDragSource {
     func groupTabsValidateDrop(_ info: NSDraggingInfo,
                                proposedRow: Int,
                                proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        guard (item as? TabGroupSidebarItem)?.isAgentSectionFolder != true else { return [] }
         let pasteboard = info.draggingPasteboard
         let insertionRow = resolvedInnerInsertionRow(
             proposedRow: proposedRow,
@@ -1377,6 +1342,7 @@ extension TabGroupCellView: GroupTabsDragSource {
     func groupTabsAcceptDrop(_ info: NSDraggingInfo,
                              row: Int,
                              dropOperation: NSTableView.DropOperation) -> Bool {
+        guard (item as? TabGroupSidebarItem)?.isAgentSectionFolder != true else { return false }
         let insertionRow = resolvedInnerInsertionRow(
             proposedRow: row,
             dropOperation: dropOperation,

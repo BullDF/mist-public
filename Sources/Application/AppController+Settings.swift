@@ -33,83 +33,21 @@ extension AppController {
     private static let settingsWindowDelegate = SettingsWindowDelegate()
     
     private func panes() -> [SettingsPane] {
-        var panes: [SettingsPane] =
-        [AccountSettingViewController(),
-         GeneralSettingViewController(),
+        let panes: [SettingsPane] =
+        [GeneralSettingViewController(),
          ProfilesSettingViewController(),
          SpacesSettingViewController(),
-         NavigationsSettingViewController(),
-         AISettingsViewController(),
-         DevicesSettingViewController(),
+         MistPasswordsSettingViewController(),
+         MistMailSettingViewController(),
+         MistDrifterSettingViewController(),
+         MistSlackSettingViewController(),
+         MistSyncSettingViewController(),
          ShortcutsSettingViewController(),
          AdvancedSettingViewController(),
         ]
-        settingsPanesIncludeDeveloper = PhiPreferences.AgentSpaces.developerModeEnabled
-        if settingsPanesIncludeDeveloper {
-            panes.append(DeveloperSettingViewController())
-        }
         return panes
     }
 
-    /// Applies the Advanced-tab "Developer mode" toggle. Off is a kill-switch,
-    /// not just UI hiding: the Developer tab disappears AND the features it
-    /// governs shut off — agent CDP access (listener, View-menu items,
-    /// transcript panel) and the agent password manager (provider disabled,
-    /// vault locked; the account stays on disk).
-    ///
-    /// It also revokes, not merely suspends, every standing agent permission:
-    /// the allowed-agent list and all credential approvals — including the
-    /// persisted "Always" ones — are erased. Nothing an agent was previously
-    /// trusted with survives the switch, so turning developer mode back on
-    /// starts from zero: each agent asks for browser control again, and for
-    /// each credential again. That is the whole point of a kill-switch; a
-    /// version that left the grants in place would silently re-arm them.
-    ///
-    /// SwiftUI callers must defer to the next runloop turn: the window
-    /// rebuild closes the window hosting the toggle's own view.
-    @MainActor
-    func setDeveloperModeEnabled(_ enabled: Bool) {
-        PhiPreferences.AgentSpaces.developerModeEnabled = enabled
-        if !enabled {
-            // Agent browser control: sever live connections, then forget every
-            // agent that was ever allowed through. Idempotent when the switch
-            // was already off — the grants still have to go.
-            AgentCDPListener.shared.setEnabled(false)
-            AgentCDPListener.shared.forgetAllGrants()
-
-            // Agent credential access: revoke every approval outright (the
-            // approvals sheet's own Revoke All), not just the timed ones.
-            CredentialGrantStore.shared.revokeAll()
-            if PhiPreferences.PasswordManagerSettings.bitwardenEnabled.loadValue() {
-                // Mirrors the password manager card's own disable path.
-                UserDefaults.standard.set(
-                    false, forKey: PhiPreferences.PasswordManagerSettings.bitwardenEnabled.rawValue)
-                Task { await BitwardenService.shared.lock() }
-            }
-        }
-        developerModeDidChange()
-    }
-
-    /// Rebuilds an open settings window when its toolbar no longer matches the
-    /// developer-mode gate (the pane list is fixed at window creation), staying
-    /// on the Advanced pane, where the toggle lives.
-    @MainActor
-    private func developerModeDidChange() {
-        guard settingsWindowController != nil,
-              settingsPanesIncludeDeveloper != PhiPreferences.AgentSpaces.developerModeEnabled
-        else { return }
-        // The rebuild is not a close from the user's point of view: keep the
-        // foreground handoff (see `settingsWindowShouldClose`) for the real one.
-        let activationSource = settingsActivationSource
-        settingsActivationSource = nil
-        settingsWindowController?.close()
-        settingsWindowController = nil
-        let controller = ensureSettingsWindowController()
-        controller.show(pane: .advanced)
-        controller.window?.orderFront(self)
-        settingsActivationSource = activationSource
-    }
-    
     /// Returns the shared settings window controller, creating it on first access.
     /// Refreshes the presentation context (e.g. incognito source) on every call so
     /// individual panes see the right state regardless of which entry point was used.

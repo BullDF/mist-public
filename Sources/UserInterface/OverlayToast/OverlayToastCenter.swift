@@ -293,6 +293,15 @@ extension OverlayToastCenter {
     }
 
     @discardableResult
+    func showSearchAnswerCopyConfirmation(in browserState: BrowserState) -> UUID? {
+        let title = NSLocalizedString(
+            "addressBar.suggestions.answerCopiedToast",
+            value: "Result Copied",
+            comment: "Toast shown after selecting a calculator or unit-conversion answer in the address bar copies the result to the clipboard")
+        return show(title: title, placement: .topTrailing, in: browserState)
+    }
+
+    @discardableResult
     func showURLCopyConfirmation(copiedURLs: [String], in browserState: BrowserState) -> UUID? {
         let title = copiedURLs.count > 1
             ? NSLocalizedString("app.copyTabURLsToast.multiple", value: "URLs Copied", comment: "Toast shown after copying selected tab URLs to the clipboard")

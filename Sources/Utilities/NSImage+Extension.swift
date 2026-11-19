@@ -4,21 +4,6 @@
 // found in the LICENSE file.
 
 import Cocoa
-extension NSImage {
-    static func fromBase64(_ base64String: String) -> NSImage? {
-        let cleanBase64: String
-        if let commaIndex = base64String.firstIndex(of: ",") {
-            cleanBase64 = String(base64String[base64String.index(after: commaIndex)...])
-        } else {
-            cleanBase64 = base64String
-        }
-
-        guard let imageData = Data(base64Encoded: cleanBase64, options: .ignoreUnknownCharacters) else {
-            return nil
-        }
-        return NSImage(data: imageData)
-    }
-}
 
 extension NSImage {
     static  func configureSymbolImage(

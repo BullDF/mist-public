@@ -50,7 +50,7 @@ final class FaviconBackfill {
     }
 
     private let fetcher: any ProfileScopedFaviconFetching
-    private let resolveStore: () -> LocalStore?
+    private let resolveStore: @MainActor () -> LocalStore?
     private let requestDeadline: TimeInterval
     private let repository: ProfileScopedFaviconRepository
     private var queue: [Job] = []
@@ -65,14 +65,14 @@ final class FaviconBackfill {
     /// Bookmark's second icon is announced through.
     init(
         fetcher: any ProfileScopedFaviconFetching,
-        store: @escaping () -> LocalStore? = { AccountController.shared.localDataAccount?.localStorage },
+        store: @escaping @MainActor () -> LocalStore? = { AccountController.shared.localDataAccount.localStorage },
         requestDeadline: TimeInterval = 30,
-        repository: ProfileScopedFaviconRepository = .shared
+        repository: ProfileScopedFaviconRepository? = nil
     ) {
         self.fetcher = fetcher
         self.resolveStore = store
         self.requestDeadline = requestDeadline
-        self.repository = repository
+        self.repository = repository ?? .shared
     }
 
     /// Queues the rows with these identifiers, in this order, and returns at

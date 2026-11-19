@@ -14,7 +14,7 @@ struct ChromiumSearchOpenTab: Equatable {
     let tabId: Int64
     let windowId: Int64
     let index: Int
-    let title: String
+    var title: String
     let url: String
     let groupIdHex: String
     let active: Bool
@@ -53,7 +53,16 @@ struct SearchTabsChromiumProvider {
     }
 
     func snapshot(windowId: Int) -> SearchTabsChromiumSnapshot {
-        Self.parse(data: fetchData(windowId))
+        let snapshot = Self.parse(data: fetchData(windowId))
+        let openTabs = snapshot.openTabs.map { item in
+            var item = item
+            if let tab = SpaceSessionControllersManager.shared.controller(for: Int(item.windowId))?
+                .browserState.tabs.first(where: { $0.guid == Int(item.tabId) }) {
+                item.title = tab.title
+            }
+            return item
+        }
+        return SearchTabsChromiumSnapshot(openTabs: openTabs, closedTabs: snapshot.closedTabs)
     }
 
     static func parse(data: [AnyHashable: Any]) -> SearchTabsChromiumSnapshot {

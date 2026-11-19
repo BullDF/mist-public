@@ -8,12 +8,6 @@ import Combine
 import XCTest
 @testable import Phi
 
-/// The content surface (chromium ADR 0014) is sent once per Space instance,
-/// right after its window. When the Mac rebuilds the controller of a Space
-/// instance, for a dangling window materialized after login or a window
-/// rebound to another account, the new controller has to carry the surface
-/// over, or the instance draws without one for the rest of its life.
-///
 /// The bridge push is faked by calling the coordinator's delegate method.
 /// Chromium knows no Browser under these window ids, so the bridge calls
 /// made along the way return early (as in `ClosedWindowReleaseTests`).
@@ -22,15 +16,10 @@ final class ContentSurfaceControllerRebuildTests: XCTestCase {
     private var store: LocalStore!
     private var directory: URL!
     private var accountDirectory: URL!
-    private var otherStore: LocalStore?
-    private var otherAccountDirectory: URL?
     private var previousLayout: Any?
     private let manager = SpaceManager(observeAccountChanges: false)
     private var chromiumWindows: [NSWindow] = []
     private var subscriptions = Set<AnyCancellable>()
-    /// Dangling records this test added to the process-wide registry; a
-    /// record processed one at a time is not removed by the registry.
-    private var danglingWindowIds: [Int] = []
     // Counted across tests: the registry is the process-wide singleton, so
     // an id must not repeat within the host process.
     private static var nextWindowId = 123459101
@@ -49,8 +38,6 @@ final class ContentSurfaceControllerRebuildTests: XCTestCase {
     override func tearDown() async throws {
         subscriptions.removeAll()
         manager.discardSpacePrewarm()
-        SpaceSessionControllersManager.shared.removeDanglingWindowsForTesting(ids: danglingWindowIds)
-        danglingWindowIds.removeAll()
         for slot in manager.slots { slot.closeShellIfPresent() }
         chromiumWindows.forEach { $0.close() }
         chromiumWindows.removeAll()
@@ -60,9 +47,7 @@ final class ContentSurfaceControllerRebuildTests: XCTestCase {
         await fulfillment(of: [drained], timeout: 2)
         try await store.closeForAccountDirectoryRemoval()
         store = nil
-        try await otherStore?.closeForAccountDirectoryRemoval()
-        otherStore = nil
-        for url in [directory, accountDirectory, otherAccountDirectory].compactMap({ $0 })
+        for url in [directory, accountDirectory].compactMap({ $0 })
         where FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
@@ -70,76 +55,36 @@ final class ContentSurfaceControllerRebuildTests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testMaterializedDanglingWindowAdoptsItsSurfaceBeforeReplayingPendingTabs() throws {
-        let registry = SpaceSessionControllersManager.shared
+    func testLiveWindowAdoptsItsSurfaceBeforeTabsArrive() async throws {
         let slot = makeSlot()
         let windowId = Self.takeWindowId()
-        let chromiumWindow = makeChromiumWindow(for: slot)
-        registry.addDanglingWindow(chromiumWindow, windowId: windowId, browserType: .normal,
-                                   profileId: "Default", spaceId: "first", slot: slot)
-        danglingWindowIds.append(windowId)
-        registry.addPendingTabToDanglingWindow(
-            Tab(url: "https://example.com", isActive: true, index: 0), windowId: windowId)
-        let hostingView = NSView()
-        // Chromium sends the surface right after the window, before login.
-        PhiChromiumCoordinator.shared.contentSurfaceCreated(Int64(windowId), hostingView: hostingView)
-        let record = try XCTUnwrap(registry.danglingWindows.first { $0.windowId == windowId })
-        XCTAssertTrue(record.contentSurfaceView === hostingView,
-                      "A dangling window keeps the surface sent for it")
-
-        // Login. The new Space instance must hold the surface before its first
-        // replayed tab lands, so that tab mounts into a hosting container.
+        let instance = makeSpaceInstance(in: slot, spaceId: "first", windowId: windowId)
+        present(instance, in: slot)
+        let state = instance.browserState
         var events: [String] = []
-        var observations = Set<AnyCancellable>()
-        NotificationCenter.default.publisher(for: .mainBrowserWindowCreated)
-            .sink { _ in
-                guard let state = registry.controller(for: windowId)?.browserState else { return }
-                state.$contentSurfaceView.compactMap { $0 }.first()
-                    .sink { _ in events.append("surface") }
-                    .store(in: &observations)
-                state.$tabs.filter { !$0.isEmpty }.first()
-                    .sink { _ in events.append("tab") }
-                    .store(in: &observations)
-            }
+        let arrived = expectation(description: "Tab delivered by the coordinator")
+        state.$contentSurfaceView.compactMap { $0 }.first()
+            .sink { _ in events.append("surface") }
             .store(in: &subscriptions)
-        registry.processDanglingWindowForTesting(record, account: store.account, migrationReceipt: nil)
+        state.$tabs.filter { !$0.isEmpty }.first()
+            .sink { _ in events.append("tab"); arrived.fulfill() }
+            .store(in: &subscriptions)
+        let hostingView = NSView()
+        PhiChromiumCoordinator.shared.contentSurfaceCreated(Int64(windowId), hostingView: hostingView)
+        PhiChromiumCoordinator.shared.newTabCreated(
+            withInfo: ["id": windowId + 1, "url": "https://example.com", "index": 0],
+            windowId: Int64(windowId))
+        await fulfillment(of: [arrived], timeout: 2)
 
-        let instance = try XCTUnwrap(registry.controller(for: windowId))
-        XCTAssertTrue(instance.browserState.contentSurfaceView === hostingView)
+        XCTAssertTrue(state.contentSurfaceView === hostingView)
         XCTAssertEqual(events, ["surface", "tab"])
         let container = instance.mainSplitViewController.webContentContainerViewController
         XCTAssertTrue(hostingView.isDescendant(of: container.view))
         XCTAssertTrue(container.hasContentSurface)
     }
 
-    func testReboundWindowKeepsItsSurface() throws {
-        let registry = SpaceSessionControllersManager.shared
-        let slot = makeSlot()
-        let windowId = Self.takeWindowId()
-        let old = makeSpaceInstance(in: slot, spaceId: "first", windowId: windowId)
-        present(old, in: slot)
-        let hostingView = NSView()
-        PhiChromiumCoordinator.shared.contentSurfaceCreated(Int64(windowId), hostingView: hostingView)
-        let oldContainer = old.mainSplitViewController.webContentContainerViewController
-        XCTAssertTrue(old.browserState.contentSurfaceView === hostingView)
-        XCTAssertTrue(hostingView.isDescendant(of: oldContainer.view))
-
-        // A Guest sign-in, or its rollback, rebuilds every Space instance
-        // against the destination account. Chromium does not send the
-        // surface again.
-        registry.rebindWindowControllerForTesting(old, to: makeOtherAccount(), migrationReceipt: nil)
-
-        let replacement = try XCTUnwrap(registry.controller(for: windowId))
-        XCTAssertFalse(replacement === old)
-        XCTAssertTrue(replacement.browserState.contentSurfaceView === hostingView)
-        let container = replacement.mainSplitViewController.webContentContainerViewController
-        XCTAssertTrue(hostingView.isDescendant(of: container.view))
-        XCTAssertTrue(container.hasContentSurface)
-        XCTAssertFalse(hostingView.isDescendant(of: oldContainer.view))
-    }
 
     func testWindowCreatedWithBrowserAccessAdoptsItsSurfaceDirectly() throws {
-        let registry = SpaceSessionControllersManager.shared
         let slot = makeSlot()
         let windowId = Self.takeWindowId()
         let instance = makeSpaceInstance(in: slot, spaceId: "first", windowId: windowId)
@@ -147,7 +92,6 @@ final class ContentSurfaceControllerRebuildTests: XCTestCase {
         let hostingView = NSView()
         PhiChromiumCoordinator.shared.contentSurfaceCreated(Int64(windowId), hostingView: hostingView)
         XCTAssertTrue(instance.browserState.contentSurfaceView === hostingView)
-        XCTAssertFalse(registry.hasDanglingWindow(for: windowId))
         let container = instance.mainSplitViewController.webContentContainerViewController
         XCTAssertTrue(hostingView.isDescendant(of: container.view))
         XCTAssertTrue(container.hasContentSurface)
@@ -194,15 +138,4 @@ final class ContentSurfaceControllerRebuildTests: XCTestCase {
         XCTAssertTrue(slot.visibleController === instance)
     }
 
-    /// The account a rebind moves the window to, with its own store.
-    private func makeOtherAccount() -> Account {
-        let account = Account(userID: "surface-rebuild-other-\(UUID().uuidString)")
-        let other = LocalStore(account: account,
-                               storeDirectoryURL: directory.appendingPathComponent("other-store"),
-                               presentsCompatibilityAlerts: false)
-        account.localStorage = other
-        otherStore = other
-        otherAccountDirectory = account.userDataStorage
-        return account
-    }
 }

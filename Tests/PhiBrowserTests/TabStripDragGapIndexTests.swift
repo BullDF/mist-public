@@ -134,7 +134,6 @@ private final class RecordingTabStripDragDelegate: TabStripDragDelegate {
         TabStripMetricsSnapshot(
             pinnedContainerFrame: .zero,
             normalContainerFrame: CGRect(x: 0, y: 0, width: 600, height: 32),
-            pinnedTabWidth: TabStripMetrics.PinnedTab.width,
             normalTabFrames: [
                 CGRect(x: 0, y: 0, width: 100, height: 32),
                 CGRect(x: 110, y: 0, width: 100, height: 32),

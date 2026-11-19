@@ -76,7 +76,7 @@ final class ContentBlockingListRowTests: XCTestCase {
         var fetched = list("easylist", "ads")
         fetched.fetchedAt = now.addingTimeInterval(-3 * 3600)
         XCTAssertTrue(ContentBlockingListInfoPopover.updateLine(for: fetched, now: now).hasPrefix("Updated "))
-        XCTAssertEqual(ContentBlockingListInfoPopover.updateLine(for: list("phi-specific", "phi"), now: now), "Built into Phi")
+        XCTAssertEqual(ContentBlockingListInfoPopover.updateLine(for: list("phi-specific", "phi"), now: now), "Built into Mist")
         var pending = list("x", "ads")
         pending.available = false
         XCTAssertEqual(ContentBlockingListInfoPopover.updateLine(for: pending, now: now), "Not downloaded yet")

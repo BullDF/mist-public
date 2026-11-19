@@ -19,9 +19,9 @@ final class AgentAppInfoTests: XCTestCase {
             JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any])
 
         XCTAssertEqual(info["ok"] as? Bool, true)
-        XCTAssertEqual(info["name"] as? String, "Phi Browser")
+        XCTAssertEqual(info["name"] as? String, "Mist")
         XCTAssertEqual(info["version"] as? String, SystemUtils.appVersion)
-        XCTAssertEqual(info["channel"] as? String, FeedbackOutbox.channelName)
+        XCTAssertEqual(info["channel"] as? String, AgentSpaceRouter.channelName)
         XCTAssertEqual(info["buildNumber"] as? String, SystemUtils.buildNumber)
     }
 }

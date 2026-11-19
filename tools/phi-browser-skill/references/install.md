@@ -2,72 +2,30 @@
 
 ## 1. Install the skill
 
-Easiest: in Phi Browser open **Settings → General → Developer**, under "Install
-the phi-browser skill" pick your agent from **Add skill to…** — Claude Code
-(`~/.claude/skills`), Codex (`~/.codex/skills`), Cursor (`~/.cursor/skills`),
-OpenClaw (`~/.openclaw/skills`), Pi (`~/.pi/agent/skills`), Hermes
-(`~/.hermes/skills`), Grok Build (`~/.grok/skills`), Grok Bot (the same
-`~/.grok/skills`), Antigravity
-(`~/.gemini/skills`, shared with Gemini CLI), GitHub Copilot (`~/.copilot/skills`),
-OpenCode (`~/.config/opencode/skills`), Qwen Code (`~/.qwen/skills`),
-CodeBuddy (`~/.codebuddy/skills`), or Common agents (`~/.agents/skills`, the
-cross-agent folder Deep Code, Kimi Code, Cline, and DeepSeek Harness read).
-Grok Bot, the desktop app, has no skills folder of its own: it loads skills
-from Grok Build's folder, Cursor's, Claude Code's, Codex's, and the common
-folder, so its row shares Grok Build's link and any of those installs covers
-it. This links the skill
-bundled inside the app into that agent's `skills/phi-browser`, so it stays
-current with each Phi Browser update. Every agent can drive Phi; only the
-first six also get the session mirror described in §4 — under the others,
-Agent Transcript shows the browser steps and `say()` prose, not the agent's
-own conversation.
-For Pi, Install also links a companion extension at
-`~/.pi/agent/extensions/phi-browser`; run `/reload` in an already-open Pi
-session so it can wake automatically when Agent Transcript receives a command.
-
-Or link it by hand from the repository root (swap the skill destination for
-another agent). Pi needs both links:
+Link the skill from the repository root into your agent's skills directory:
 
 ```bash
-mkdir -p ~/.pi/agent/skills ~/.pi/agent/extensions
-ln -sfn "$PWD/tools/phi-browser-skill" ~/.pi/agent/skills/phi-browser
-ln -sfn "$PWD/tools/phi-browser-skill/extensions/pi" ~/.pi/agent/extensions/phi-browser
+mkdir -p ~/.claude/skills
+ln -sfn "$PWD/tools/phi-browser-skill" ~/.claude/skills/phi-browser
 ```
+
+Use your agent's skills directory in place of `~/.claude/skills`.
 
 Requires Node >= 22. No npm dependencies.
 
-## 2. Approve the agent (no Settings trip needed)
+## 2. Enable agent control
 
-There is nothing to switch on first. Phi publishes the socket whenever it
-runs, so just connect: the **consent prompt** does the rest.
-
-How it works, and why it's safe:
-
-- Phi opens a **Unix-domain socket** (not a TCP port), so nothing on the
-  network — and no other user's processes — can reach it.
-- The first time a given agent connects, Phi identifies the connecting process
-  (peer credentials + code signature) and shows a **consent prompt**: *Allow
-  Once*, *Always Allow*, or *Deny*. Only after you allow does the connection
-  reach the browser.
-- If agent control is off (it is off by default, as is Developer mode), the
-  same prompt says so and turns **both** on when you allow — the socket is a
-  doorbell, not an open door. Deny and nothing changes.
-- *Always Allow* is remembered per agent under **Settings ▸ Developer ▸ Remote
-  debugging ▸ Remembered agents**; **Remove** there makes that agent ask again.
-- *Deny* carries a scope: **Just this time** (ask again next connection),
-  **For 30 min**, or **Never ask again** — each optionally widened to *all
-  agents*, which turns away every agent including ones Phi has never seen.
-  Anything beyond "just this time" is listed under **Blocked agents**, where
-  **Unblock** lifts it; switching the CDP toggle off and on clears the lot.
-- Turning the toggle off severs every live connection at once.
+In Mist, turn on **Settings ▸ Advanced ▸ Allow agents to control Mist**.
+Local agents can then connect through the private Unix socket without a prompt.
+Turning the switch off immediately disconnects them.
 
 ## 3. Verify
 
 Nothing needs to be running — the skill starts Phi itself when no browser is
-up. It launches the install it is linked to (the symlink from step 1 points
-inside a specific `Phi.app`), so the copy you installed from is the copy that
-opens; run from a repo checkout, which belongs to no install, it tries
-`com.phibrowser.canary.Mac` then `com.phibrowser.Mac`. The launch is
+up. A skill linked inside a specific app launches that app; a link to the
+repository checkout targets main Mist (`com.bulldf.mist`). `PHI_BUNDLE_ID`
+pins another bundle for both
+discovery and launch (`com.bulldf.mist.dev` for Mist Dev). The launch is
 backgrounded so it never steals focus. Set `PHI_NO_LAUNCH=1` to forbid it and
 have the skill fail instead.
 
@@ -75,14 +33,12 @@ To watch it happen by hand, quit Phi first, then:
 
 ```bash
 # The app writes the socket's path here; only this Mac's processes can reach it.
-SOCK=$(head -1 ~/Library/Application\ Support/com.phibrowser.canary.Mac/CDPAgentSocket)
+SOCK=$(head -1 ~/Library/Application\ Support/com.bulldf.mist/CDPAgentSocket)
 curl -s --unix-socket "$SOCK" http://localhost/json/version
 ```
 
-The first request triggers the consent prompt — approve it in Phi (approving
-also switches agent control on if it was off), then the JSON version blob
-prints. Then a smoke round (swap `~/.claude/skills` for your agent's skills
-folder):
+The request returns a JSON version blob. Then run a smoke round (swap the
+skills directory for your agent):
 
 ```bash
 node ~/.claude/skills/phi-browser/scripts/runner.mjs <<'EOF'
@@ -147,15 +103,13 @@ The mirror then
 - forwards your prompts and the assistant's reply prose into the Space's
   console while the task is live, and
 - delivers commands you type into the console back INTO the idle session
-  (prefixed `[phi-console]`) where the agent has a delivery transport. Pi's
-  installed companion extension calls its supported in-process
-  `pi.sendUserMessage()` API, which wakes the session immediately. OpenClaw
+  (prefixed `[phi-console]`) where the agent has a delivery transport. OpenClaw
   uses `openclaw agent --session-id … --message …` through its gateway.
   Hermes is resumed headless (`hermes --resume <session-id> -z …`) — the
   woken turn appends to the same session in state.db and mirrors back into
   the console (an interactive TUI open on that session shows the exchange
   only after its next reload). The remaining agents — Claude Code, Codex,
-  and Cursor — have no transport, so their commands stay queued until the
+  Cursor, and Pi — have no transport, so their commands stay queued until the
   next round drains them via `readUserMessages()`; under Cursor the console
   additionally posts a notice saying so, because an ended Cursor turn never
   runs another round until you prompt Cursor again.
@@ -183,22 +137,16 @@ needed): `node scripts/selftest-mirror.mjs`.
 
 - **CDP endpoint not found**: the skill found no socket AND could not start
   Phi. Either no Phi Browser is installed where it looked (a repo checkout
-  tries the canary and release bundle ids; an installed skill opens the app it
-  is linked to), or `PHI_NO_LAUNCH` is set. Installing the skill from the Phi
-  you actually run fixes the common case; `PHI_USER_DATA_DIR` overrides which
-  user-data dir is searched.
+  tries `com.bulldf.mist`; an installed skill opens the app it is linked to),
+  or `PHI_NO_LAUNCH` is set. Set `PHI_BUNDLE_ID` to select an installed Mist;
+  `PHI_USER_DATA_DIR` overrides which user-data directory is searched.
 - **Launched but never published its socket**: Phi started and 60s passed with
   no endpoint. It is usually sitting at a login or session-restore prompt, or
   is still starting on a cold machine — check the Phi window and retry.
-- **Wrong install answers (canary vs stable)**: endpoint discovery prefers
-  Phi Canary over stable Phi when BOTH advertise a live endpoint. Dead
-  leftovers are skipped immediately; a published socket that accepts but
-  does not answer is given a short probe only when another candidate remains,
-  so it cannot shadow a healthy fallback for the full consent window. To
-  target a specific install, set
-  `PHI_USER_DATA_DIR` to its Application Support dir (e.g.
-  `~/Library/Application Support/com.phibrowser.Mac` for stable) when
-  invoking the runner.
+- **Wrong install answers (Mist vs Mist Dev)**: discovery only looks at one
+  bundle's dir: `PHI_BUNDLE_ID` if set, else the linked app's, else
+  `com.bulldf.mist`. To target another install, set `PHI_BUNDLE_ID` (e.g.
+  `com.bulldf.mist.dev`) when invoking the runner.
 - **Console shows browser steps but not the conversation**: the session
   couldn't be identified (Claude Code: update the CLI so it exports
   `CLAUDE_CODE_SESSION_ID`; Hermes: the session must export
@@ -209,10 +157,6 @@ needed): `node scripts/selftest-mirror.mjs`.
   `PI_CODING_AGENT_SESSION_DIR` override the roots),
   `PHI_NO_SESSION_MIRROR` is set, or the skill running your heredocs
   predates the session mirror — rebuild Phi so the bundled skill has it.
-- **Under Pi: console commands wait for “continue”**: the companion extension
-  is not loaded. Install Pi again from Phi settings, then run `/reload` in Pi.
-  The skill link alone can mirror the transcript but cannot call Pi's
-  in-process `sendUserMessage()` API.
 - **Console commands don't reach another terminal agent's idle session**:
   Claude Code, Codex, and Cursor have no supported delivery transport, so
   commands are picked up at the next round rather than typed into a
@@ -232,14 +176,8 @@ needed): `node scripts/selftest-mirror.mjs`.
 - **Under Hermes: console commands stay queued**: the daemon delivers via
   the `hermes` CLI — it must be installed (PATH, `~/.local/bin`, or set
   `PHI_HERMES_BIN`). Check `hermes --resume <session-id> -z test` by hand.
-- **Access denied**: you denied this agent. If the denial was "For 30 min" or
-  "Never ask again", retrying does not re-prompt — lift it under Settings ▸
-  Developer ▸ Remote debugging ▸ Blocked agents (**Unblock**), or switch
-  "Allow agents to control Phi (CDP)" off and on, which clears every block.
-  A "Just this time" denial re-prompts on the next connection.
-- **Endpoint not responding / first call hangs**: the first connection waits on
-  the consent prompt — approve it in Phi. If Phi shows no prompt at all, check
-  that Phi Browser itself is responsive.
+- **Access denied**: enable “Allow agents to control Mist” in Settings ▸ Advanced.
+- **Endpoint not responding**: check that Mist is responsive and running.
 - **Empty reply from `/json/version` (older builds)**: a lingering
   `PhiRemoteDebuggingPort` default moved CDP onto its retired TCP transport
   and off the app socket, so connections were dropped without a reply. Run
@@ -269,6 +207,6 @@ needed): `node scripts/selftest-mirror.mjs`.
 - **"PhiAgentSpace.sendMessage" unknown method**: the running Phi Framework
   predates the PhiAgentSpace domain. Rebuild it:
   `autoninja -C out/PhiRelease "Phi Framework.framework"` in chromium/src,
-  then rebuild/relaunch the Swift app (scheme PhiBrowser-canary).
+  then rebuild/relaunch the Swift app (scheme PhiBrowser-OpenSource).
 - **create_failed from enterContext**: no browser window is open yet —
   open one Phi window first, then retry.

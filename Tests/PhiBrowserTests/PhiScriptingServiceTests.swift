@@ -355,40 +355,15 @@ final class PhiScriptingServiceTests: XCTestCase {
 
         let normal = service.newWindow()
         let incognito = service.newIncognitoWindow()
-        let kiosk = service.newKioskWindow(url: " https://example.com/path ")
-        let aboutKiosk = service.newKioskWindow(url: "about:blank")
-        let fileKiosk = service.newKioskWindow(url: "file:///tmp/example.html")
-        let internalKiosk = service.newKioskWindow(url: "phi://version")
-        let domainKiosk = service.newKioskWindow(url: "google.com")
-        let searchKiosk = service.newKioskWindow(url: "kiosk browser")
-        let omittedURLKiosk = service.newKioskWindow(url: nil)
-        let blankURLKiosk = service.newKioskWindow(url: " \n ")
         let incognitoSpace = service.newIncognitoSpace()
 
         XCTAssertEqual(normal["ok"] as? Bool, true)
         XCTAssertEqual(incognito["ok"] as? Bool, true)
-        XCTAssertEqual(kiosk["ok"] as? Bool, true)
-        XCTAssertEqual(kiosk["outcome"] as? String, "completed")
-        XCTAssertEqual(aboutKiosk["ok"] as? Bool, true)
-        XCTAssertEqual(fileKiosk["ok"] as? Bool, true)
-        XCTAssertEqual(internalKiosk["ok"] as? Bool, true)
-        XCTAssertEqual(domainKiosk["ok"] as? Bool, true)
-        XCTAssertEqual(searchKiosk["ok"] as? Bool, true)
-        XCTAssertEqual(omittedURLKiosk["ok"] as? Bool, true)
-        XCTAssertEqual(blankURLKiosk["ok"] as? Bool, true)
         XCTAssertEqual(incognitoSpace["ok"] as? Bool, true)
         XCTAssertEqual(incognitoSpace["outcome"] as? String, "accepted")
         XCTAssertEqual(recorder.calls, [
             "window:normal",
             "window:incognito",
-            "kiosk:https://example.com/path",
-            "kiosk:about:blank",
-            "kiosk:file:///tmp/example.html",
-            "kiosk:chrome://version",
-            "kiosk:https://google.com",
-            "kiosk:https://www.google.com/search?q=kiosk browser",
-            "kiosk:about:blank",
-            "kiosk:about:blank",
             "incognito-space",
         ])
     }
@@ -454,7 +429,6 @@ final class PhiScriptingServiceTests: XCTestCase {
         dependencies.openBookmark = { _, _ in .failed }
         dependencies.openTab = { _, _ in .failed }
         dependencies.createWindow = { _ in .failed }
-        dependencies.createKioskWindow = { _ in .failed }
         dependencies.createIncognitoSpace = { .failed }
         let service = PhiScriptingService(dependencies: dependencies)
         let responses = [
@@ -469,7 +443,6 @@ final class PhiScriptingServiceTests: XCTestCase {
             service.openTab(address: "https://example.com", spaceId: "space-a"),
             service.newWindow(),
             service.newIncognitoWindow(),
-            service.newKioskWindow(url: nil),
             service.newIncognitoSpace(),
         ]
 
@@ -626,115 +599,9 @@ final class PhiScriptingServiceTests: XCTestCase {
         )
     }
 
-    func testRaycastClientContextProducesPrivacyMinimalAttributionProperties() throws {
-        let invocationId = "34A33E4B-B86E-4077-9C4A-A08BCF876472"
-        let rawContext = """
-        {
-          "schemaVersion": 1,
-          "clientId": "raycast",
-          "clientCommand": "search-tabs",
-          "clientAction": "activate-tab",
-          "invocationId": "\(invocationId)"
-        }
-        """
 
-        let context = try XCTUnwrap(PhiScriptingClientContext.parse(rawContext))
-        XCTAssertEqual(context.clientCommand, "search-tabs")
-        XCTAssertEqual(context.clientAction, "activate-tab")
-        XCTAssertEqual(context.invocationId, invocationId.lowercased())
 
-        let properties = PhiScriptingAnalytics.properties(
-            clientContext: rawContext,
-            scriptingCommand: "activate_tab",
-            succeeded: true,
-            operationOutcome: .accepted
-        )
-        XCTAssertEqual(properties["source_client"] as? String, "raycast")
-        XCTAssertEqual(properties["client_command"] as? String, "search-tabs")
-        XCTAssertEqual(properties["client_action"] as? String, "activate-tab")
-        XCTAssertEqual(properties["scripting_command"] as? String, "activate_tab")
-        XCTAssertEqual(properties["succeeded"] as? Bool, true)
-        XCTAssertEqual(properties["operation_outcome"] as? String, "accepted")
-        XCTAssertEqual(Set(properties.keys), Set([
-            "client_action",
-            "client_command",
-            "operation_outcome",
-            "scripting_command",
-            "source_client",
-            "succeeded",
-        ]))
-    }
 
-    func testRaycastCreationCommandsAreAcceptedClientContextValues() throws {
-        for command in ["new-kiosk-window", "new-incognito-space"] {
-            let rawContext = """
-            {
-              "schemaVersion": 1,
-              "clientId": "raycast",
-              "clientCommand": "\(command)",
-              "invocationId": "34A33E4B-B86E-4077-9C4A-A08BCF876472"
-            }
-            """
-
-            let context = try XCTUnwrap(PhiScriptingClientContext.parse(rawContext))
-            XCTAssertEqual(context.clientCommand, command)
-        }
-    }
-
-    func testClientContextRejectsInvalidAttributionAndBoundsPropertyCardinality() {
-        let validInvocationId = "34A33E4B-B86E-4077-9C4A-A08BCF876472"
-        let unknownValues = """
-        {
-          "schemaVersion": 1,
-          "clientId": "raycast",
-          "clientCommand": "attacker-controlled-command",
-          "clientAction": "attacker-controlled-action",
-          "invocationId": "\(validInvocationId)"
-        }
-        """
-        let normalized = PhiScriptingClientContext.parse(unknownValues)
-        XCTAssertEqual(normalized?.clientCommand, "unknown")
-        XCTAssertEqual(normalized?.clientAction, "unknown")
-
-        let invalidContexts = [
-            nil,
-            "not json",
-            """
-            {
-              "schemaVersion": 1,
-              "clientId": "another-client",
-              "clientCommand": "search-tabs",
-              "invocationId": "\(validInvocationId)"
-            }
-            """,
-            """
-            {
-              "schemaVersion": 1,
-              "clientId": "raycast",
-              "clientCommand": "search-tabs",
-              "invocationId": "not-a-uuid"
-            }
-            """,
-            String(repeating: "x", count: 1_025),
-        ]
-
-        for invalidContext in invalidContexts {
-            let properties = PhiScriptingAnalytics.properties(
-                clientContext: invalidContext,
-                scriptingCommand: "list_tabs",
-                succeeded: false,
-                operationOutcome: .failed
-            )
-            XCTAssertEqual(properties["source_client"] as? String, "other")
-            XCTAssertNil(properties["client_command"])
-            XCTAssertNil(properties["client_action"])
-        }
-    }
-
-    func testVersionCommandIsExcludedFromScriptingAnalytics() {
-        XCTAssertFalse(PhiScriptingAnalytics.shouldCapture(scriptingCommand: "get_version"))
-        XCTAssertTrue(PhiScriptingAnalytics.shouldCapture(scriptingCommand: "list_spaces"))
-    }
 
     func testAppBundleExposesScriptingDefinition() throws {
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "NSAppleScriptEnabled") as? Bool, true)
@@ -746,9 +613,7 @@ final class PhiScriptingServiceTests: XCTestCase {
         XCTAssertTrue(definition.contains("<command name=\"get chromium data directory\""))
         XCTAssertTrue(definition.contains("<command name=\"create phi window\""))
         XCTAssertTrue(definition.contains("<command name=\"create phi incognito window\""))
-        XCTAssertTrue(definition.contains("<command name=\"create phi kiosk window\""))
         XCTAssertTrue(definition.contains("<command name=\"create phi incognito space\""))
-        XCTAssertTrue(definition.contains("<parameter name=\"url\" code=\"KURL\" type=\"text\" optional=\"yes\""))
         XCTAssertTrue(definition.contains("<command name=\"force reload tab\""))
         XCTAssertTrue(definition.contains("<command name=\"add split view\""))
         XCTAssertTrue(definition.contains("<command name=\"open pinned tab\""))
@@ -814,10 +679,6 @@ final class PhiScriptingServiceTests: XCTestCase {
                 case .incognito:
                     recorder.calls.append("window:incognito")
                 }
-                return .completed
-            },
-            createKioskWindow: {
-                recorder.calls.append("kiosk:\($0)")
                 return .completed
             },
             createIncognitoSpace: {

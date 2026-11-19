@@ -31,9 +31,6 @@ struct MoreMenuItem: Identifiable {
         self.init(id: id, title: title, icon: .system(systemImage))
     }
 
-    init(id: String, title: String, image: Image) {
-        self.init(id: id, title: title, icon: .image(image))
-    }
 }
 
 struct HeaderMoreButton: View {
@@ -85,11 +82,7 @@ struct HeaderTrailingArea: View {
     let availableWidth: CGFloat
     let pinnedExtensions: [Extension]
     let showDownload: Bool
-    let showMemory: Bool
-    let showFeedback: Bool
     let showChat: Bool
-    let isInPlaceholderMode: Bool
-
     let extensionManager: ExtensionManager?
     let browserState: BrowserState?
 
@@ -97,9 +90,7 @@ struct HeaderTrailingArea: View {
     @Binding var isDownloadPopoverShown: Bool
     @Binding var isExtensionPopoverShown: Bool
 
-    let onFeedbackTap: () -> Void
     let onChatTap: () -> Void
-    let onMemoryTap: () -> Void
     let onDownloadTap: () -> Void
     var onChatAnchorResolved: ((NSView?) -> Void)? = nil
 
@@ -109,13 +100,10 @@ struct HeaderTrailingArea: View {
         static let slotPadding: CGFloat = 6
         static let trailingPadding: CGFloat = 6
 
-        static let extensionMenuWidth = buttonSize
         /// Each pinned extension adds buttonSize + spacing inside the capsule
         static let pinnedExtensionSlot = buttonSize + extensionSpacing
         static let downloadSlot = slotPadding + buttonSize
-        static let memorySlot = slotPadding + buttonSize
         static let moreButtonSlot = slotPadding + buttonSize
-        static let feedbackSlot = slotPadding + buttonSize
         /// ChatButton's localized content width plus its leading spacing.
         static var chatSlot: CGFloat { slotPadding + ChatButton.preferredContentWidth }
     }
@@ -123,8 +111,6 @@ struct HeaderTrailingArea: View {
     private struct LayoutConfig {
         var visiblePinnedCount: Int
         var showDownload: Bool
-        var showMemory: Bool
-        var showFeedback: Bool
         var moreItems: [MoreMenuItem]
     }
 
@@ -132,9 +118,7 @@ struct HeaderTrailingArea: View {
         let config = resolveLayout(for: availableWidth)
         variant(
             pinned: Array(pinnedExtensions.prefix(config.visiblePinnedCount)),
-            memory: config.showMemory,
             download: config.showDownload,
-            feedback: config.showFeedback,
             moreItems: config.moreItems
         )
     }
@@ -145,35 +129,26 @@ struct HeaderTrailingArea: View {
     struct WidthFit: Equatable {
         var visiblePinnedCount: Int
         var showDownload: Bool
-        var showMemory: Bool
-        var showFeedback: Bool
     }
 
-    /// Collapse order (first to collapse → last):  Feedback → Pinned extensions (last→first) → Memory → Download
+    /// Collapse order (first to collapse → last):  Pinned extensions (last→first) → Download
     static func widthFit(
         availableWidth width: CGFloat,
         pinnedCount: Int,
         showDownload: Bool,
-        showMemory: Bool,
-        showFeedback: Bool,
         showChat: Bool
     ) -> WidthFit {
-        var budget = width - Metrics.trailingPadding - Metrics.extensionMenuWidth
+        // Mist: extensions button removed from window chrome
+        var budget = width - Metrics.trailingPadding
         if showChat { budget -= Metrics.chatSlot }
 
         var fit = WidthFit(
-            visiblePinnedCount: pinnedCount,
+            visiblePinnedCount: 0,
             showDownload: showDownload,
-            showMemory: showMemory,
-            showFeedback: showFeedback
         )
         func currentCost() -> CGFloat {
             var cost: CGFloat = 0
-            if fit.showFeedback {
-                cost += Metrics.feedbackSlot
-            }
             if fit.showDownload { cost += Metrics.downloadSlot }
-            if fit.showMemory { cost += Metrics.memorySlot }
             cost += CGFloat(fit.visiblePinnedCount) * Metrics.pinnedExtensionSlot
             return cost
         }
@@ -181,14 +156,8 @@ struct HeaderTrailingArea: View {
         if currentCost() <= budget { return fit }
 
         budget -= Metrics.moreButtonSlot
-        if currentCost() > budget && fit.showFeedback {
-            fit.showFeedback = false
-        }
         while currentCost() > budget && fit.visiblePinnedCount > 0 {
             fit.visiblePinnedCount -= 1
-        }
-        if currentCost() > budget && fit.showMemory {
-            fit.showMemory = false
         }
         if currentCost() > budget && fit.showDownload {
             fit.showDownload = false
@@ -201,26 +170,10 @@ struct HeaderTrailingArea: View {
             availableWidth: width,
             pinnedCount: pinnedExtensions.count,
             showDownload: showDownload,
-            showMemory: showMemory,
-            showFeedback: showFeedback,
             showChat: showChat
         )
         // Collapsed items go to the More menu in the order they collapsed.
         var moreItems: [MoreMenuItem] = []
-        if showFeedback && !fit.showFeedback {
-            moreItems.append(MoreMenuItem(
-                id: "feedback",
-                title: NSLocalizedString("browser.headerMoreMenu.feedbackAction", value: "Feedback", comment: "Header more menu - Feedback action"),
-                image: Image(.sidebarFeedback)
-            ))
-        }
-        if showMemory && !fit.showMemory {
-            moreItems.append(MoreMenuItem(
-                id: "memory",
-                title: NSLocalizedString("browser.headerMoreMenu.memoryAction", value: "Browser Memory", comment: "Header more menu - AI memory"),
-                image: Image(.memoryIcon).renderingMode(.original)
-            ))
-        }
         if showDownload && !fit.showDownload {
             moreItems.append(MoreMenuItem(
                 id: "download",
@@ -231,8 +184,6 @@ struct HeaderTrailingArea: View {
         return LayoutConfig(
             visiblePinnedCount: fit.visiblePinnedCount,
             showDownload: fit.showDownload,
-            showMemory: fit.showMemory,
-            showFeedback: fit.showFeedback,
             moreItems: moreItems
         )
     }
@@ -240,20 +191,11 @@ struct HeaderTrailingArea: View {
     @ViewBuilder
     private func variant(
         pinned: [Extension],
-        memory: Bool,
         download: Bool,
-        feedback: Bool,
         moreItems: [MoreMenuItem]
     ) -> some View {
         HStack(alignment: .center, spacing: 0) {
-            if !isInPlaceholderMode {
-                extensionArea(pinned: pinned)
-            }
-
-            if memory {
-                MemoryButton(action: onMemoryTap, useCircularHoverShape: true)
-                    .padding(.leading, 6)
-            }
+            // Mist: extensions button removed from window chrome
 
             if download {
                 downloadButton
@@ -274,19 +216,13 @@ struct HeaderTrailingArea: View {
                 }
             }
 
-            if feedback {
-                FeedbackButtonSwiftUI(
-                    action: onFeedbackTap,
-                    useCircularHoverShape: true
-                )
-                .padding(.leading, 6)
-            }
 
             if showChat {
                 ChatButton(
                     action: onChatTap,
                     contentWidth: ChatButton.preferredContentWidth,
-                    contentHeight: HeaderTrailingLayout.rowHeight
+                    contentHeight: HeaderTrailingLayout.rowHeight,
+                    systemName: "globe"
                 )
                 .background(chatAnchorBackground)
                 .padding(.leading, 6)
@@ -307,33 +243,11 @@ struct HeaderTrailingArea: View {
 
     private func handleMoreItemTap(_ item: MoreMenuItem) {
         switch item.id {
-        case "feedback":
-            onFeedbackTap()
         case "download":
             onDownloadTap()
             isDownloadPopoverShown.toggle()
-        case "memory":
-            onMemoryTap()
         default:
             break
-        }
-    }
-
-    @ViewBuilder
-    private func extensionArea(pinned: [Extension]) -> some View {
-        if pinned.isEmpty {
-            HeaderExtensionMenuButton(
-                extensionManager: extensionManager,
-                browserState: browserState,
-                isPopoverShown: $isExtensionPopoverShown
-            )
-        } else {
-            HeaderExtensionContainer(
-                pinnedExtensions: pinned,
-                extensionManager: extensionManager,
-                browserState: browserState,
-                isPopoverShown: $isExtensionPopoverShown
-            )
         }
     }
 

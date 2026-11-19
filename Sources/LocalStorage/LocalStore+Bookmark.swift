@@ -13,6 +13,62 @@ enum BookmarkPinConversionError: Error {
 }
 
 extension LocalStore {
+    /// Sync uses the same bookmark transaction bodies as local edits. Awaiting
+    /// the FIFO commit keeps the sync cursor behind durable state and publishes
+    /// normal store notifications for sidebars and the Chromium bookmark mirror.
+    func applyMistSyncBookmark(_ value: MistBrowserSyncBookmark, profileId: String) async throws {
+        try await performBackgroundWriteAndWaitThrowing { context in
+            let node: TabDataModel
+            if let existing = try self.bookmarkNode(with: value.localID, in: context) {
+                guard existing.dataType == (value.folder ? .bookmarkFolder : .bookmark),
+                      try !self.isBookmarkRoot(existing, in: context) else { throw MistSyncError.invalidRecord }
+                node = existing
+                let actualParent = try self.resolveParent(for: value.parent, profileId: profileId,
+                    spaceId: value.space, in: context)
+                if node.spaceId != value.space || node.parent?.guid != actualParent?.guid || node.profileId != profileId {
+                    try self.moveBookmarksBody([node.guid], sourceProfileId: node.profileId ?? profileId,
+                        toSpaceId: value.space, targetProfileId: profileId, targetParentId: value.parent,
+                        destinationIndex: value.index, in: context)
+                }
+                try self.updateBookmarkBody(node.guid, profileId: profileId, title: value.title,
+                    url: value.folder ? nil : value.url, secondaryUrl: .some(value.secondaryURL),
+                    secondaryTitle: .some(value.secondaryTitle), in: context)
+            } else if value.folder {
+                node = try self.createDirectoryBody(title: value.title, profileId: profileId, parentId: value.parent,
+                    index: value.index, guid: value.localID, spaceId: value.space, in: context)
+            } else {
+                node = try self.createBookmarkBody(url: self.userInputBookmarkURL(from: value.url), title: value.title,
+                    profileId: profileId, parentId: value.parent, index: value.index, guid: value.localID,
+                    spaceId: value.space, secondaryUrl: try value.secondaryURL.map { try self.userInputBookmarkURL(from: $0) },
+                    secondaryTitle: value.secondaryTitle, layout: value.layout, favicon: nil, in: context)
+                node.needUpdateMetaData = true
+            }
+            node.syncId = value.syncID
+            node.title = value.title
+            node.layout = value.layout
+            node.index = value.index
+        }
+    }
+
+    func deleteMistSyncBookmark(_ guid: String, profileId: String) async throws {
+        try await performBackgroundWriteAndWaitThrowing { context in
+            guard try self.bookmarkNode(with: guid, in: context) != nil else { return }
+            try self.deleteBookmarkBody(guid, profileId: profileId, in: context)
+        }
+    }
+
+    func reorderMistSyncBookmarks(_ guids: [String]) async throws {
+        try await performBackgroundWriteAndWaitThrowing { context in
+            let nodes = try guids.map { guid -> TabDataModel in
+                guard let node = try self.bookmarkNode(with: guid, in: context),
+                      try !self.isBookmarkRoot(node, in: context) else { throw MistSyncError.invalidRecord }
+                return node
+            }
+            guard Set(nodes.compactMap { $0.parent?.guid }).count <= 1 else { throw MistSyncError.invalidRecord }
+            self.normalizeIndexes(for: nodes)
+        }
+    }
+
     /// Converts closed or cross-Space bookmarks without requiring a window runtime.
     /// Creation and removal share one transaction so a failed drop preserves its source.
     func convertBookmarksToPinnedTabs(_ guids: [String], sourceProfileId: String, sourceSpaceId: String,
@@ -102,17 +158,9 @@ extension LocalStore {
         }
     }
 
-    static let defaultRootDirIdentifier = "default-root-dir"
     private static let folderPlaceholderURL: URL = {
         URL(string: "https://bookmark.phi/folder")!
     }()
-    private static let importedFromArcFolderTitle = NSLocalizedString("localData.bookmarks.importedFromArcFolderTitle", value: "Imported From Arc",
-        comment: "Arc bookmarks import folder title"
-    )
-    private static let importedFromDiaFolderTitle = NSLocalizedString("localData.bookmarks.importedFromDiaFolderTitle", value: "Imported From Dia",
-        comment: "Bookmark folder - Wrapper created at the Space root to hold the bookmarks imported from Dia; its title must match the one the browser side writes"
-    )
-    
     /// Creates a bookmark node, attaching it to the root when `parentId` is nil.
     /// `secondaryUrl` is set only for split-view bookmarks; clicking such a
     /// bookmark opens both URLs as a split. `secondaryTitle`
@@ -166,10 +214,6 @@ extension LocalStore {
                                                 secondaryTitle: secondaryTitle,
                                                 layout: layout,
                                                 favicon: favicon,
-                                                syncId: nil,
-                                                createdDate: nil,
-                                                allowsEmptyTitle: false,
-                                                strictParent: false,
                                                 in: context)
             } catch {
                 AppLogError("Failed to create bookmark: \(error)")
@@ -177,46 +221,6 @@ extension LocalStore {
         }
     }
 
-    /// Throwing sibling used ONLY by the sync layer: `PhiSyncEngine` may write the `reconciled` / `server`
-    /// baselines only after the row landed, and the fire-and-forget original swallows its own failure (§4.9).
-    ///
-    /// Three deliberate UI differences: accept an absolute `URL` without user-input/search processing; default
-    /// `allowsEmptyTitle` to true to preserve remote empty titles; and throw on unresolved parents instead of
-    /// silently falling back to the Space root.
-    @discardableResult
-    func createBookmarkThrowing(url: URL,
-                                title: String?,
-                                profileId: String,
-                                parentId: String?,
-                                index: Int? = nil,
-                                guid: String? = nil,
-                                spaceId: String = LocalStore.defaultSpaceId,
-                                secondaryUrl: URL? = nil,
-                                secondaryTitle: String? = nil,
-                                favicon: Data? = nil,
-                                syncId: String? = nil,
-                                createdDate: Date? = nil,
-                                allowsEmptyTitle: Bool = true) async throws -> String {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.createBookmarkBody(url: url,
-                                        title: title,
-                                        profileId: profileId,
-                                        parentId: parentId,
-                                        index: index,
-                                        guid: guid,
-                                        spaceId: spaceId,
-                                        secondaryUrl: secondaryUrl,
-                                        secondaryTitle: secondaryTitle,
-                                        favicon: favicon,
-                                        syncId: syncId,
-                                        createdDate: createdDate,
-                                        allowsEmptyTitle: allowsEmptyTitle,
-                                        strictParent: true,
-                                        in: context).guid
-        }
-    }
-
-    /// Single implementation shared by both entry points.
     private func createBookmarkBody(url: URL,
                                     title: String?,
                                     profileId: String,
@@ -228,19 +232,14 @@ extension LocalStore {
                                     secondaryTitle: String?,
                                     layout: String? = nil,
                                     favicon: Data?,
-                                    syncId: String?,
-                                    createdDate: Date?,
-                                    allowsEmptyTitle: Bool,
-                                    strictParent: Bool,
                                     in context: ModelContext) throws -> TabDataModel {
         guard let parent = try resolveParent(for: parentId,
                                              profileId: profileId,
                                              spaceId: spaceId,
-                                             in: context,
-                                             strict: strictParent) else {
+                                             in: context) else {
             throw LocalStoreWriteError.rowNotFound
         }
-        let now = createdDate ?? Date()
+        let now = Date()
         let node = try insertBookmarkNode(title: title,
                                           profileId: profileId,
                                           url: url,
@@ -252,11 +251,8 @@ extension LocalStore {
                                           secondaryTitle: secondaryTitle,
                                           layout: layout,
                                           favicon: favicon,
-                                          allowsEmptyTitle: allowsEmptyTitle,
                                           now: now,
                                           in: context)
-        // Persist the identity and row in one transaction; landing has no second write that could fail.
-        node.syncId = syncId
         return node
     }
 
@@ -276,9 +272,6 @@ extension LocalStore {
                                                  index: index,
                                                  guid: guid,
                                                  spaceId: spaceId,
-                                                 syncId: nil,
-                                                 createdDate: nil,
-                                                 strictParent: false,
                                                  in: context)
             } catch {
                 AppLogError("Failed to create directory: \(error)")
@@ -286,50 +279,20 @@ extension LocalStore {
         }
     }
 
-    /// Throwing sibling used ONLY by the sync layer (§4.9). `allowsEmptyTitle` does not affect folders:
-    /// `insertDirectoryNode` copies the title verbatim.
-    @discardableResult
-    func createDirectoryThrowing(title: String,
-                                 profileId: String,
-                                 parentId: String?,
-                                 index: Int? = nil,
-                                 guid: String? = nil,
-                                 spaceId: String = LocalStore.defaultSpaceId,
-                                 syncId: String? = nil,
-                                 createdDate: Date? = nil) async throws -> String {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.createDirectoryBody(title: title,
-                                         profileId: profileId,
-                                         parentId: parentId,
-                                         index: index,
-                                         guid: guid,
-                                         spaceId: spaceId,
-                                         syncId: syncId,
-                                         createdDate: createdDate,
-                                         strictParent: true,
-                                         in: context).guid
-        }
-    }
-
-    /// Single implementation shared by both entry points.
     private func createDirectoryBody(title: String,
                                      profileId: String,
                                      parentId: String?,
                                      index: Int?,
                                      guid: String?,
                                      spaceId: String,
-                                     syncId: String?,
-                                     createdDate: Date?,
-                                     strictParent: Bool,
                                      in context: ModelContext) throws -> TabDataModel {
         guard let parent = try resolveParent(for: parentId,
                                              profileId: profileId,
                                              spaceId: spaceId,
-                                             in: context,
-                                             strict: strictParent) else {
+                                             in: context) else {
             throw LocalStoreWriteError.rowNotFound
         }
-        let now = createdDate ?? Date()
+        let now = Date()
         let folder = try insertDirectoryNode(title: title,
                                              profileId: profileId,
                                              parent: parent,
@@ -338,60 +301,7 @@ extension LocalStore {
                                              spaceId: spaceId,
                                              now: now,
                                              in: context)
-        folder.syncId = syncId
         return folder
-    }
-
-    /// Creates a folder and its initial bookmark in the same write transaction.
-    func createDirectoryWithBookmark(folderTitle: String,
-                                     folderGuid: String,
-                                     profileId: String,
-                                     parentId: String?,
-                                     bookmarkTitle: String?,
-                                     bookmarkURL: String,
-                                     bookmarkFavicon: Data? = nil,
-                                     index: Int? = nil,
-                                     spaceId: String = LocalStore.defaultSpaceId,
-                                     completion: ((Bool) -> Void)? = nil) {
-        AppLogDebug("[BookmarkAdd] createDirectoryWithBookmark request folderTitle=\(folderTitle) parentId=\(parentId ?? "nil") folderGuid=\(folderGuid) bookmarkTitle=\(bookmarkTitle ?? "nil") bookmarkURL=\(bookmarkURL)")
-        guard let normalizedBookmarkURL = normalizedURL(from: bookmarkURL) else {
-            AppLogError("Invalid bookmark url: \(bookmarkURL)")
-            completion?(false)
-            return
-        }
-        performBackgroundWrite { [weak self] context in
-            guard let self else { return }
-            do {
-                guard let parent = try self.resolveParent(for: parentId, profileId: profileId, spaceId: spaceId, in: context) else {
-                    AppLogError("Parent folder not found when creating directory with bookmark")
-                    return
-                }
-                let now = Date()
-                let folder = try self.insertDirectoryNode(title: folderTitle,
-                                                          profileId: profileId,
-                                                          parent: parent,
-                                                          index: index,
-                                                          guid: folderGuid,
-                                                          spaceId: parent.spaceId,
-                                                          now: now,
-                                                          in: context)
-
-                _ = try self.insertBookmarkNode(title: bookmarkTitle,
-                                                profileId: profileId,
-                                                url: normalizedBookmarkURL,
-                                                parent: folder,
-                                                index: nil,
-                                                guid: nil,
-                                                spaceId: folder.spaceId,
-                                                favicon: bookmarkFavicon,
-                                                now: now,
-                                                in: context)
-                completion?(true)
-            } catch {
-                AppLogError("Failed to create directory with bookmark: \(error)")
-                completion?(false)
-            }
-        }
     }
 
     func createDirectoryWithBookmarks(folderTitle: String,
@@ -495,147 +405,6 @@ extension LocalStore {
         }
     }
 
-    /// Persists bookmarks from one Arc Space into the local store.
-    /// `spaceRoot` is the Space's bookmark root; its children are imported
-    /// under a Space-named folder inside an "Imported From Arc" folder, or —
-    /// with `landingFolder` false — directly under the Space's own bookmark
-    /// root. Those landing folders keep an import apart from the target
-    /// Space's own bookmarks, as the Chromium-side imports' "Imported From
-    /// <browser>" folders do, so in a Space created for exactly this tree they
-    /// would be pure nesting.
-    /// Nothing is written when `spaceRoot` has no children (avoids empty
-    /// folders for empty Spaces).
-    ///
-    /// Returns how many bookmarks were written — folders are not counted — or
-    /// nil when the write did not land. The import completion signal reports
-    /// success unconditionally and is set before this runs, so a caller that
-    /// has to tell a persisted tree from a dropped one reads the outcome here
-    /// instead. A failure part-way through still keeps what already landed:
-    /// this write has never rolled back, and a Migration does not either.
-    @discardableResult
-    func saveArcBookmarksToLocalStore(
-        _ spaceRoot: ArcDataParserTool.Bookmark,
-        profileId: String,
-        spaceId: String = LocalStore.defaultSpaceId,
-        landingFolder: Bool = true
-    ) async -> Int? {
-        guard !spaceRoot.children.isEmpty else { return 0 }   // no empty Space-named folder
-        do {
-            return try await performBackgroundWriteAndWaitThrowing { [weak self] context -> Int? in
-                guard let self else { return nil }
-                // Caught here rather than thrown out of the write: the actor
-                // rolls the whole context back on a thrown error, and this
-                // import has always kept the part of the tree that landed.
-                do {
-                    guard try self.importTargetSpaceIsWritable(profileId: profileId, spaceId: spaceId, in: context) else {
-                        AppLogWarn("Skipping Arc bookmark import: space \(spaceId) no longer exists for profile \(profileId)")
-                        return nil
-                    }
-                    guard let profile = try self.profile(with: profileId, in: context, createIfNeeded: true),
-                          let root = try self.bookmarkRoot(profileId: profileId, spaceId: spaceId, in: context, createIfNeeded: true) else {
-                        AppLogError("Skipping Arc bookmark import: no profile or bookmark root "
-                            + "for profile \(profileId) space \(spaceId)")
-                        return nil
-                    }
-
-                    let now = Date()
-                    func insertLandingFolder(titled title: String, into parent: TabDataModel) throws -> TabDataModel {
-                        let folder = TabDataModel(
-                            title: title,
-                            guid: UUID().uuidString, index: 0, url: Self.folderPlaceholderURL,
-                            favicon: nil, createdDate: now, updatedDate: now)
-                        folder.dataType = .bookmarkFolder
-                        folder.isCreatedByChromium = false
-                        folder.spaceId = root.spaceId
-                        folder.profileId = profileId
-                        folder.source = 3
-                        context.insert(folder)
-                        folder.profile = profile
-                        try self.insert(node: folder, to: parent, at: nil, in: context)
-                        return folder
-                    }
-
-                    let landingRoot: TabDataModel?
-                    if landingFolder {
-                        let importRoot = try insertLandingFolder(
-                            titled: Self.importedFromArcFolderTitle, into: root)
-                        landingRoot = try insertLandingFolder(
-                            // Defensive fallback: the parser already fills every
-                            // Space title (the real one, or its localized "Untitled
-                            // Space"), so this only matters if a nil-title root ever
-                            // reaches here. It uses the parser's own key so the two
-                            // cannot drift apart.
-                            titled: spaceRoot.title ?? NSLocalizedString("oobe.importBrowserData.arc.untitledSpaceName", value: "Untitled Space", comment: "Arc import - fallback name for an Arc Space with no title"),
-                            into: importRoot)
-                    } else {
-                        // The tree goes straight to the Space's own root: a Space
-                        // created for exactly this tree has nothing to keep it
-                        // apart from.
-                        landingRoot = nil
-                    }
-
-                    var insertedCount = 0
-                    var bookmarkCount = 0
-                    func insertArcBookmark(_ arcBookmark: ArcDataParserTool.Bookmark, parent: TabDataModel, index: Int) throws {
-                        let title = (arcBookmark.title?.isEmpty ?? true) ? "Untitled" : arcBookmark.title
-                        let url = arcBookmark.isFolder ? Self.folderPlaceholderURL : self.normalizedURL(from: arcBookmark.url)
-                        guard let url else {
-                            AppLogError("Skipping bookmark with invalid URL: \(arcBookmark.url ?? "nil")")
-                            return
-                        }
-                        let node = TabDataModel(title: title ?? "Untitled", guid: UUID().uuidString,
-                            index: 0, url: url, favicon: nil, createdDate: now, updatedDate: now)
-                        node.dataType = arcBookmark.isFolder ? .bookmarkFolder : .bookmark
-                        node.isCreatedByChromium = false
-                        node.spaceId = parent.spaceId
-                        node.profileId = profileId
-                        node.source = 3
-                        if let split = arcBookmark.split {
-                            // A split-view entry: the second page rides on the
-                            // same row, as Phi's own split bookmarks do. A
-                            // second page whose URL cannot be read costs that
-                            // page, not the bookmark.
-                            if let secondaryURL = self.normalizedURL(from: split.secondaryURL) {
-                                node.secondaryUrl = secondaryURL
-                                node.secondaryTitle = split.secondaryTitle.isEmpty ? nil : split.secondaryTitle
-                                node.layout = split.layout
-                            } else {
-                                AppLogError("Dropping the second page of a split bookmark "
-                                    + "with an invalid URL: \(split.secondaryURL)")
-                            }
-                        }
-                        context.insert(node)
-                        node.profile = profile
-                        try self.insert(node: node, to: parent, at: index, in: context)
-                        insertedCount += 1
-                        // A folder is not a bookmark: the count a caller reports
-                        // has to match what the user would count in the source.
-                        if !arcBookmark.isFolder { bookmarkCount += 1 }
-                        for (childIndex, child) in arcBookmark.children.enumerated() {
-                            try insertArcBookmark(child, parent: node, index: childIndex)
-                        }
-                    }
-
-                    // Insert the Space's children directly under the Space-named
-                    // folder, or under the Space's own root when there is none
-                    // (no double-nest either way).
-                    for (index, child) in spaceRoot.children.enumerated() {
-                        try insertArcBookmark(child, parent: landingRoot ?? root, index: index)
-                    }
-                    AppLogInfo("Imported \(insertedCount) Arc bookmark node(s) "
-                        + "into profile \(profileId) space \(spaceId)")
-                    return bookmarkCount
-                } catch {
-                    AppLogError("Failed to save Arc bookmarks: \(error)")
-                    return nil
-                }
-            }
-        } catch {
-            AppLogError("Skipping Arc bookmark import: no writable local store (\(error))")
-            return nil
-        }
-    }
-    
     /// Chromium's permanent bookmark bar node is the model root's first child.
     private static let chromiumBookmarkBarRootIndex = 0
 
@@ -744,7 +513,7 @@ extension LocalStore {
                 let rootChildren = try self.children(of: root, in: context)
 
                 let rankedImportFolders = rootChildren.enumerated().compactMap { offset, child -> (Int, Int, TabDataModel)? in
-                    guard let rank = Self.importedBrowserFolderRank(for: child.title, source: child.source),
+                    guard let rank = Self.importedBrowserFolderRank(for: child.title),
                           child.dataType == .bookmarkFolder else {
                         return nil
                     }
@@ -780,15 +549,10 @@ extension LocalStore {
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
-                // `toSpaceId: nil` preserves UI behavior: use the row's Space, fall back to its root for a
-                // missing/nil parentId, and do not retag.
                 try self.moveBookmarkBody(guid,
                                           profileId: profileId,
                                           toParentGuid: parentId,
-                                          toSpaceId: nil,
                                           index: newIndex,
-                                          strictParent: false,
-                                          recordsLocationEdit: true,
                                           in: context)
             } catch {
                 AppLogError("Failed to move bookmark: \(error)")
@@ -796,46 +560,10 @@ extension LocalStore {
         }
     }
 
-    /// One call retags the entire subtree's Space/Profile and reparents it to any folder, updating fields
-    /// without deleting/recreating rows or changing child GUIDs.
-    ///
-    /// Existing `moveBookmark` uses the row's own Space and cannot move across Spaces; `moveBookmarks` always
-    /// targets a Space root. `toParentGuid == nil` targets this Space's canonical root.
-    ///
-    /// Landing a remote move, so it leaves `locationUpdatedDate` alone: the column records when THIS device's
-    /// user moved the row, and restamping it here would republish a landed move as a local edit.
-    func moveBookmarkThrowing(guid: String,
-                              toParentGuid parentGuid: String?,
-                              inSpaceId spaceId: String,
-                              index: Int) async throws {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            // The destination Space determines the Profile; if its local row is absent, use the bookmark's
-            // existing Profile.
-            let targetProfileId = try self.profileId(ofSpaceId: spaceId, in: context)
-                ?? self.bookmarkNodeProfileId(guid, in: context)
-                ?? Self.defaultProfileId
-            try self.moveBookmarkBody(guid,
-                                      profileId: targetProfileId,
-                                      toParentGuid: parentGuid,
-                                      toSpaceId: spaceId,
-                                      index: index,
-                                      strictParent: true,
-                                      recordsLocationEdit: false,
-                                      in: context)
-        }
-    }
-
-    /// Single implementation shared by both entry points.
-    ///
-    /// `recordsLocationEdit` is true only for a local user gesture: it stamps `locationUpdatedDate`, which
-    /// `BookmarkKind.stamp` publishes as the location group's edit time (§4.3 / C2).
     private func moveBookmarkBody(_ guid: String,
                                   profileId: String,
                                   toParentGuid parentId: String?,
-                                  toSpaceId requestedSpaceId: String?,
                                   index newIndex: Int?,
-                                  strictParent: Bool,
-                                  recordsLocationEdit: Bool,
                                   in context: ModelContext) throws {
         guard let node = try bookmarkNode(with: guid, in: context) else {
             throw LocalStoreWriteError.rowNotFound
@@ -843,12 +571,11 @@ extension LocalStore {
         guard try !isBookmarkRoot(node, in: context) else {
             throw LocalStoreWriteError.rowIsRoot
         }
-        let targetSpaceId = requestedSpaceId ?? node.spaceId ?? Self.defaultSpaceId
+        let targetSpaceId = node.spaceId ?? Self.defaultSpaceId
         guard let parent = try resolveParent(for: parentId,
                                              profileId: profileId,
                                              spaceId: targetSpaceId,
-                                             in: context,
-                                             strict: strictParent) else {
+                                             in: context) else {
             throw LocalStoreWriteError.rowNotFound
         }
 
@@ -866,29 +593,10 @@ extension LocalStore {
         normalizeIndexes(for: siblings)
 
         let now = Date()
-        // §4.3 location is parent + Space together. A drag that only reorders siblings under the same parent
-        // is rank, which carries its own stamp, so it must not look like a move. Read `node.spaceId` before
-        // the retag below overwrites it.
-        if recordsLocationEdit,
-           originalParent?.guid != parent.guid || requestedSpaceId.map({ $0 != node.spaceId }) == true {
+        if originalParent?.guid != parent.guid {
             node.locationUpdatedDate = now
         }
-        // Retag only when sync explicitly supplies a destination Space. UI calls pass nil and retain the
-        // existing `node.updatedDate = Date()` behavior.
-        if let requestedSpaceId,
-           node.spaceId != requestedSpaceId || node.profileId != profileId {
-            guard let targetProfile = try profile(with: profileId, in: context, createIfNeeded: true) else {
-                throw LocalStoreWriteError.rowNotFound
-            }
-            try retagBookmarkSubtree(node,
-                                     profileId: profileId,
-                                     profile: targetProfile,
-                                     spaceId: requestedSpaceId,
-                                     updatedDate: now,
-                                     in: context)
-        } else {
-            node.updatedDate = now
-        }
+        node.updatedDate = now
     }
 
     /// Moves an explicit bookmark selection as a visual batch.
@@ -927,7 +635,7 @@ extension LocalStore {
                 guard let targetParent = try self.resolveParent(for: parentId,
                                                                 profileId: profileId,
                                                                 spaceId: resolveSpaceId,
-                                                                in: context) else {
+                                                        in: context, createIfNeeded: true) else {
                     AppLogError("Target parent not found for selected bookmark move")
                     return
                 }
@@ -970,7 +678,6 @@ extension LocalStore {
                     let movedOut = node.parent?.guid != targetParent.guid
                     node.parent = targetParent
                     node.updatedDate = Date()
-                    // A selection dropped back into its own parent is a reorder, not a move (§4.3).
                     if movedOut { node.locationUpdatedDate = node.updatedDate }
                 }
 
@@ -993,7 +700,6 @@ extension LocalStore {
                         try self.liftUnselectedChildren(from: node,
                                                         selectedGuids: selectedGuids,
                                                         updatedDate: now,
-                                                        recordsLocationEdit: true,
                                                         in: context)
                     }
                 }
@@ -1016,15 +722,10 @@ extension LocalStore {
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
             do {
-                // `readOnlyTargetRoot: false` preserves UI heal-on-read: reclaim an orphan root, merge
-                // duplicate roots' children, then remove duplicates before moving. A pure read would silently
-                // drop the gesture while bookmarks remain under the orphan root.
                 try self.moveBookmarksBody(guids,
                                            sourceProfileId: sourceProfileId,
                                            toSpaceId: targetSpaceId,
                                            targetProfileId: targetProfileId,
-                                           readOnlyTargetRoot: false,
-                                           recordsLocationEdit: true,
                                            sourceSpaceId: sourceSpaceId,
                                            targetParentId: targetParentId,
                                            destinationIndex: destinationIndex,
@@ -1035,32 +736,10 @@ extension LocalStore {
         }
     }
 
-    /// Throwing sibling used ONLY by the sync layer (§4.9). Source and destination share a Profile: account
-    /// rows do not move between Chromium profiles.
-    ///
-    /// Landing a remote move, so `locationUpdatedDate` is left alone for the same reason as
-    /// `moveBookmarkThrowing`.
-    func moveBookmarksThrowing(guids: [String],
-                               toSpaceId targetSpaceId: String,
-                               profileId: String) async throws {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.moveBookmarksBody(guids,
-                                       sourceProfileId: profileId,
-                                       toSpaceId: targetSpaceId,
-                                       targetProfileId: profileId,
-                                       readOnlyTargetRoot: true,
-                                       recordsLocationEdit: false,
-                                       in: context)
-        }
-    }
-
-    /// Single implementation shared by both entry points.
     private func moveBookmarksBody(_ guids: [String],
                                    sourceProfileId: String,
                                    toSpaceId targetSpaceId: String,
                                    targetProfileId: String,
-                                   readOnlyTargetRoot: Bool,
-                                   recordsLocationEdit: Bool,
                                    sourceSpaceId: String? = nil,
                                    targetParentId: String? = nil,
                                    destinationIndex: Int? = nil,
@@ -1080,16 +759,12 @@ extension LocalStore {
         guard targetSpaceIsWritable else {
             throw LocalStoreWriteError.targetNotWritable
         }
-        // Sync uses `readOnlyTargetRoot: true`: `bookmarkRoot(createIfNeeded: true)` can create roots, reclaim
-        // orphans and delete duplicates on every round, and makes the missing-root guard unreachable. UI uses
-        // false to preserve heal-on-read and complete moves from orphan roots.
         guard let targetProfile = try profile(with: targetProfileId,
                                               in: context,
                                               createIfNeeded: true),
-              let targetRoot = try targetBookmarkRoot(profileId: targetProfileId,
+              let targetRoot = try bookmarkRoot(profileId: targetProfileId,
                                                       spaceId: targetSpaceId,
-                                                      readOnly: readOnlyTargetRoot,
-                                                      in: context) else {
+                                                      in: context, createIfNeeded: true) else {
             throw LocalStoreWriteError.rowNotFound
         }
 
@@ -1134,9 +809,7 @@ extension LocalStore {
                 sourceParentsByGuid[parent.guid] = parent
             }
             node.parent = destination
-            // Only the moved row: `retagBookmarkSubtree` also rewrites every descendant's Space, and a
-            // descendant's space_uuid is diagnostic and never republished (R-M3-3-18).
-            if recordsLocationEdit { node.locationUpdatedDate = now }
+            node.locationUpdatedDate = now
             try retagBookmarkSubtree(node,
                                      profileId: targetProfileId,
                                      profile: targetProfile,
@@ -1147,8 +820,6 @@ extension LocalStore {
             movedGuids.insert(node.guid)
         }
 
-        // If both silent `continue` paths skip the entire batch, throw instead of letting sync persist an
-        // unrecoverable false-success baseline.
         guard !movedNodes.isEmpty else {
             throw LocalStoreWriteError.noCandidateSurvived
         }
@@ -1176,7 +847,6 @@ extension LocalStore {
                 try liftUnselectedChildren(from: node,
                                            selectedGuids: requestedGuids,
                                            updatedDate: now,
-                                           recordsLocationEdit: recordsLocationEdit,
                                            in: context)
             }
         }
@@ -1264,9 +934,6 @@ extension LocalStore {
                         secondaryTitle: String?? = nil,
                         iconName: String? = nil,
                         expectedSpaceId: String? = nil) {
-        // Preserve UI behavior by treating an empty title as no title update. The shared body's empty-title
-        // behavior with `allowsEmptyTitle == false` substitutes the URL, matching create, while UI updates
-        // have always ignored empty titles.
         let titleUpdate = (title?.isEmpty == false) ? title : nil
         performBackgroundWrite { [weak self] context in
             guard let self else { return }
@@ -1277,7 +944,6 @@ extension LocalStore {
                                             url: url,
                                             secondaryUrl: secondaryUrl,
                                             secondaryTitle: secondaryTitle,
-                                            allowsEmptyTitle: false,
                                             iconName: iconName,
                                             expectedSpaceId: expectedSpaceId,
                                             in: context)
@@ -1306,30 +972,6 @@ extension LocalStore {
         }
     }
     
-    /// Throwing sibling used ONLY by the sync layer (§4.9).
-    ///
-    /// `title == nil` leaves the title unchanged; `title == ""` with `allowsEmptyTitle: true` clears it,
-    /// preserving valid remote empty titles. Update `contentUpdatedDate` only for actual content changes.
-    func updateBookmarkThrowing(_ guid: String,
-                                profileId: String,
-                                title: String?,
-                                url: String?,
-                                secondaryUrl: String?? = nil,
-                                secondaryTitle: String?? = nil,
-                                allowsEmptyTitle: Bool = true) async throws {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.updateBookmarkBody(guid,
-                                        profileId: profileId,
-                                        title: title,
-                                        url: url,
-                                        secondaryUrl: secondaryUrl,
-                                        secondaryTitle: secondaryTitle,
-                                        allowsEmptyTitle: allowsEmptyTitle,
-                                        in: context)
-        }
-    }
-
-    /// Single implementation shared by both entry points.
     ///
     /// Validate all URLs before writing any fields, avoiding a partial title update when a simultaneous URL
     /// edit is invalid.
@@ -1339,7 +981,6 @@ extension LocalStore {
                                     url: String?,
                                     secondaryUrl: String??,
                                     secondaryTitle: String??,
-                                    allowsEmptyTitle: Bool,
                                     iconName: String? = nil,
                                     expectedSpaceId: String? = nil,
                                     in context: ModelContext) throws {
@@ -1378,9 +1019,7 @@ extension LocalStore {
             contentDidChange = true
         }
         if let title {
-            // With `allowsEmptyTitle == false`, substitute the URL for an empty title, matching
-            // `insertBookmarkNode`.
-            let effectiveTitle = (title.isEmpty && !allowsEmptyTitle) ? node.url.absoluteString : title
+            let effectiveTitle = title.isEmpty ? node.url.absoluteString : title
             if node.title != effectiveTitle {
                 node.title = effectiveTitle
                 contentDidChange = true
@@ -1433,14 +1072,6 @@ extension LocalStore {
         }
     }
 
-    /// Throwing sibling used ONLY by the sync layer (§4.9).
-    func deleteBookmarkThrowing(_ guid: String, profileId: String) async throws {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.deleteBookmarkBody(guid, profileId: profileId, in: context)
-        }
-    }
-
-    /// Single implementation shared by both entry points.
     private func deleteBookmarkBody(_ guid: String,
                                     profileId: String,
                                     expectedSpaceId: String? = nil,
@@ -1535,11 +1166,6 @@ extension LocalStore {
 
         let subject = CurrentValueSubject<[TabDataModel], Never>([])
         let fetchBookmarks: () -> [TabDataModel]? = { [weak self] in
-            // Guest migration releases the source container before its window
-            // controllers are rebound. A save from the target account can
-            // still reach this global notification subscription in that gap.
-            // Resolve the context for every fetch instead of retaining the
-            // released source context.
             guard let context = self?.mainContext else { return nil }
             do {
                 let bookmarkRaw = TabDataType.bookmark.rawValue
@@ -1712,64 +1338,6 @@ extension LocalStore {
         return root
     }
 
-    /// Read-only root resolution via `SpaceModel.bookmarkRoot`; return nil if absent and write nothing.
-    ///
-    /// Do not use `bookmarkRoot(…)` in each sync round's reads: it heals relationships and deletes duplicate
-    /// roots even before `guard createIfNeeded`. Keep those mutations on the UI path.
-    ///
-    /// The default-Space fallback reads the legacy `ProfileModel.bookmarkRoot` pointer to the same physical
-    /// tree; it does not repair the backlink.
-    func existingBookmarkRoot(profileId: String,
-                              spaceId: String,
-                              in context: ModelContext) throws -> TabDataModel? {
-        let spaceDescriptor = FetchDescriptor<SpaceModel>(
-            predicate: #Predicate<SpaceModel> { $0.spaceId == spaceId && $0.profileId == profileId }
-        )
-        if let linked = try context.fetch(spaceDescriptor).first?.bookmarkRoot {
-            return linked
-        }
-        guard spaceId == Self.defaultSpaceId else { return nil }
-        return try profile(with: profileId, in: context, createIfNeeded: false)?.bookmarkRoot
-    }
-
-    /// Fetch all bookmark/folder rows once with relationships prefetched for snapshot, diff and index
-    /// projections.
-    ///
-    /// Capture raw values in local constants for `#Predicate`: `TabDataModel.type` is an Int, and its computed
-    /// extension property `dataType` is not visible to the macro.
-    func allBookmarkModels(in context: ModelContext) throws -> [TabDataModel] {
-        let bookmarkRaw = TabDataType.bookmark.rawValue
-        let folderRaw = TabDataType.bookmarkFolder.rawValue
-        var descriptor = FetchDescriptor<TabDataModel>(
-            predicate: #Predicate<TabDataModel> { $0.type == bookmarkRaw || $0.type == folderRaw }
-        )
-        descriptor.relationshipKeyPathsForPrefetching = [\.parent, \.profile]
-        return try context.fetch(descriptor)
-    }
-
-    /// Canonical root GUIDs for each (profileId, spaceId) pair. Resolve each Space once: calling
-    /// `isBookmarkRoot(_:in:)` per row fetches all Profiles and Spaces each time, making large trees
-    /// quadratic.
-    func canonicalRootGuids(in context: ModelContext) throws -> Set<String> {
-        var pairs: [(profileId: String, spaceId: String)] = []
-        for space in try context.fetch(FetchDescriptor<SpaceModel>()) {
-            pairs.append((space.profileId, space.spaceId))
-        }
-        for profile in try context.fetch(FetchDescriptor<ProfileModel>()) {
-            pairs.append((profile.profileId, Self.defaultSpaceId))
-        }
-        var guids = Set<String>()
-        var seen = Set<String>()
-        for pair in pairs {
-            guard seen.insert("\(pair.profileId)\u{0}\(pair.spaceId)").inserted else { continue }
-            if let root = try existingBookmarkRoot(profileId: pair.profileId,
-                                                   spaceId: pair.spaceId,
-                                                   in: context) {
-                guids.insert(root.guid)
-            }
-        }
-        return guids
-    }
 }
 
 // MARK: - Helpers
@@ -1864,12 +1432,11 @@ private extension LocalStore {
                           to parent: TabDataModel,
                           at index: Int,
                           updatedDate: Date,
-                          recordsLocationEdit: Bool,
                           in context: ModelContext) throws {
         let originalParent = node.parent
         node.parent = parent
         node.updatedDate = updatedDate
-        if recordsLocationEdit, originalParent?.guid != parent.guid {
+        if originalParent?.guid != parent.guid {
             node.locationUpdatedDate = updatedDate
         }
 
@@ -1884,12 +1451,9 @@ private extension LocalStore {
         normalizeIndexes(for: siblings)
     }
 
-    /// `recordsLocationEdit` follows the gesture that triggered the lift: a user batch move re-parents these
-    /// children, a landed remote move does not.
     func liftUnselectedChildren(from folder: TabDataModel,
                                 selectedGuids: Set<String>,
                                 updatedDate: Date,
-                                recordsLocationEdit: Bool,
                                 in context: ModelContext) throws {
         guard let parent = folder.parent else { return }
 
@@ -1905,7 +1469,6 @@ private extension LocalStore {
                     try liftUnselectedChildren(from: child,
                                                selectedGuids: selectedGuids,
                                                updatedDate: updatedDate,
-                                               recordsLocationEdit: recordsLocationEdit,
                                                in: context)
                 }
                 continue
@@ -1924,7 +1487,6 @@ private extension LocalStore {
                                          to: folder,
                                          at: descendantInsertionIndex,
                                          updatedDate: updatedDate,
-                                         recordsLocationEdit: recordsLocationEdit,
                                          in: context)
                     descendantInsertionIndex += 1
                     if descendant.dataType == .bookmarkFolder,
@@ -1934,7 +1496,6 @@ private extension LocalStore {
                         try liftUnselectedChildren(from: descendant,
                                                    selectedGuids: selectedGuids,
                                                    updatedDate: updatedDate,
-                                                   recordsLocationEdit: recordsLocationEdit,
                                                    in: context)
                     }
                 }
@@ -1948,16 +1509,13 @@ private extension LocalStore {
                                  to: parent,
                                  at: folderIndex + siblingOffsetAfterFolder,
                                  updatedDate: updatedDate,
-                                 recordsLocationEdit: recordsLocationEdit,
-                                 in: context)
+                                                                  in: context)
             siblingOffsetAfterFolder += 1
         }
 
         normalizeIndexes(for: try children(of: folder, in: context))
     }
 
-    /// Never writes `locationUpdatedDate`: the caller stamps the row the user actually moved, and a
-    /// descendant's space_uuid is diagnostic and never republished (R-M3-3-18).
     func retagBookmarkSubtree(_ node: TabDataModel,
                               profileId: String,
                               profile: ProfileModel,
@@ -2114,14 +1672,10 @@ private extension LocalStore {
                             secondaryTitle: String? = nil,
                             layout: String? = nil,
                             favicon: Data? = nil,
-                            allowsEmptyTitle: Bool = false,
                             now: Date,
                             in context: ModelContext) throws -> TabDataModel {
-        // Keep the UI default of replacing empty titles with the URL. Sync passes true to preserve remote
-        // empty titles; substituting the URL would disagree with `reconciled`, look like a fresh local edit
-        // next round, and overwrite the peer's cleared title.
         let resolvedTitle: String
-        if let title, !title.isEmpty || allowsEmptyTitle {
+        if let title, !title.isEmpty {
             resolvedTitle = title
         } else {
             resolvedTitle = url.absoluteString
@@ -2146,24 +1700,15 @@ private extension LocalStore {
         return bookmark
     }
     
-    /// `strict: false` preserves UI tolerance: silently fall back to the Space root for an
-    /// unresolved/non-folder parent.
-    ///
-    /// Sync alone uses true: an unintended root fallback would become a local position change next round and
-    /// overwrite the correct remote `parent_uuid`.
     func resolveParent(for parentId: String?,
                        profileId: String,
                        spaceId: String = LocalStore.defaultSpaceId,
                        in context: ModelContext,
-                       createIfNeeded: Bool = true,
-                       strict: Bool = false) throws -> TabDataModel? {
+                       createIfNeeded: Bool = true) throws -> TabDataModel? {
         if let parentId {
             if let node = try bookmarkNode(with: parentId, in: context),
                node.dataType == .bookmarkFolder {
                 return node
-            }
-            if strict {
-                throw LocalStoreWriteError.rowNotFound
             }
         }
         return try bookmarkRoot(profileId: profileId,
@@ -2172,42 +1717,6 @@ private extension LocalStore {
                                 createIfNeeded: createIfNeeded)
     }
 
-    /// Destination root resolution for `moveBookmarksBody`.
-    ///
-    /// `readOnly: false` preserves UI heal-on-read before `guard createIfNeeded`: reclaim orphan roots, merge
-    /// children and delete duplicate roots. Pure reads would drop gestures after concurrent initialization
-    /// leaves orphan roots.
-    ///
-    /// Sync uses true and `existingBookmarkRoot` to avoid main-context mutations on every round and keep the
-    /// missing-target-root guard meaningful.
-    func targetBookmarkRoot(profileId: String,
-                            spaceId: String,
-                            readOnly: Bool,
-                            in context: ModelContext) throws -> TabDataModel? {
-        if readOnly {
-            return try existingBookmarkRoot(profileId: profileId, spaceId: spaceId, in: context)
-        }
-        return try bookmarkRoot(profileId: profileId,
-                                spaceId: spaceId,
-                                in: context,
-                                createIfNeeded: true)
-    }
-
-    /// The row's own `profileId`, or nil if the row is absent.
-    func bookmarkNodeProfileId(_ guid: String, in context: ModelContext) throws -> String? {
-        try bookmarkNode(with: guid, in: context)?.profileId
-    }
-
-    /// A Space belongs to one Profile. Return nil if its local row is absent.
-    func profileId(ofSpaceId spaceId: String, in context: ModelContext) throws -> String? {
-        let descriptor = FetchDescriptor<SpaceModel>(
-            predicate: #Predicate<SpaceModel> { $0.spaceId == spaceId }
-        )
-        return try context.fetch(descriptor).first?.profileId
-    }
-
-    /// Normalize user-entered URLs on the UI path only: `URLProcessor.processUserInput` can turn non-URLs into
-    /// searches. The throwing sync sibling accepts `URL` directly.
     func userInputBookmarkURL(from raw: String?) throws -> URL {
         guard let normalized = normalizedURL(from: raw),
               let processed = URL(string: URLProcessor.processUserInput(normalized.absoluteString)) else {
@@ -2237,7 +1746,7 @@ private extension LocalStore {
             return inheritedSource == 0 ? 1 : inheritedSource
         }
 
-        switch importedBrowserFolderRank(for: title, source: inheritedSource) {
+        switch importedBrowserFolderRank(for: title) {
         case 0:  // Chrome
             return 1
         case 3:  // Safari
@@ -2248,16 +1757,9 @@ private extension LocalStore {
     }
 
     /// Where an imported-browser folder sorts among its kind at the Space root:
-    /// Chrome 0, Arc 1, Dia 2, Safari 3 — the order of the import window's
+    /// Chrome 0, Safari 3 — the order of the import window's
     /// rows. Nil for any other folder.
-    static func importedBrowserFolderRank(for title: String, source: Int) -> Int? {
-        if source == 3 || title == importedFromArcFolderTitle {
-            return 1
-        }
-        if title == importedFromDiaFolderTitle {
-            return 2
-        }
-
+    static func importedBrowserFolderRank(for title: String) -> Int? {
         let lowercasedTitle = title.lowercased()
         if lowercasedTitle.contains("chrome") {
             return 0
@@ -2291,448 +1793,3 @@ extension LocalStore {
         return URL(string: "https://\(raw)")
     }
 }
-
-// MARK: - Bulk insertion for sync landing
-
-extension LocalStore {
-    /// A bookmark/folder row for bulk insertion, with `index` precomputed by the caller's §4.10 rank
-    /// projection.
-    struct BulkBookmarkInsert {
-        var guid: String
-        /// Account sync identity, persisted with the row in one transaction so no second landing write can
-        /// fail.
-        var syncId: String?
-        var title: String
-        /// Folders carry a placeholder URL.
-        var url: URL
-        var index: Int
-        var isFolder: Bool
-        /// nil attaches directly to this Space's canonical root.
-        var parentGuid: String?
-        var spaceId: String
-        var profileId: String
-        var createdDate: Date
-        var contentUpdatedDate: Date?
-        var secondaryUrl: URL?
-        var secondaryTitle: String?
-        /// The `TabSource` raw value.
-        var source: Int
-
-        init(guid: String,
-             syncId: String? = nil,
-             title: String,
-             url: URL,
-             index: Int,
-             isFolder: Bool,
-             parentGuid: String?,
-             spaceId: String,
-             profileId: String,
-             createdDate: Date,
-             contentUpdatedDate: Date? = nil,
-             secondaryUrl: URL? = nil,
-             secondaryTitle: String? = nil,
-             source: Int = 0) {
-            self.guid = guid
-            self.syncId = syncId
-            self.title = title
-            self.url = url
-            self.index = index
-            self.isFolder = isFolder
-            self.parentGuid = parentGuid
-            self.spaceId = spaceId
-            self.profileId = profileId
-            self.createdDate = createdDate
-            self.contentUpdatedDate = contentUpdatedDate
-            self.secondaryUrl = secondaryUrl
-            self.secondaryTitle = secondaryTitle
-            self.source = source
-        }
-    }
-
-    /// Insert N siblings with precomputed indices, bypassing `insert(node:to:at:in:)`, and normalize each
-    /// touched parent once at transaction end.
-    ///
-    /// The single-row bookmark/folder helpers fetch siblings and normalize on every insert: 250 rows in one
-    /// folder cause 250 fetches and full reorders, quadratic work inside the single transaction required by
-    /// §4.5. UI keeps the existing single-row path.
-    func insertBookmarksBulkThrowing(_ rows: [BulkBookmarkInsert]) async throws {
-        _ = try await performBackgroundWriteAndWaitThrowing { context in
-            try self.insertBookmarksBulkBody(rows, in: context)
-        }
-    }
-
-    /// Returns the number of normalized parents, equal to the number of `normalizeIndexes` calls.
-    @discardableResult
-    func insertBookmarksBulkBody(_ rows: [BulkBookmarkInsert],
-                                 in context: ModelContext) throws -> Int {
-        guard !rows.isEmpty else { return 0 }
-        var profilesById: [String: ProfileModel] = [:]
-        var insertedByGuid: [String: TabDataModel] = [:]
-        var touchedParents: [String: TabDataModel] = [:]
-
-        for row in rows {
-            let profile: ProfileModel
-            if let cached = profilesById[row.profileId] {
-                profile = cached
-            } else {
-                guard let resolved = try self.profile(with: row.profileId,
-                                                      in: context,
-                                                      createIfNeeded: true) else {
-                    throw LocalStoreWriteError.rowNotFound
-                }
-                profilesById[row.profileId] = resolved
-                profile = resolved
-            }
-
-            // Parents can precede their children in this batch (§4.4 topological order); check already
-            // inserted batch rows before persisted rows.
-            let parent: TabDataModel
-            if let parentGuid = row.parentGuid {
-                if let pending = insertedByGuid[parentGuid] {
-                    parent = pending
-                } else if let existing = try bookmarkNode(with: parentGuid, in: context),
-                          existing.dataType == .bookmarkFolder {
-                    parent = existing
-                } else {
-                    throw LocalStoreWriteError.rowNotFound
-                }
-            } else {
-                if let root = try existingBookmarkRoot(profileId: row.profileId,
-                                                       spaceId: row.spaceId,
-                                                       in: context) {
-                    parent = root
-                } else {
-                    // Review A4: a Space that exists but has never materialized its root (the
-                    // default Space on a fresh device, or a pre-Spaces row never opened in a
-                    // window) must not park the account's whole bookmark batch forever. This is
-                    // a write transaction already, so materialize the root the way Space
-                    // creation does. A Space row that is absent altogether still parks.
-                    let spaceId = row.spaceId
-                    let profileId = row.profileId
-                    let spaceDescriptor = FetchDescriptor<SpaceModel>(
-                        predicate: #Predicate<SpaceModel> { $0.spaceId == spaceId && $0.profileId == profileId })
-                    guard try context.fetchCount(spaceDescriptor) > 0,
-                          let root = try bookmarkRoot(profileId: profileId, spaceId: spaceId,
-                                                      in: context, createIfNeeded: true) else {
-                        throw LocalStoreWriteError.rowNotFound
-                    }
-                    parent = root
-                }
-            }
-
-            let node = TabDataModel(title: row.title,
-                                    guid: row.guid,
-                                    index: row.index,
-                                    url: row.url,
-                                    favicon: nil as Data?,
-                                    createdDate: row.createdDate,
-                                    updatedDate: row.createdDate)
-            node.dataType = row.isFolder ? TabDataType.bookmarkFolder : TabDataType.bookmark
-            node.spaceId = row.spaceId
-            node.profileId = row.profileId
-            node.isCreatedByChromium = false
-            node.secondaryUrl = row.secondaryUrl
-            node.secondaryTitle = row.secondaryTitle
-            node.source = row.source
-            node.syncId = row.syncId
-            node.contentUpdatedDate = row.contentUpdatedDate
-            // Insert before assigning either relationship. Sync landing (R-exec-2) follows this order for both
-            // `parent` and `profile`, just as scope migration must.
-            context.insert(node)
-            node.profile = profile
-            node.parent = parent
-
-            insertedByGuid[row.guid] = node
-            touchedParents[parent.guid] = parent
-        }
-
-        for parent in touchedParents.values {
-            normalizeIndexes(for: try children(of: parent, in: context))
-        }
-        return touchedParents.count
-    }
-}
-
-// MARK: - One remote landing round (sync only, §4.5 / R-exec-2)
-
-/// §4.5 requires all rows in a remote landing round to share one transaction: any error means none landed.
-///
-/// Existing throwing helpers each enqueue and await their own serialized
-/// `performBackgroundWriteAndWaitThrowing` (LocalStore.swift:466). Calling them separately creates N
-/// transactions; nesting them inside a write deadlocks behind the waiting outer block.
-///
-/// Keep this extension in this file to access private move/update/delete bodies and bookmark/children/index
-/// helpers, as on the Task 2b pin side. Single-row throwing APIs remain available; this batch entry reuses
-/// their bodies so UI and sync behavior cannot diverge.
-extension LocalStore {
-    /// Apply the entire preordered bookmark batch in one transaction. `BookmarkApplyBatch` supplies §4.4
-    /// three-phase topological order; never reorder operations here.
-    ///
-    /// 1. Recheck the import lock inside the write (§4.9 item 3), covering imports started after the round's
-    /// preliminary read. Refuse the entire batch, roll back and retry next round, equivalent to parking that
-    /// Space's bookmarks.
-    /// 2. Coalesce consecutive creates using `insertBookmarksBulkBody`, preserving relative order and avoiding
-    /// repeated sibling fetches/reorders for each insert.
-    /// 3. Normalize each touched parent once at the end (§4.10); per-operation normalization alone does not
-    /// ensure final dense indices.
-    ///
-    /// Remote creates carrying `contentUpdatedDate` use bulk insertion because single-row create APIs lack
-    /// that argument (Task 2a item 3).
-    func applyBookmarkSyncBatchThrowing(_ ops: [BookmarkApplyOp]) async throws {
-        guard !ops.isEmpty else { return }
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.applyBookmarkSyncBatchBody(ops, in: context)
-        }
-    }
-
-    /// Clear all bookmark identities on account exit/sync reset (§9.2) in one bulk write, avoiding one
-    /// transaction per row. Only bookmarks and folders use this `syncId` column; pins derive identity from
-    /// `(pinLineageId, owner)` (§3.2).
-    @discardableResult
-    func clearAllBookmarkSyncIdsThrowing() async throws -> Int {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            let bookmarkRaw = TabDataType.bookmark.rawValue
-            let folderRaw = TabDataType.bookmarkFolder.rawValue
-            let descriptor = FetchDescriptor<TabDataModel>(
-                predicate: #Predicate<TabDataModel> {
-                    ($0.type == bookmarkRaw || $0.type == folderRaw) && $0.syncId != nil
-                }
-            )
-            let rows = try context.fetch(descriptor)
-            for row in rows { row.syncId = nil }
-            return rows.count
-        }
-    }
-
-    /// Transaction body, extracted solely for readability; it has one caller.
-    private func applyBookmarkSyncBatchBody(_ ops: [BookmarkApplyOp],
-                                            in context: ModelContext) throws {
-        try refuseIfImporting(ops, in: context)
-
-        // Record touched parent GUIDs for final normalization, not models: children are deleted before
-        // parents, so a retained model may already be deleted by transaction end and unsafe to read.
-        var touchedParentGuids = Set<String>()
-        func remember(_ node: TabDataModel?) {
-            guard let node else { return }
-            touchedParentGuids.insert(node.guid)
-        }
-
-        var pendingCreates: [BulkBookmarkInsert] = []
-        func flushCreates() throws {
-            guard !pendingCreates.isEmpty else { return }
-            try insertBookmarksBulkBody(pendingCreates, in: context)
-            for row in pendingCreates {
-                guard let parentGuid = row.parentGuid else { continue }
-                touchedParentGuids.insert(parentGuid)
-            }
-            pendingCreates.removeAll(keepingCapacity: true)
-        }
-
-        for op in ops {
-            switch op {
-            case .create(let row):
-                pendingCreates.append(Self.bulkInsert(from: row))
-
-            case .claim(let guid, let syncId):
-                try flushCreates()
-                guard let node = try bookmarkNode(with: guid, in: context) else {
-                    throw LocalStoreWriteError.rowNotFound
-                }
-                // `bookmarkNode(with:)` matches any `TabDataModel` by GUID, including tabs and pins. Claiming
-                // a non-bookmark would hide it from the next snapshot, making diff emit a tombstone for the
-                // remote entity.
-                guard node.dataType == .bookmark || node.dataType == .bookmarkFolder else {
-                    throw LocalStoreWriteError.rowNotFound
-                }
-                // Claim identity only once (§6.1). Reclaiming the same UUID is idempotent; replacing it fails
-                // closed because the old identity would lose its local row and be tombstoned. This guard
-                // enforces the planner invariant at the write boundary (R-M3-3-14).
-                guard node.syncId == nil || node.syncId == syncId else {
-                    throw LocalStoreWriteError.rowAlreadyMapped
-                }
-                // Claiming is not editing: write identity without changing `contentUpdatedDate`.
-                node.syncId = syncId
-
-            case .move(let guid, let parentGuid, let spaceId, let index, let recordsLocationEdit):
-                try flushCreates()
-                // Remember the old parent before moving so it is normalized too.
-                remember(try bookmarkNode(with: guid, in: context)?.parent)
-                // Use the destination Space's Profile, falling back to the row's existing Profile if the Space
-                // is absent locally, matching `moveBookmarkThrowing` (:603).
-                let targetProfileId = try profileId(ofSpaceId: spaceId, in: context)
-                    ?? bookmarkNodeProfileId(guid, in: context)
-                    ?? Self.defaultProfileId
-                // Landing, not editing: write the location without changing `locationUpdatedDate`, the same
-                // rule `.claim` follows for `contentUpdatedDate`. Restamping here would republish every
-                // landed move as this device's own edit. The one exception the caller can ask for is the
-                // C4 lift out of a remotely deleted folder, which this device must defend against peers
-                // that still hold the old parent (see `BookmarkApplyOp.move`).
-                try moveBookmarkBody(guid,
-                                     profileId: targetProfileId,
-                                     toParentGuid: parentGuid,
-                                     toSpaceId: spaceId,
-                                     index: index,
-                                     strictParent: true,
-                                     recordsLocationEdit: recordsLocationEdit,
-                                     in: context)
-                remember(try bookmarkNode(with: guid, in: context)?.parent)
-
-            case .update(let guid, let fields):
-                try flushCreates()
-                // Outer optional selects whether to change; inner optional selects the value. A nil inner
-                // title clears it, so explicitly pass `allowsEmptyTitle: true` regardless of defaults (Task 2a
-                // item 4). A nil inner URL means unchanged: bookmarks cannot lose their URL.
-                // `updateBookmarkBody` never reads `profileId`, so avoid an otherwise wasted row fetch per
-                // update.
-                try updateBookmarkBody(guid,
-                                       profileId: Self.defaultProfileId,
-                                       title: fields.title.map { $0 ?? "" },
-                                       url: fields.url.flatMap { $0?.absoluteString },
-                                       secondaryUrl: fields.secondaryUrl.map { $0?.absoluteString },
-                                       secondaryTitle: fields.secondaryTitle,
-                                       allowsEmptyTitle: true,
-                                       in: context)
-
-            case .delete(let guid):
-                try flushCreates()
-                guard let node = try bookmarkNode(with: guid, in: context) else {
-                    throw LocalStoreWriteError.rowNotFound
-                }
-                // `deleteBookmarkBody` calls `context.delete(node)`; `children` cascades deletion
-                // (TabDataModelSchemaV10.swift:112). Protect descendants not named by the batch, especially
-                // unpublished local rows. Named children are deleted first or moved away in phase 1; R-M3-3-17
-                // requires every other child to be deleted or lifted to the Space root before its folder.
-                // Violation rolls back for retry instead of silently losing user data.
-                //
-                // Explicitly exclude `isDeleted` children: child-first deletes have already marked them in
-                // this context. Pending-change fetch behavior was not runtime-tested in this milestone
-                // (compile-only), and §4.4 suggests the opposite behavior. Filtering works either way and
-                // prevents every nonempty remote folder deletion from failing forever with `folderNotEmpty`.
-                if node.dataType == .bookmarkFolder,
-                   try children(of: node, in: context).contains(where: { !$0.isDeleted }) {
-                    throw LocalStoreWriteError.folderNotEmpty
-                }
-                remember(node.parent)
-                try deleteBookmarkBody(guid, profileId: node.profileId ?? Self.defaultProfileId,
-                                       in: context)
-            }
-        }
-        try flushCreates()
-
-        // §4.10: project once per parent. Skip parents deleted by this batch; their children have already been
-        // removed by cascade.
-        for parentGuid in touchedParentGuids {
-            guard let parent = try bookmarkNode(with: parentGuid, in: context) else { continue }
-            normalizeIndexes(for: try children(of: parent, in: context))
-        }
-    }
-
-    /// Refuse the entire batch if any touched Space is importing. Resolve Spaces for GUID-only
-    /// claim/update/delete operations inside the transaction; a round-start snapshot may already be stale.
-    private func refuseIfImporting(_ ops: [BookmarkApplyOp], in context: ModelContext) throws {
-        var spaceIds = Set<String>()
-        for op in ops {
-            switch op {
-            case .create(let row):
-                spaceIds.insert(row.spaceId)
-            case .move(_, _, let spaceId, _, _):
-                spaceIds.insert(spaceId)
-            case .claim(let guid, _), .update(let guid, _), .delete(let guid):
-                if let spaceId = try bookmarkNode(with: guid, in: context)?.spaceId {
-                    spaceIds.insert(spaceId)
-                }
-            }
-        }
-        for spaceId in spaceIds.sorted() where ImportTargetLock.shared.isImporting(into: spaceId) {
-            // Importing is transient, unlike `targetNotWritable`: park and retry instead of treating it as
-            // structural failure. Sort so concurrent imports report a deterministic Space rather than Set
-            // iteration order.
-            throw LocalStoreWriteError.spaceImporting(spaceId: spaceId)
-        }
-    }
-
-    private static func bulkInsert(from row: PhiLocalBookmark) -> BulkBookmarkInsert {
-        BulkBookmarkInsert(guid: row.guid,
-                           syncId: row.syncId,
-                           title: row.title,
-                           url: row.url,
-                           index: row.index,
-                           isFolder: row.isFolder,
-                           parentGuid: row.parentGuid,
-                           spaceId: row.spaceId,
-                           profileId: row.profileId,
-                           createdDate: row.createdDate,
-                           contentUpdatedDate: row.contentUpdatedDate,
-                           secondaryUrl: row.secondaryUrl,
-                           secondaryTitle: row.secondaryTitle,
-                           source: row.source)
-    }
-}
-
-#if DEBUG
-// MARK: - Test hooks
-
-extension LocalStore {
-    /// Create a Space and immediately materialize its bookmark root, avoiding repeated six-field `SpaceModel`
-    /// setup in tests.
-    func createSpaceForTesting(spaceId: String, profileId: String) async throws {
-        try await createSpaceThrowing(profileId: profileId,
-                                      name: spaceId,
-                                      colorHex: "#000000",
-                                      iconName: "star",
-                                      spaceId: spaceId,
-                                      createdDate: nil)
-    }
-
-    /// Insert with the supplied index without normalization to create sibling index collisions.
-    func insertBookmarkWithIndexForTesting(guid: String,
-                                           parentGuid: String,
-                                           index: Int) async throws {
-        _ = try await performBackgroundWriteAndWaitThrowing { context -> Bool in
-            guard let parent = try self.bookmarkNode(with: parentGuid, in: context) else {
-                throw LocalStoreWriteError.rowNotFound
-            }
-            let now = Date()
-            let node = TabDataModel(title: guid,
-                                    guid: guid,
-                                    index: index,
-                                    url: URL(string: "https://example.com/\(guid)")!,
-                                    favicon: nil as Data?,
-                                    createdDate: now,
-                                    updatedDate: now)
-            node.dataType = TabDataType.bookmark
-            node.spaceId = parent.spaceId
-            node.profileId = parent.profileId
-            node.isCreatedByChromium = false
-            context.insert(node)
-            node.profile = parent.profile
-            node.parent = parent
-            return true
-        }
-    }
-
-    /// Detach `SpaceModel.bookmarkRoot` while preserving its root row, creating an orphan root with a broken
-    /// relationship.
-    func detachBookmarkRootRelationshipForTesting(spaceId: String) async throws {
-        _ = try await performBackgroundWriteAndWaitThrowing { context -> Bool in
-            let descriptor = FetchDescriptor<SpaceModel>(
-                predicate: #Predicate<SpaceModel> { $0.spaceId == spaceId }
-            )
-            guard let space = try context.fetch(descriptor).first else {
-                throw LocalStoreWriteError.rowNotFound
-            }
-            space.bookmarkRoot = nil
-            return true
-        }
-    }
-
-    /// Run the same body as `insertBookmarksBulkThrowing`, returning the normalization count for tests.
-    func insertBookmarksBulkThrowingCountingNormalizations(
-        _ rows: [BulkBookmarkInsert]
-    ) async throws -> Int {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.insertBookmarksBulkBody(rows, in: context)
-        }
-    }
-}
-#endif

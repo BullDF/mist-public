@@ -12,7 +12,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     private enum AccessibilityID {
         static let sidebarButton = "sidebarHeader.sidebarButton"
         static let searchTabsButton = "sidebarHeader.searchTabsButton"
-        static let upgradeButton = "sidebarHeader.upgradeButton"
         static let backButton = "sidebarHeader.backButton"
         static let forwardButton = "sidebarHeader.forwardButton"
         static let refreshButton = "sidebarHeader.refreshButton"
@@ -21,7 +20,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
 
     private lazy var cancellables = Set<AnyCancellable>()
     private var sidebarButtonLeftConstraint: Constraint?
-    private var upgradeButtonLeftConstraint: Constraint?
     private var addressViewHeightConstraint: Constraint?
     private let defaultSidebarButtonTopOffset: CGFloat = 8
     private let legacySidebarButtonTopOffset: CGFloat = 15.5
@@ -35,9 +33,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     private var zoomButtonFrameObserver: NSObjectProtocol?
     private weak var observedZoomButton: NSButton?
     private var hasSetupConfigObserver = false
-    /// Currently available app update version.
-    private var availableUpdateVersion: String?
-    private var currentWidth: CGFloat = 0
     private var isRefreshButtonHovered = false
     private var didPlayRefreshAnimationForCurrentHover = false
 
@@ -88,25 +83,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         return button
     }()
 
-    private lazy var upgradeButton: HoverableButtonNSView = {
-        let config = HoverableButtonConfig(
-            title: NSLocalizedString("sidebar.updateReminder.updateButton", value: "Update", comment: "Sidebar header upgrade button title"),
-            displayMode: .titleOnly,
-            backgroundColor: .themeColor,
-            hoverBackgroundColor: .themeColorOnHover,
-            titleColor: .custom(light: .white, dark: .white),
-            titleFont: .system(size: 11, weight: .medium),
-            edgeInsets: EdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4),
-            cornerRadius: 6
-        )
-        let button = HoverableButtonNSView(config: config) { [weak self] in
-            self?.upgradeButtonClicked()
-        }
-        button.isHidden = true
-        return button
-    }()
-    
-    
     private lazy var backButton: HoverableButtonNSView = {
         let image = NSImage.configureSymbolImage(systemName: "chevron.left", pointSize: 13, weight: .regular, color: .black)
         let config = HoverableButtonConfig(image: .sidebarBackward,
@@ -266,7 +242,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
 
         addSubview(sidebarButton)
         addSubview(searchTabsButton)
-        addSubview(upgradeButton)
 
         sidebarButton.snp.makeConstraints { make in
             make.top.equalToSuperview().offset(sidebarButtonTopOffset(for: showInSidebar))
@@ -290,12 +265,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             make.size.equalTo(NSSize(width: 24, height: 24))
         }
 
-        upgradeButton.snp.makeConstraints { make in
-            make.centerY.equalTo(sidebarButton)
-            upgradeButtonLeftConstraint = make.left.equalToSuperview().offset(sidebarButtonLeftOffset).constraint
-            make.size.equalTo(NSSize(width: 56, height: 24))
-        }
-        
         addSubview(stackView)
         stackView.snp.makeConstraints { make in
             make.centerY.equalTo(sidebarButton)
@@ -316,7 +285,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     private func configureAccessibilityIdentifiers() {
         configureButtonAccessibility(sidebarButton, identifier: AccessibilityID.sidebarButton)
         configureButtonAccessibility(searchTabsButton, identifier: AccessibilityID.searchTabsButton)
-        configureButtonAccessibility(upgradeButton, identifier: AccessibilityID.upgradeButton)
         configureButtonAccessibility(backButton, identifier: AccessibilityID.backButton)
         configureButtonAccessibility(forwardButton, identifier: AccessibilityID.forwardButton)
         configureButtonAccessibility(refreshButton, identifier: AccessibilityID.refreshButton)
@@ -434,7 +402,7 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             updateSidebarButtonLeftConstraint()
         }
 
-        updateUpgradeAndSidebarVisibility(layoutMode: layoutMode)
+        updateSidebarControlsVisibility(layoutMode: layoutMode)
     }
 
     /// Observe configuration changes
@@ -520,7 +488,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         AppLogDebug("[SidebarHeader] updateSidebarButtonLeftConstraint update offset=\(x + 10)")
         sidebarButtonLeftOffset = x + 10
         sidebarButtonLeftConstraint?.update(offset: sidebarButtonLeftOffset)
-        upgradeButtonLeftConstraint?.update(offset: sidebarButtonLeftOffset)
         needsLayout = true
         layoutSubtreeIfNeeded()
     }
@@ -613,16 +580,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
             }
             .store(in: &cancellables)
         
-        // React to width changes that may affect header layout.
-        publisher(for: \.frame)
-            .map { $0.width }
-            .removeDuplicates()
-            .sink { [weak self] newWidth in
-                guard let self else { return }
-                self.handleWidthChange(newWidth)
-            }
-            .store(in: &cancellables)
-        
         // Position sidebar button relative to the window's traffic-light buttons
         updateSidebarButtonLeftConstraint()
 
@@ -642,27 +599,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
                 .store(in: &cancellables)
         }
 
-        #if !PHI_OSS_BUILD
-        // Show the upgrade button once Sparkle reports a downloaded update.
-        NotificationCenter.default.publisher(for: .sparkleDidDownloadUpdate)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] notification in
-                let displayVersion = notification.userInfo?["displayVersion"] as? String ?? ""
-                self?.showUpgradeButton(version: displayVersion)
-            }
-            .store(in: &cancellables)
-
-        NotificationCenter.default.publisher(for: .sparkleDidSkipUpdate)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.hideUpgradeButton()
-            }
-            .store(in: &cancellables)
-        #endif
-
-        #if DEBUG
-        applyUITestUpdateOverrideIfNeeded()
-        #endif
     }
 
     func refreshFloatingTrafficLights() {
@@ -673,33 +609,6 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         floatingTrafficLightsView.refreshWindowButtons()
     }
 
-    #if DEBUG
-    private func applyUITestUpdateOverrideIfNeeded() {
-        let arguments = ProcessInfo.processInfo.arguments
-        guard arguments.contains("-uitest"),
-              let versionFlagIndex = arguments.firstIndex(of: "-sidebarHeaderUpdateVersion"),
-              arguments.indices.contains(versionFlagIndex + 1) else {
-            return
-        }
-
-        let version = arguments[versionFlagIndex + 1]
-        guard !version.isEmpty else {
-            return
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.currentWidth = self.frame.width
-            self.showUpgradeButton(version: version)
-        }
-    }
-    #endif
-    
-    private func handleWidthChange(_ newWidth: CGFloat) {
-        currentWidth = newWidth
-        updateUpgradeAndSidebarVisibility(layoutMode: browserState?.layoutMode ?? .performance)
-    }
-    
     @objc private func sidebarButtonClicked() {
         SpaceSessionControllersManager.shared.activeWindowController?.browserState.toggleSidebar(nil)
     }
@@ -721,11 +630,11 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
     }
     
     @objc private func refreshButtonClicked() {
-        browserState?.focusingTab?.reload()
+        browserState?.reloadFocusingTab()
     }
 
     @objc private func stopButtonClicked() {
-        browserState?.focusingTab?.stopLoading()
+        browserState?.stopLoadingFocusingTab()
     }
 
     private func updateStopRefreshButton(isLoading: Bool, progress: CGFloat) {
@@ -735,36 +644,8 @@ class SidebarHeaderView: NSView, TitlebarAwareHitTestable {
         stopButton.isHidden = !showStop
     }
 
-    private func upgradeButtonClicked() {
-        guard availableUpdateVersion != nil else { return }
-        #if !PHI_OSS_BUILD
-        AppController.shared.checkForUpdate(nil)
-        #endif
-    }
-
-    /// Shows the upgrade button for a downloaded update.
-    private func showUpgradeButton(version: String) {
-        availableUpdateVersion = version
-        updateUpgradeAndSidebarVisibility(layoutMode: browserState?.layoutMode ?? .performance)
-    }
-
-    /// Hides the upgrade button.
-    private func hideUpgradeButton() {
-        availableUpdateVersion = nil
-        updateUpgradeAndSidebarVisibility(layoutMode: browserState?.layoutMode ?? .performance)
-    }
-
-    private func updateUpgradeAndSidebarVisibility(layoutMode: LayoutMode) {
-        guard availableUpdateVersion != nil else {
-            upgradeButton.isHidden = true
-            sidebarButton.isHidden = false
-            searchTabsButton.isHidden = layoutMode != .balanced
-            return
-        }
-
-        let tooNarrowForUpgrade = currentWidth <= 225
-        upgradeButton.isHidden = tooNarrowForUpgrade
-        sidebarButton.isHidden = tooNarrowForUpgrade ? false : (layoutMode != .balanced)
-        searchTabsButton.isHidden = layoutMode != .balanced || sidebarButton.isHidden
+    private func updateSidebarControlsVisibility(layoutMode: LayoutMode) {
+        sidebarButton.isHidden = false
+        searchTabsButton.isHidden = layoutMode != .balanced
     }
 }

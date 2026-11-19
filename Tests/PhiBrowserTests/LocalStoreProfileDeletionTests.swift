@@ -7,7 +7,6 @@ import SwiftData
 import XCTest
 @testable import Phi
 
-/// `LocalStore.deleteProfileRowCascadeThrowing` (docs/sync.md, "Profile deletion and rename").
 @MainActor
 final class LocalStoreProfileDeletionTests: XCTestCase {
     private var directory: URL?
@@ -36,35 +35,20 @@ final class LocalStoreProfileDeletionTests: XCTestCase {
         }
     }
 
-    /// A Profile deleted after a remote Space deletion: its hidden Space and that Space's rows go
-    /// with it, so nothing reappears bound to a missing Profile once the sync table is reset.
-    func testTheCascadeRemovesHiddenSpacesProfilePinsAndTheProfileRow() async throws {
+    func testTheCascadeRemovesProfilePinsAndProfileRowAndKeepsOtherProfiles() async throws {
         let store = try makeStore()
-        for (spaceId, profileId) in [("hidden", "P2"), ("other", "P3")] {
-            try await store.createSpaceThrowing(profileId: profileId, name: spaceId, colorHex: "#3A6FF8",
-                                                iconName: "phi:a", spaceId: spaceId, createdDate: nil)
-        }
-        try await insertTab("in-hidden", profileId: "P2", spaceId: "hidden", in: store)
         try await insertTab("profile-pin", profileId: "P2", spaceId: nil, in: store)
         try await insertTab("other-pin", profileId: "P3", spaceId: nil, in: store)
         try await store.performBackgroundWriteAndWaitThrowing { context in
             context.insert(ProfileModel(profileId: "P2"))
         }
-
-        try await store.deleteProfileRowCascadeThrowing(profileId: "P2", hiddenSpaceIds: ["hidden"])
-        // Idempotent: the engine runs it again after a crash.
-        try await store.deleteProfileRowCascadeThrowing(profileId: "P2", hiddenSpaceIds: ["hidden"])
-
-        let (spaces, tabs, profiles) = try await store.performBackgroundWriteAndWaitThrowing { context in
-            (try context.fetch(FetchDescriptor<SpaceModel>()).map(\.spaceId),
-             try context.fetch(FetchDescriptor<TabDataModel>()).map(\.guid),
+        try await store.deleteProfileRowCascadeThrowing(profileId: "P2")
+        try await store.deleteProfileRowCascadeThrowing(profileId: "P2")
+        let (tabs, profiles) = try await store.performBackgroundWriteAndWaitThrowing { context in
+            (try context.fetch(FetchDescriptor<TabDataModel>()).map(\.guid),
              try context.fetch(FetchDescriptor<ProfileModel>()).map(\.profileId))
         }
-        XCTAssertFalse(spaces.contains("hidden"))
-        XCTAssertTrue(spaces.contains("other"))
-        XCTAssertFalse(tabs.contains("in-hidden"))
-        XCTAssertFalse(tabs.contains("profile-pin"))
-        XCTAssertTrue(tabs.contains("other-pin"))
+        XCTAssertEqual(tabs, ["other-pin"])
         XCTAssertFalse(profiles.contains("P2"))
     }
 

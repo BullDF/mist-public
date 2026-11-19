@@ -29,13 +29,6 @@ AppLogInfo("User logged in successfully")
 AppLogError("Network connection failed")
 AppLogWarn("Low memory condition")
 AppLogDebug("Debug information")
-AppLogVerbose("Detailed debugging info")
-
-// Convenience functions
-AppLogUserAction("Button Clicked", details: "Settings button")
-AppLogNetwork("GET", url: "https://api.example.com", statusCode: 200)
-AppLogPerformance("Database Query", duration: 0.045)
-AppLogMemoryWarning("Custom memory warning")
 ```
 
 ## Objective-C Usage
@@ -77,8 +70,8 @@ Where:
 - **Error** (❌): Critical errors that need immediate attention
 - **Warning** (⚠️): Potentially problematic situations
 - **Info** (ℹ️): General application flow information
-- **Debug** (🐛): Debugging information (filtered in release builds)
-- **Verbose** (📝): Detailed debugging information (filtered in release builds)
+- **Debug** (🐛): Debugging information
+- **Verbose** (📝): Detailed debugging information
 
 ## Convenience Function Prefixes
 
@@ -91,8 +84,7 @@ Where:
 
 Logging is configured in `Logging.swift` with the `setupLogging()` function:
 
-- **Debug builds**: All log levels to both console and file
-- **Release builds**: Warning and error levels only
+- **Log levels**: All levels to both console and file
 - **File rotation**: 24-hour rotation with 7-day retention
 - **File size limit**: 5MB per log file
 - **Log directory**: Application Support/[Bundle ID]/Logs

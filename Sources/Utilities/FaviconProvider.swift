@@ -21,8 +21,6 @@ struct FaviconConfiguration {
 
     static let `default` = FaviconConfiguration()
 
-    static let noCornerRadius = FaviconConfiguration(cornerRadius: 0)
-
     /// Path prefixes for internal scheme URLs (`phi://` or `chrome://`) that should
     /// display the default Phi favicon instead of fetching a remote icon.
     static let defaultFaviconPathPrefixes: [String] = [
@@ -206,10 +204,6 @@ extension FaviconDataProvider {
         FaviconCache.setupCache()
     }
     
-    static func clearCache(for url: URL) {
-        FaviconCache.clearCache(for: url)
-    }
-    
     static func clearCache(for url: URL) async {
         await FaviconCache.clearCache(for: url)
     }
@@ -232,25 +226,9 @@ extension FaviconDataProvider.FaviconCache {
         return FaviconDataProvider(pageURL: url).cacheKey
     }
 
-    /// Returns the cache key for a URL string.
-    static func cacheKey(for urlString: String) -> String? {
-        guard let url = URL(string: urlString) else { return nil }
-        return cacheKey(for: url)
-    }
-
-    /// Clears the cached favicon for one URL.
-    static func clearCache(for url: URL) {
-        let key = cacheKey(for: url)
-        KingfisherManager.shared.cache.removeImage(forKey: key)
-    }
-    
     static func clearCache(for url: URL) async {
         let key = cacheKey(for: url)
         try? await KingfisherManager.shared.cache.removeImage(forKey: key)
     }
 
-    /// Clears the entire favicon cache.
-    static func clearAllCache() {
-        KingfisherManager.shared.cache.clearCache()
-    }
 }

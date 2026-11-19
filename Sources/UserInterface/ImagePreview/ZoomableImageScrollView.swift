@@ -219,10 +219,6 @@ final class ZoomableImageScrollView: NSScrollView {
         zoom(by: factor, anchorContentPoint: anchorContentPt, anchorViewportPoint: anchorInContentView)
     }
 
-    private func zoom(by factor: CGFloat, anchorContentPoint: CGPoint) {
-        zoom(by: factor, anchorContentPoint: anchorContentPoint, anchorViewportPoint: nil)
-    }
-
     private func zoom(by factor: CGFloat, anchorContentPoint: CGPoint, anchorViewportPoint: CGPoint?) {
         guard intrinsicImageSize.width > 0, intrinsicImageSize.height > 0 else { return }
         let clampMin = min(fitScale, Self.subFitMinimumScaleRelativeToOriginal)

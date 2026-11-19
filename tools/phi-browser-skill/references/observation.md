@@ -1,8 +1,8 @@
 # Observation and page toolkit — detail
 
 Deep semantics behind the observation stack in SKILL.md: scan options,
-viewport control, the canvas-editor policy, console/network diagnostics, and
-page export. Read the matching section before testing responsive layouts,
+viewport screenshots, the canvas-editor policy, console/network diagnostics, and
+page export. Read the matching section before taking screenshots,
 editing a canvas-like app (Google Docs/Sheets, Notion, Figma, …), auditing a
 page's console/network health, or exporting PDFs/MHTML/media.
 
@@ -28,28 +28,9 @@ page's console/network health, or exporting PDFs/MHTML/media.
 The tab renders at the real window's **content panel** size — the same size a
 regular tab would use — reported by the app and re-checked before each action,
 so it also follows the user resizing their window mid-task.
-**Do not change the viewport on normal sites.** To read more of a long page
+**Never resize or zoom a tab.** To read more of a long page
 (an article, a feed, search results), scroll and re-observe —
 `observe({diff: true})` keeps that cheap — instead of growing the viewport.
-
-`setViewport({width?, height?})` exists for the exceptions only:
-
-- Testing responsive layouts at an explicit width (that IS the tool for it).
-- A size the user explicitly asked for (e.g. capture a page at a given
-  resolution).
-
-Omitted dimensions keep tracking the content panel, and `setViewport()` with
-no args resets to it. Both dimensions clamp to 320–4096.
-
-Notes:
-- Per-tab: it never affects other tabs, even of the same site (unlike Chrome's
-  Ctrl± zoom). Restored when you `switchTab` back; reset between heredoc
-  rounds — re-apply after `enterContext` if still needed.
-- A user surfacing the Space always sees the WHOLE viewport scaled to fit
-  their window, never a clipped slice.
-- Screenshots capture the full viewport at full resolution; refs and
-  click/hover/scroll coordinates keep working (the widget-space transform is
-  handled internally).
 
 ## Canvas-like editors (Google Docs, Sheets, Notion, Figma, …)
 

@@ -24,7 +24,6 @@ enum ReaderDocumentBuilder {
     /// from the default so every press moves a full step.
     static let minFontSize = 15
     static let maxFontSize = 39
-    static let fontSizeStep = 2
     static let defaultFontSize = 19
 
     static func makeDocument(article: ReaderArticle,

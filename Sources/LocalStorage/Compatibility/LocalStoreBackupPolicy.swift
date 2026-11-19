@@ -8,7 +8,6 @@ import Foundation
 struct LocalStoreBackupContext {
     let activeStoreFormatVersion: Int
     let currentStoreFormatVersion: Int
-    let existingBackups: [LocalStoreBackupRecord]
 }
 
 struct LocalStoreBackupPolicy {

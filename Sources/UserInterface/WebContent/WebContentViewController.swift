@@ -55,33 +55,8 @@
 
 import Cocoa
 import Combine
-import PostHog
 import SnapKit
 import SwiftUI
-
-struct AIChatSidebarMetricsSession {
-    enum Transition: Equatable {
-        case opened
-        case closed(durationSeconds: TimeInterval)
-    }
-
-    private var openedAtUptime: TimeInterval?
-
-    mutating func update(
-        isExpanded: Bool,
-        uptime: TimeInterval
-    ) -> Transition? {
-        if isExpanded {
-            guard openedAtUptime == nil else { return nil }
-            openedAtUptime = uptime
-            return .opened
-        }
-
-        guard let openedAtUptime else { return nil }
-        self.openedAtUptime = nil
-        return .closed(durationSeconds: max(0, uptime - openedAtUptime))
-    }
-}
 
 enum WebContentConstant {
     static let edgesSpacing: CGFloat = 8.0
@@ -126,6 +101,7 @@ class WebContentViewController: NSViewController {
     /// partner URL changes so entering or leaving a native URL renderer replaces
     /// that pane immediately instead of waiting for a focus switch.
     private var partnerContentCancellable: AnyCancellable?
+    private var partnerMarkdownCancellable: AnyCancellable?
     /// Saved superview reference while hostView is re-parented into an overlay
     /// over window.contentView for HTML5 content fullscreen. Nil when not in
     /// fullscreen.
@@ -142,8 +118,9 @@ class WebContentViewController: NSViewController {
     private enum ContentMode: Equatable {
         case nativeNtp
         case bookmarkManager
+        case app(MistAppID)
+        case markdownReader
         case webContent
-        case groupOverview(token: String)
     }
     private var contentMode: ContentMode? {
         didSet {
@@ -155,9 +132,8 @@ class WebContentViewController: NSViewController {
     
     /// Flag to prevent reentrant updates between splitViewItem and tab state
     private var isUpdatingAIChatState = false
-    private var aiChatSidebarMetricsSession = AIChatSidebarMetricsSession()
     /// Last known expanded width for AI Chat sidebar.
-    private var lastKnownAIChatWidth: CGFloat = 360
+    private var lastKnownAIChatWidth: CGFloat = 420
     /// Target width for the next expand animation.  Set before uncollapsing so
     /// `animateAIChatCollapseTransition` can temporarily raise `minimumThickness`.
     /// Cleared in the animation completion handler.
@@ -218,8 +194,6 @@ class WebContentViewController: NSViewController {
     private lazy var hostView = WebContentHostView()
     private lazy var webContentProgressBar = WebContentProgressBarView()
     private lazy var headerView = WebContentHeader(browserState: browserState)
-    private lazy var loginRequiredOverlayView = LoginRequiredOverlayView()
-    private var splitLoginRequiredViews: [Int: LoginRequiredOverlayView] = [:]
 
     var addressBarAnchorView: NSView? { headerView.addressBarAnchorView }
     /// The active tab sits on the window frame while the page card is
@@ -268,8 +242,16 @@ class WebContentViewController: NSViewController {
     private var leftContainerInsetConstraint: Constraint?
     private var splitViewLeadingConstraint: Constraint?
     private var nativeNtpController: NewTabViewController?
+    var newTabComposer: MistNewTabComposerViewController? { nativeNtpController?.composer }
+    private(set) var markdownReaderController: MarkdownReaderViewController?
+    private(set) var appPageController: (NSViewController & MistAppPage)?
+    private var appPageAddress: MistAppAddress?
+    private var appPageFactory: ((MistAppAddress) -> (NSViewController & MistAppPage)?)?
+    var browserAgentPreviewStack: BrowserAgentPreviewStack? { (appPageController as? AgentChatViewController)?.previewStack }
+    var onAgentPreviewVisibilityChanged: (() -> Void)? {
+        didSet { (appPageController as? AgentChatViewController)?.onPreviewVisibilityChanged = onAgentPreviewVisibilityChanged }
+    }
     private var bookmarkManagerController: BookmarkManagerViewController?
-    private var groupOverviewController: GroupOverviewViewController?
     /// Native renderer crash page, rebuilt per crash (it renders a fixed
     /// `CrashPageData` snapshot). Non-split only; split panes host their own
     /// crash view via `SplitPaneHostView` (Task 11).
@@ -357,9 +339,9 @@ class WebContentViewController: NSViewController {
     private var webContentSplitViewItem: NSSplitViewItem!
     private var aiChatSplitViewItem: NSSplitViewItem?
     /// Embedded AI Chat controller paired one-to-one with the associated tab.
-    private lazy var embeddedChatViewController: EmbeddedChatViewController? = {
-        guard let state = browserState else { return nil }
-        return EmbeddedChatViewController(with: state, tab: associatedTab)
+    private lazy var embeddedChatViewController: MistChatPanelViewController? = {
+        guard let state = browserState, !state.isIncognito, !state.isAgentSpace else { return nil }
+        return MistChatPanelViewController(with: state, tab: associatedTab)
     }()
 
     /// Test-only view of the page card (panel-separation style coverage).
@@ -388,7 +370,6 @@ class WebContentViewController: NSViewController {
         didSet {
             guard hasContentSurface != oldValue, isViewLoaded else { return }
             applyFills()
-            embeddedChatViewController?.hasContentSurface = hasContentSurface
             currentSplitHost?.hasContentSurface = hasContentSurface
         }
     }
@@ -416,9 +397,10 @@ class WebContentViewController: NSViewController {
     /// Each WebContentViewController is uniquely associated with one Tab
     private(set) weak var associatedTab: Tab?
     
-    init(state: BrowserState?, tab: Tab? = nil) {
+    init(state: BrowserState?, tab: Tab? = nil, appPageFactory: ((MistAppAddress) -> (NSViewController & MistAppPage)?)? = nil) {
         self.browserState = state
         self.associatedTab = tab
+        self.appPageFactory = appPageFactory
         super.init(nibName: nil, bundle: nil)
         // Subscribe to the initial tab's content-fullscreen state so a brand-new
         // controller (created when a tab is first opened) picks up future
@@ -431,6 +413,8 @@ class WebContentViewController: NSViewController {
         let tabChanged = tab !== associatedTab
         if tabChanged {
             pendingChromeRefocusOnUrlReady = false
+            hideMarkdownReaderIfNeeded()
+            markdownReaderController = nil
         }
         self.associatedTab = tab
         headerView.currentTab = tab
@@ -467,8 +451,9 @@ class WebContentViewController: NSViewController {
         // re-evaluated on every tab change too, not just on task updates.
         updateAgentSpaceOverlay()
 
-        // Restore focus whenever the associated tab changes.
-        restoreFocusForCurrentTab()
+        // Background tab arrivals refresh the same controller too. They must
+        // leave an active panel composer (or any other current responder) alone.
+        if tabChanged { restoreFocusForCurrentTab() }
     }
     
     /// Installs focus callbacks for the associated tab.
@@ -510,12 +495,12 @@ class WebContentViewController: NSViewController {
     
     override func viewDidAppear() {
         super.viewDidAppear()
+        embeddedChatViewController?.setPresented(true)
         // Mount content that waited for a window (a cold mount's web view)
         // first, so focus goes to a view that is in the window.
         flushDeferredContentUpdateIfPossible()
         // Restore focus after the view enters the hierarchy.
         restoreFocusForCurrentTab()
-        updateLoginRequiredPresentation(for: associatedTab)
         // If this controller became associated with a fullscreen tab before
         // its view was in a window (so applyContentFullscreenState bailed
         // out early), catch up now that hostView.window is available.
@@ -534,6 +519,16 @@ class WebContentViewController: NSViewController {
     }
     
     // MARK: - Focus Management
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        embeddedChatViewController?.setPresented(false)
+    }
+
+    func newPanelChat() { embeddedChatViewController?.newChat() }
+    func openPanelChatAsTab() { embeddedChatViewController?.openAsTab() }
+
+    func focusChatPanel() { embeddedChatViewController?.focusAIChat() }
     
     /// Hosted mode puts every Space's tree in the one shell window, so only
     /// the presented session may move its first responder or Chromium's
@@ -573,14 +568,12 @@ class WebContentViewController: NSViewController {
             AppLogDebug("🔍 [Focus] Restoring focus to webContent")
             focusWebContent()
         case .aiChat:
-            // Fall back to web content if AI Chat is currently collapsed.
-            if aiChatSplitViewItem?.isCollapsed == false {
-                AppLogDebug("🔍 [Focus] Restoring focus to aiChat")
-                embeddedChatViewController?.focusAIChat()
-            } else {
-                AppLogDebug("🔍 [Focus] AI Chat collapsed, restoring focus to webContent")
-                focusWebContent()
-            }
+            if let panel = embeddedChatViewController,
+               let responder = view.window?.firstResponder as? NSView,
+               responder.isDescendant(of: panel.view) { return }
+            // Returning to a page with an open panel leaves focus on the page.
+            // Explicit button and shortcut openings focus the panel separately.
+            focusWebContent()
         case nil:
             if focusingWebContentByDefault {
                 AppLogDebug("🔍 [Focus] lastFocusTarget is nil, focusing webContent")
@@ -602,14 +595,27 @@ class WebContentViewController: NSViewController {
         }
 
         if shouldShowBookmarkManager(for: tab) {
-            guard browserState?.groupOverviewState == nil,
-                  tab.crashState == nil,
+            guard tab.crashState == nil,
                   browserState?.splitGroup(forTabId: tab.guid) == nil ||
                   browserState?.focusingTab?.guid == tab.guid else {
                 return
             }
             showBookmarkManager(for: tab)
             bookmarkManagerController?.focusContent()
+            return
+        }
+
+        if shouldShowApp(for: tab) {
+            guard tab.crashState == nil, browserState?.splitGroup(forTabId: tab.guid) == nil || browserState?.focusingTab?.guid == tab.guid else { return }
+            showApp(for: tab)
+            appPageController?.focusContent()
+            return
+        }
+
+        if shouldShowMarkdownReader(for: tab) {
+            guard tab.crashState == nil, browserState?.splitGroup(forTabId: tab.guid) == nil || browserState?.focusingTab?.guid == tab.guid else { return }
+            showMarkdownReader(for: tab)
+            markdownReaderController?.focusContent()
             return
         }
 
@@ -750,28 +756,6 @@ class WebContentViewController: NSViewController {
             }
             .store(in: &cancellables)
 
-        browserState?.$groupOverviewState
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                self?.updateGroupOverviewState(state)
-            }
-            .store(in: &cancellables)
-
-        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateLoginRequiredPresentation(for: self?.associatedTab)
-            }
-            .store(in: &cancellables)
-
-        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateLoginRequiredPresentation(for: self?.associatedTab)
-            }
-            .store(in: &cancellables)
-
         // Re-render content when split membership/visuals change for the
         // associated tab. Chromium is source of truth; we just react.
         // Only the controller whose tab is currently focused mounts the
@@ -878,7 +862,7 @@ class WebContentViewController: NSViewController {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isCollapsed in
                 guard let self else { return }
-                self.updateAIChatSidebarMetrics(isExpanded: !isCollapsed)
+                self.embeddedChatViewController?.setExpanded(!isCollapsed)
                 
                 // Ignore KVO while we are already synchronizing state ourselves.
                 guard !self.isUpdatingAIChatState else {
@@ -912,7 +896,6 @@ class WebContentViewController: NSViewController {
         // The initial split-item state is synchronized before KVO is installed.
         // Reconcile once so a restored expanded sidebar starts this tab's own
         // metrics session even though the initial KVO value is dropped.
-        updateAIChatSidebarMetrics(isExpanded: !aiChatSplitViewItem.isCollapsed)
 
         // Track frame changes directly because split-view delegate callbacks are unreliable here.
         aiChatSplitViewItem.viewController.view.postsFrameChangedNotifications = true
@@ -1281,7 +1264,6 @@ class WebContentViewController: NSViewController {
         
         // Skip AI Chat entirely in incognito mode.
         guard browserState?.isIncognito != true, let chatVC = embeddedChatViewController else { return }
-        chatVC.hasContentSurface = hasContentSurface
 
         let aiChatSplitViewItem = NSSplitViewItem(viewController: chatVC)
         aiChatSplitViewItem.minimumThickness = 300
@@ -1313,47 +1295,12 @@ class WebContentViewController: NSViewController {
         hostView.convert(hostView.bounds, to: coordView)
     }
 
-    /// Toggles the AI Chat panel when the associated tab allows it.
-    func toggleAIChatInTraditionalLayout(
-        trigger: BrowserState.AIChatSidebarOpenTrigger = .button
-    ) {
-        guard browserState?.groupOverviewState == nil,
-              associatedTab?.aiChatEnabled == true else {
-            return
-        }
-        if associatedTab?.aiChatCollapsed == true {
-            browserState?.prepareAIChatSidebarOpen(trigger: trigger)
-        }
-        // Updating the tab model is enough; observers drive the UI update.
-        associatedTab?.toggleAIChat()
-    }
-
-    private func updateAIChatSidebarMetrics(isExpanded: Bool) {
-        let transition = aiChatSidebarMetricsSession.update(
-            isExpanded: isExpanded,
-            uptime: ProcessInfo.processInfo.systemUptime
-        )
-
-        switch transition {
-        case .opened:
-            let trigger = browserState?.consumeAIChatSidebarOpenTrigger() ?? .restore
-            PostHogSDK.shared.capture("ai_sidebar_opened", properties: [
-                "trigger": trigger.rawValue,
-            ])
-            if trigger != .restore {
-                FirstTimeActionTracker.capture(.aiSidebarOpened)
-            }
-        case let .closed(durationSeconds):
-            PostHogSDK.shared.capture("ai_sidebar_closed", properties: [
-                "duration_seconds": durationSeconds,
-            ])
-        case nil:
-            break
-        }
-    }
 
     private func bindContentObservers(for tab: Tab) {
         contentObserverCancellables.removeAll()
+        tab.$remoteMarkdown.map { $0 != nil }.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self, weak tab] _ in self?.updateContentForTab(tab) }
+            .store(in: &contentObserverCancellables)
         tab.$url
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
@@ -1428,11 +1375,18 @@ class WebContentViewController: NSViewController {
 
     private func updateContentForTab(_ tab: Tab?) {
         guard let tab else { return }
+        // An inactive controller's delayed URL/content update must not take
+        // the page back from a live chat preview. The container releases the
+        // loan synchronously before this controller becomes selected.
+        if browserState?.browserAgentPreview?.isBorrowing(tabId: tab.guid) == true { return }
         defer {
-            updateLoginRequiredPresentation(for: tab)
             updateHeaderAndBookmarkBarSeparators()
         }
         let showsBookmarkManager = shouldShowBookmarkManager(for: tab)
+        let showsApp = shouldShowApp(for: tab)
+        let showsMarkdownReader = shouldShowMarkdownReader(for: tab)
+        if !showsApp, browserState?.splitGroup(forTabId: tab.guid) == nil { hideAppIfNeeded() }
+        if !showsMarkdownReader, browserState?.splitGroup(forTabId: tab.guid) == nil { hideMarkdownReaderIfNeeded() }
         // Tear down a solo manager as soon as its URL leaves the native route,
         // even if this tab's controller is currently off-window. Background
         // split members defer to the focused host's partner-URL subscription so
@@ -1440,12 +1394,6 @@ class WebContentViewController: NSViewController {
         if !showsBookmarkManager,
            browserState?.splitGroup(forTabId: tab.guid) == nil {
             hideBookmarkManagerIfNeeded()
-        }
-        if browserState?.groupOverviewState != nil {
-            if !showsBookmarkManager {
-                hideBookmarkManagerIfNeeded()
-            }
-            return
         }
         // For split members, only the focused VC may run this — same rule the
         // `$splits` subscription enforces. Other entry points (`tab.$url`
@@ -1477,6 +1425,8 @@ class WebContentViewController: NSViewController {
         if !showsBookmarkManager {
             hideBookmarkManagerIfNeeded()
         }
+        if !showsApp { hideAppIfNeeded() }
+        if !showsMarkdownReader { hideMarkdownReaderIfNeeded() }
         // Crashed renderer takes priority over NTP / web content. When the split
         // host can actually be mounted, the per-pane crash overlay (Task 11)
         // handles it; otherwise (not in a split, partner pane not yet ready, or
@@ -1489,13 +1439,15 @@ class WebContentViewController: NSViewController {
             teardownCrashedPage()
             if showsBookmarkManager {
                 showBookmarkManager(for: tab)
+            } else if showsApp {
+                showApp(for: tab)
+            } else if showsMarkdownReader {
+                showMarkdownReader(for: tab)
             } else if shouldShowNativeNtp(for: tab) {
                 showNativeNtp(for: tab)
             } else if let webView = tab.webContentView {
                 showWebContent(webView, tabId: tab.guid)
-                #if DEBUG
                 browserState?.triggerAutoReaderIfRequested(for: tab)
-                #endif
             }
         }
     }
@@ -1562,15 +1514,6 @@ class WebContentViewController: NSViewController {
     func refreshContentForCurrentTab() {
         guard let tab = associatedTab else { return }
         updateContentForTab(tab)
-        // Re-attach the AI Chat view synchronously while the outgoing
-        // controller is still in-window. Switching the active pane of a split
-        // swaps the visible controller; the split shares one chat tab, so its
-        // Chromium webContentView must move between the two panes' chat hosts.
-        // Doing it here (same-window move) avoids the windowless transition
-        // that blanks the renderer — mirrors the split-content remount above.
-        if view.window != nil {
-            embeddedChatViewController?.reattachAIChatViewIfNeeded()
-        }
     }
 
     /// The active split this controller's tab is part of, or nil.
@@ -1604,7 +1547,9 @@ class WebContentViewController: NSViewController {
               // a Chromium view; `partnerPaneView(for:)` resolves its real view.
               partner.webContentView != nil ||
               partner.usesNativeNTP ||
-              shouldShowBookmarkManager(for: partner) else {
+              shouldShowBookmarkManager(for: partner) ||
+              shouldShowApp(for: partner) ||
+              shouldShowMarkdownReader(for: partner) else {
             return false
         }
         return true
@@ -1624,6 +1569,92 @@ class WebContentViewController: NSViewController {
         let created = BookmarkManagerViewController(browserState: state)
         bookmarkManagerController = created
         return created
+    }
+
+    func shouldShowApp(for tab: Tab) -> Bool {
+        browserState?.isIncognito != true && MistApps.address(tab.url).flatMap { MistApps.app($0.app) } != nil
+    }
+
+    private func ensureAppController(for tab: Tab) -> NSViewController & MistAppPage {
+        let address = MistApps.address(tab.url)!
+        if appPageAddress?.app != address.app || (appPageAddress?.instance != nil) != (address.instance != nil) { hideAppIfNeeded() }
+        let controller = appPageController ?? appPageFactory?(address) ?? MistApps.app(address.app)!.makePage(address)
+        appPageController = controller
+        appPageAddress = address
+        (controller as? AgentChatViewController)?.onPreviewVisibilityChanged = onAgentPreviewVisibilityChanged
+        if let state = browserState { controller.show(address, tab: tab, state: state) }
+        return controller
+    }
+
+    private func showApp(for tab: Tab) {
+        defer { if appPageController is AgentChatViewController { onAgentPreviewVisibilityChanged?() } }
+        let controller = ensureAppController(for: tab)
+        if controller.parent == nil { addChild(controller) }
+        if let group = activeSplitForCurrentTab() {
+            guard view.window != nil else { contentMode = .app(appPageAddress!.app); return }
+            controller.view.snp.removeConstraints()
+            installSplitContent(group: group, ownTabId: tab.guid, ownNativeView: controller.view)
+        } else if controller.view.superview !== hostView {
+            if let existing = currentSplitHost {
+                existing.removeFromSuperview()
+                currentSplitHost = nil
+                teardownAllSplitCrashViews()
+            }
+            hostView.subviews.forEach { $0.removeFromSuperview() }
+            hostView.addSubview(controller.view)
+            controller.view.snp.remakeConstraints { $0.edges.equalToSuperview() }
+        }
+        contentMode = .app(appPageAddress!.app)
+    }
+
+    private func hideAppIfNeeded() {
+        guard let controller = appPageController else { return }
+        defer { if controller is AgentChatViewController { onAgentPreviewVisibilityChanged?() } }
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        appPageController = nil
+        appPageAddress = nil
+        if case .app = contentMode { contentMode = nil }
+    }
+
+    private func shouldShowMarkdownReader(for tab: Tab) -> Bool { tab.showsMarkdownReader }
+
+    private func ensureMarkdownReaderController(for tab: Tab) -> MarkdownReaderViewController {
+        let controller = markdownReaderController ?? MarkdownReaderViewController()
+        markdownReaderController = controller
+        controller.openLink = { [weak browserState, weak tab] url, background in
+            if background { browserState?.createTab(url.absoluteString, focusAfterCreate: false) }
+            else { tab?.webContentWrapper?.navigate(toURL: url.absoluteString) }
+        }
+        controller.show(tab)
+        return controller
+    }
+
+    private func showMarkdownReader(for tab: Tab) {
+        let controller = ensureMarkdownReaderController(for: tab)
+        if controller.parent == nil { addChild(controller) }
+        if let group = activeSplitForCurrentTab() {
+            guard view.window != nil else { contentMode = .markdownReader; return }
+            controller.view.snp.removeConstraints()
+            installSplitContent(group: group, ownTabId: tab.guid, ownNativeView: controller.view)
+        } else if controller.view.superview !== hostView {
+            if let existing = currentSplitHost {
+                existing.removeFromSuperview()
+                currentSplitHost = nil
+                teardownAllSplitCrashViews()
+            }
+            hostView.subviews.forEach { $0.removeFromSuperview() }
+            hostView.addSubview(controller.view)
+            controller.view.snp.remakeConstraints { $0.edges.equalToSuperview() }
+        }
+        contentMode = .markdownReader
+    }
+
+    private func hideMarkdownReaderIfNeeded() {
+        guard let controller = markdownReaderController else { return }
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        if contentMode == .markdownReader { contentMode = nil }
     }
 
     private func showBookmarkManager(for tab: Tab) {
@@ -1669,7 +1700,6 @@ class WebContentViewController: NSViewController {
 
     private func hideBookmarkManagerIfNeeded() {
         guard let controller = bookmarkManagerController else { return }
-        controller.finishAnalyticsSession()
         controller.view.removeFromSuperview()
         controller.removeFromParent()
         bookmarkManagerController = nil
@@ -1756,6 +1786,8 @@ class WebContentViewController: NSViewController {
     }
 
     private func showWebContent(_ contentView: NSView, tabId: Int) {
+        // URL-rule resets can enter here without updateContentForTab.
+        if browserState?.browserAgentPreview?.isBorrowing(tabId: tabId) == true { return }
         if let group = activeSplitForCurrentTab() {
             installSplitContent(group: group, ownTabId: tabId, ownNativeView: contentView)
             contentMode = .webContent
@@ -1795,8 +1827,8 @@ class WebContentViewController: NSViewController {
         // Already showing this exact crash for this tab — don't rebuild (avoids
         // a flicker when an unrelated re-render, e.g. tab.$url, re-enters here).
         // Skip the rebuild only if our overlay is STILL mounted on hostView for
-        // this same crash. Another path (e.g. leaving group overview) may have
-        // cleared hostView without dropping the controller — then we must re-add.
+        // this same crash. If another path cleared hostView without dropping
+        // the controller, we must re-add it.
         if let controller = crashedPageController,
            controller.view.superview === hostView,
            shownCrashTabId == tab.guid, shownCrashData == crashData {
@@ -1900,6 +1932,7 @@ class WebContentViewController: NSViewController {
     func updatePartnerCrashSubscription() {
         partnerCrashCancellable = nil
         partnerContentCancellable = nil
+        partnerMarkdownCancellable = nil
         guard let tab = associatedTab,
               let state = browserState,
               state.focusingTab?.guid == tab.guid,
@@ -1921,6 +1954,8 @@ class WebContentViewController: NSViewController {
             .sink { [weak self] _ in
                 self?.refreshContentForSplitPartnerURLChange()
             }
+        partnerMarkdownCancellable = partner.$remoteMarkdown.map { $0 != nil }.removeDuplicates().dropFirst().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshContentForSplitPartnerURLChange() }
     }
 
     /// Drop focused-host partner subscriptions unconditionally. The container
@@ -1928,6 +1963,7 @@ class WebContentViewController: NSViewController {
     func cancelPartnerCrashSubscription() {
         partnerCrashCancellable = nil
         partnerContentCancellable = nil
+        partnerMarkdownCancellable = nil
     }
 
     private func refreshContentForSplitPartnerURLChange() {
@@ -1960,6 +1996,18 @@ class WebContentViewController: NSViewController {
             return controller.view
         }
         hideBookmarkManagerIfNeeded()
+        if shouldShowApp(for: tab) {
+            let controller = ensureAppController(for: tab)
+            if controller.parent == nil { addChild(controller) }
+            return controller.view
+        }
+        hideAppIfNeeded()
+        if shouldShowMarkdownReader(for: tab) {
+            let controller = ensureMarkdownReaderController(for: tab)
+            if controller.parent == nil { addChild(controller) }
+            return controller.view
+        }
+        hideMarkdownReaderIfNeeded()
         if shouldShowNativeNtp(for: tab), let state = browserState {
             let controller = ensureNativeNtpController(state: state)
             if controller.parent == nil {
@@ -2082,7 +2130,6 @@ class WebContentViewController: NSViewController {
         restorePerPaneDevToolsState(host: host, group: group)
         // Overlay a crash view on any pane whose tab's renderer has crashed.
         reconcileSplitCrashViews(host: host, group: group)
-        reconcileSplitLoginRequiredViews(host: host, group: group)
 
         let splitId = group.id
         host.onRatioCommit = { [weak self] newRatio in
@@ -2111,97 +2158,6 @@ class WebContentViewController: NSViewController {
         return currentSplitHost.superview === hostView
     }
 
-    private func shouldPresentLoginRequired(for tab: Tab) -> Bool {
-        guard tab.crashState == nil else { return false }
-        let surface: LoginRequiredSurface
-        if tab.isNTP {
-            surface = .newTabPage
-        } else if LoginRequiredPresentationPolicy.isBrowserMemoryURL(tab.url) {
-            surface = .browserMemory
-        } else {
-            return false
-        }
-        return LoginRequiredPresentationPolicy.shouldPresent(
-            for: surface,
-            isGuest: ApplicationState.shared.isGuest,
-            isPhiAIEnabled: PhiPreferences.AISettings.phiAIEnabled.loadValue()
-        )
-    }
-
-    private func updateLoginRequiredPresentation(for tab: Tab?) {
-        guard isViewLoaded,
-              view.window != nil,
-              browserState?.groupOverviewState == nil,
-              let tab else {
-            removeLoginRequiredPresentations()
-            return
-        }
-
-        if let group = activeSplitForCurrentTab(),
-           let host = currentSplitHost {
-            loginRequiredOverlayView.removeFromSuperview()
-            reconcileSplitLoginRequiredViews(host: host, group: group)
-            return
-        }
-
-        if let host = currentSplitHost {
-            host.detachLoginRequiredView(pane: .primary)
-            host.detachLoginRequiredView(pane: .secondary)
-        }
-        splitLoginRequiredViews.values.forEach { $0.removeFromSuperview() }
-        splitLoginRequiredViews.removeAll()
-
-        guard shouldPresentLoginRequired(for: tab) else {
-            loginRequiredOverlayView.removeFromSuperview()
-            return
-        }
-
-        guard loginRequiredOverlayView.superview !== hostView else { return }
-        loginRequiredOverlayView.translatesAutoresizingMaskIntoConstraints = true
-        loginRequiredOverlayView.autoresizingMask = [.width, .height]
-        loginRequiredOverlayView.frame = hostView.bounds
-        hostView.addSubview(loginRequiredOverlayView, positioned: .above, relativeTo: nil)
-    }
-
-    private func reconcileSplitLoginRequiredViews(
-        host: SplitPaneHostView,
-        group: SplitGroup
-    ) {
-        let liveTabIds = Set([group.primaryTabId, group.secondaryTabId])
-        for tabId in Array(splitLoginRequiredViews.keys) where !liveTabIds.contains(tabId) {
-            splitLoginRequiredViews[tabId]?.removeFromSuperview()
-            splitLoginRequiredViews[tabId] = nil
-        }
-
-        let panes: [(Int, SplitPaneHostView.Pane)] = [
-            (group.primaryTabId, .primary),
-            (group.secondaryTabId, .secondary)
-        ]
-        for (tabId, pane) in panes {
-            guard let tab = browserState?.tabs.first(where: { $0.guid == tabId }),
-                  shouldPresentLoginRequired(for: tab) else {
-                host.detachLoginRequiredView(pane: pane)
-                splitLoginRequiredViews[tabId]?.removeFromSuperview()
-                splitLoginRequiredViews[tabId] = nil
-                continue
-            }
-
-            let overlay = splitLoginRequiredViews[tabId] ?? LoginRequiredOverlayView()
-            splitLoginRequiredViews[tabId] = overlay
-            host.attachLoginRequiredView(pane: pane, loginRequiredView: overlay)
-        }
-    }
-
-    private func removeLoginRequiredPresentations() {
-        loginRequiredOverlayView.removeFromSuperview()
-        if let host = currentSplitHost {
-            host.detachLoginRequiredView(pane: .primary)
-            host.detachLoginRequiredView(pane: .secondary)
-        }
-        splitLoginRequiredViews.values.forEach { $0.removeFromSuperview() }
-        splitLoginRequiredViews.removeAll()
-    }
-
     private func addWebContentView(_ contentView: NSView, tabId: Int) {
         hostView.subviews.forEach { $0.removeFromSuperview() }
         contentView.translatesAutoresizingMaskIntoConstraints = true
@@ -2222,51 +2178,6 @@ class WebContentViewController: NSViewController {
                 AppLogInfo("[DevTools] clearing stale isFrameSyncPaused on plain webContent install (tabId=\(tabId))")
                 hostView.isFrameSyncPaused = false
             }
-        }
-    }
-
-    private func updateGroupOverviewState(_ state: GroupOverviewState?) {
-        guard let browserState else { return }
-        guard let state else {
-            let wasShowingGroupOverview = groupOverviewController != nil
-            hideGroupOverviewIfNeeded()
-            guard wasShowingGroupOverview, isViewLoaded, view.superview != nil else { return }
-            updateContentForTab(associatedTab)
-            return
-        }
-        guard isViewLoaded, view.superview != nil else { return }
-        collapseAIChatIfNeeded()
-        showGroupOverview(token: state.groupToken, browserState: browserState)
-    }
-
-    private func showGroupOverview(token: String, browserState: BrowserState) {
-        if case .groupOverview(let currentToken) = contentMode,
-           currentToken == token {
-            return
-        }
-
-        hostView.subviews.forEach { $0.removeFromSuperview() }
-        groupOverviewController?.view.removeFromSuperview()
-        groupOverviewController?.removeFromParent()
-
-        let controller = GroupOverviewViewController(browserState: browserState,
-                                                     groupToken: token)
-        addChild(controller)
-        hostView.addSubview(controller.view)
-        controller.view.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
-        groupOverviewController = controller
-        contentMode = .groupOverview(token: token)
-    }
-
-    private func hideGroupOverviewIfNeeded() {
-        guard groupOverviewController != nil else { return }
-        groupOverviewController?.view.removeFromSuperview()
-        groupOverviewController?.removeFromParent()
-        groupOverviewController = nil
-        if case .groupOverview = contentMode {
-            contentMode = nil
         }
     }
 
@@ -2373,9 +2284,8 @@ class WebContentViewController: NSViewController {
             }
             contentFullscreenOverlay = overlay
             // The surface before the host view, so its web views join a tree
-            // the surface is already under. With no page container (a Kiosk
-            // window) or no surface (the feature off) the page draws itself
-            // up here, as before.
+            // the surface is already under. With no surface (the feature off),
+            // the page draws itself up here, as before.
             contentSurfaceLender = parent as? WebContentContainerViewController
             contentSurfaceLender?.lendContentSurface(to: overlay)
             hostView.removeFromSuperview()
@@ -2466,6 +2376,15 @@ class WebContentViewController: NSViewController {
     /// whole split, hiding the other pane.
     func attachDevTools(view devToolsView: NSView) {
         guard let tab = associatedTab else { return }
+        if browserState?.browserAgentPreview?.isBorrowing(tabId: tab.guid) == true {
+            // Keep the loan in place; refreshContentForCurrentTab restores
+            // these tools when the user selects the page.
+            tab.devToolsAttached = true
+            tab.devToolsView = devToolsView
+            tab.inspectedPageBounds = nil
+            tab.hideInspectedContents = false
+            return
+        }
         if let host = currentSplitHost,
            let pane = splitPane(forTabId: tab.guid) {
             attachDevToolsToPane(tabId: tab.guid,
@@ -2998,26 +2917,6 @@ class WebContentViewController: NSViewController {
         updateLeftContainerStyle(isAIChatExpanded: aiChatSplitViewItem?.isCollapsed == false)
     }
     
-    /// Collapses AI Chat when the current surface should suppress it.
-    private func collapseAIChatIfNeeded() {
-        if let tab = associatedTab {
-            browserState?.setAIChatCollapsed(for: tab, collapsed: true)
-        }
-        browserState?.aiChatCollapsed = true
-
-        guard let splitViewItem = aiChatSplitViewItem else { return }
-        guard !splitViewItem.isCollapsed else {
-            updateLeftContainerStyle(isAIChatExpanded: false)
-            return
-        }
-
-        isUpdatingAIChatState = true
-        animateAIChatCollapseTransition(splitViewItem, collapsed: true)
-        isUpdatingAIChatState = false
-        updateLeftContainerStyle(isAIChatExpanded: false)
-        persistAIChatSidebarStateIfNeeded(for: associatedTab)
-    }
-
     /// Animate AI Chat sidebar expand/collapse with proper width handling.
     ///
     /// For **expand**: temporarily raises `minimumThickness` to the pending
@@ -3034,6 +2933,7 @@ class WebContentViewController: NSViewController {
         collapsed: Bool
     ) {
         let expanding = !collapsed
+        embeddedChatViewController?.setExpanded(expanding)
         isAnimatingAIChatExpansion = expanding
         isAnimatingAIChatCollapse = collapsed
         aiChatTransitionCount += 1
@@ -3103,7 +3003,7 @@ class WebContentViewController: NSViewController {
                 // The chat controller misses its appearance callbacks when this
                 // controller expands the pane while it is still appearing
                 // itself (a tab that comes with its panel expanded).
-                self.embeddedChatViewController?.setupIfNeeded()
+                self.embeddedChatViewController?.setExpanded(true)
             }
         })
     }
@@ -3337,8 +3237,6 @@ class WebContentViewController: NSViewController {
             .store(in: &cancellables)
     }
 
-    // MARK: - Agent Animation Overlay
-
     // MARK: - Agent Space Overlay mounting
 
     private func updateAgentSpaceOverlay(tasks: [String: AgentTask]? = nil) {
@@ -3395,29 +3293,24 @@ class WebContentViewController: NSViewController {
         // browser-reported drive carries no identity, so that falls back to the
         // roster's best guess.
         let named = AgentUserSpaceDriveRegistry.shared.record(forTabId: tabId)?.driverName
-        // A drive by the browser's own agent is not "some CDP client": the
-        // badge reads it as Phi and wears the product's mark. Taken from the
-        // roster's KEY-based answer rather than from the name above, which is
-        // whatever string the identity resolved to (see
-        // `soleRecentDriverIsFirstParty`).
-        let origin: AgentTaskOrigin =
-            AgentCDPDriverRoster.shared.soleRecentDriverIsFirstParty ? .phiAgent : .cdp
+        // The browser's own agent uses the Browser Agent badge. The roster
+        // identifies it by principal key rather than an external display name.
+        let browserAgentName = AgentCDPDriverRoster.shared.soleRecentDriverIsFirstParty
+            ? AgentIdentity.mistBrowserAgent(pid: nil).displayName : nil
         return AgentTask(
             taskId: "user-space-drive-\(tabId)",
             spaceId: browserState?.spaceId ?? "",
-            profileId: "",
-            origin: origin,
             driverPrincipalId: nil,
             number: 0,
             windowId: browserState?.windowId ?? 0,
             ownership: driving ? .agent : .user,
             status: .running,
             statusCaption: driving
-                ? "An agent is using this tab…"
-                : "You have this tab — the agent is waiting",
+                ? NSLocalizedString("browser.agentDrive.usingTab", value: "An agent is using this tab…", comment: "Driven tab overlay - An agent currently controls this tab")
+                : NSLocalizedString("browser.agentDrive.waiting", value: "You have this tab — the agent is waiting", comment: "Driven tab overlay - The user took control and the agent is waiting"),
             cursor: nil,
             hasUnseenError: false,
-            agentName: (named?.isEmpty == false ? named : nil)
+            agentName: browserAgentName ?? (named?.isEmpty == false ? named : nil)
                 ?? AgentCDPDriverRoster.shared.soleRecentDriverName ?? "")
     }
 

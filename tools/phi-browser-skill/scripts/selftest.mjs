@@ -176,6 +176,15 @@ const CF_FALSE_TITLE = `<!doctype html><title>Just a moment...</title>
 const CF_BLOCKED = `<!doctype html><title>Attention Required! | Cloudflare</title>
 <div id="cf-error-details">Sorry, you have been blocked</div>`
 
+// A healthy page running Cloudflare's Bot Management page script, which
+// defines window._cf_chl_opt with only its own keys.
+const CF_PRECURSOR = `<!doctype html><title>Ordinary app</title>
+<main><h1>Ordinary app</h1><button id="beside-cf">Continue</button></main><script>
+window._cf_chl_opt = { ppebL7: 'g' }
+window.besideCfClicks = 0
+document.getElementById('beside-cf').addEventListener('click', () => window.besideCfClicks++)
+</` + `script>`
+
 function startServer() {
   return new Promise((resolve, reject) => {
     const srv = createServer((req, res) => {
@@ -203,6 +212,8 @@ function startServer() {
         res.end(CF_FALSE_TITLE)
       } else if (req.url.startsWith('/cf-blocked')) {
         res.end(CF_BLOCKED)
+      } else if (req.url.startsWith('/cf-precursor')) {
+        res.end(CF_PRECURSOR)
       } else {
         res.end(page('fast'))
       }
@@ -432,6 +443,18 @@ async function main() {
         `${unicode.inputs.length} inputs, ${unicode.keys.length} ordinary keys`)
 
   await H.js('window.inputTrace = []')
+  await H.fillInput('#input-field', 'One step, like a paste.', { atOnce: true })
+  const atOnce = await H.js(`({
+    value: document.getElementById('input-field').value,
+    inputs: window.inputTrace.filter((e) => e.type === 'input'),
+    keys: window.inputTrace.filter((e) => e.type === 'keydown' && !e.meta && e.key !== 'Meta')
+  })`)
+  check('atOnce fill replaces the value in one trusted input event',
+        atOnce.value === 'One step, like a paste.' && atOnce.inputs.length === 1
+          && atOnce.inputs[0].trusted && atOnce.keys.length === 0,
+        `${atOnce.inputs.length} inputs, ${atOnce.keys.length} ordinary keys`)
+
+  await H.js('window.inputTrace = []')
   await H.pressKey('Enter')
   const enter = await H.js(`({
     count: window.inputEnter,
@@ -582,6 +605,13 @@ async function main() {
   check('Cloudflare hard block gets no passive retry',
         !blockedCf.cleared && blockedCf.attempts === 0
           && blockedCf.challenge?.kind === 'blocked')
+
+  await H.goto(`${BASE}/cf-precursor`, { acceptCookies: false })
+  check('Cloudflare page script on a healthy page is not a challenge',
+        (await H.detectChallenge()) === null)
+  await H.click('#beside-cf')
+  check('input works beside a Cloudflare page script',
+        (await H.js('window.besideCfClicks')) === 1)
 
   // --- SPA races: late mounts, moving targets, generic waits -----------------
   await H.goto(`${BASE}/spa`)

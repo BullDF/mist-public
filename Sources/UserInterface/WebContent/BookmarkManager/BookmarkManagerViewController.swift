@@ -5,40 +5,6 @@
 
 import Cocoa
 import Combine
-import PostHog
-
-final class BookmarkManagerAnalyticsSession {
-    typealias Capture = (_ event: String, _ properties: [String: Any]) -> Void
-
-    private let capture: Capture
-    private var didEdit = false
-    private var hasStarted = false
-    private var hasFinished = false
-
-    init(capture: @escaping Capture = { event, properties in
-        PostHogSDK.shared.capture(event, properties: properties)
-    }) {
-        self.capture = capture
-    }
-
-    func start() {
-        guard !hasStarted, !hasFinished else { return }
-        hasStarted = true
-        capture("bookmark_manager_opened", [:])
-    }
-
-    func markEdited() {
-        guard hasStarted, !hasFinished else { return }
-        didEdit = true
-    }
-
-    func finish() {
-        guard hasStarted, !hasFinished else { return }
-        hasFinished = true
-        guard didEdit else { return }
-        capture("bookmark_manager_edited", [:])
-    }
-}
 
 private final class BookmarkManagerOutlineView: DiffableOutlineView {
     var contextMenuProvider: (() -> NSMenu?)?
@@ -132,7 +98,6 @@ final class BookmarkManagerViewController: NSViewController {
     private var pendingEditGuid: String?
     private var didConfigureInitialColumnWidths = false
     private var cancellables = Set<AnyCancellable>()
-    private let analyticsSession = BookmarkManagerAnalyticsSession()
 
     private let outlineView = BookmarkManagerOutlineView()
     private let scrollView = NSScrollView()
@@ -171,14 +136,10 @@ final class BookmarkManagerViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        analyticsSession.start()
         bindModel()
         rebuildProjection(animated: false)
     }
 
-    deinit {
-        analyticsSession.finish()
-    }
 
     override func viewWillLayout() {
         updateHeaderLayoutIfNeeded()
@@ -194,9 +155,6 @@ final class BookmarkManagerViewController: NSViewController {
         view.window?.makeFirstResponder(outlineView)
     }
 
-    func finishAnalyticsSession() {
-        analyticsSession.finish()
-    }
 
     private func buildLayout() {
         titleLabel.stringValue = NSLocalizedString(
@@ -661,7 +619,6 @@ final class BookmarkManagerViewController: NSViewController {
             guid: guid,
             targetIndex: targetIndex
         )
-        analyticsSession.markEdited()
     }
 
     @objc private func outlineDoubleClicked(_ sender: NSOutlineView) {
@@ -860,9 +817,8 @@ final class BookmarkManagerViewController: NSViewController {
         )
         let submenu = NSMenu()
         for group in groups {
-            let memberCount = browserState.normalTabs.lazy.filter { $0.groupToken == group.token }.count
             let item = actionItem(
-                title: group.displayTitle(memberCount: memberCount),
+                title: group.displayTitle,
                 action: #selector(addBookmarksToGroupMenuItem(_:)),
                 context: GroupActionContext(guids: guids, groupToken: group.token)
             )
@@ -1000,7 +956,7 @@ final class BookmarkManagerViewController: NSViewController {
             context: BookmarkActionContext(guids: bookmarks.map(\.guid))
         )
         if isMultiple {
-            item.keyEquivalent = "d"
+            item.keyEquivalent = String(UnicodeScalar(NSBackspaceCharacter)!)
             item.keyEquivalentModifierMask = [.command]
         }
         menu.addItem(item)
@@ -1130,16 +1086,12 @@ final class BookmarkManagerViewController: NSViewController {
 
     @objc private func createGroupFromBookmarksMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? BookmarkActionContext else { return }
-        if browserState.createGroupFromBookmarks(bookmarkGuids: context.guids) {
-            analyticsSession.markEdited()
-        }
+        _ = browserState.createGroupFromBookmarks(bookmarkGuids: context.guids)
     }
 
     @objc private func addBookmarksToGroupMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? GroupActionContext else { return }
-        if browserState.addBookmarks(bookmarkGuids: context.guids, toGroup: context.groupToken) {
-            analyticsSession.markEdited()
-        }
+        _ = browserState.addBookmarks(bookmarkGuids: context.guids, toGroup: context.groupToken)
     }
 
     @objc private func renameMenuItem(_ sender: NSMenuItem) {
@@ -1165,22 +1117,18 @@ final class BookmarkManagerViewController: NSViewController {
 
     @objc private func moveToSpaceMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? SpaceTransferActionContext else { return }
-        if browserState.moveBookmarks(
+        _ = browserState.moveBookmarks(
             bookmarkGuids: context.guids,
             toSpaceId: context.targetSpaceId
-        ) {
-            analyticsSession.markEdited()
-        }
+        )
     }
 
     @objc private func cloneToSpaceMenuItem(_ sender: NSMenuItem) {
         guard let context = sender.representedObject as? SpaceTransferActionContext else { return }
-        if browserState.cloneBookmarks(
+        _ = browserState.cloneBookmarks(
             bookmarkGuids: context.guids,
             toSpaceId: context.targetSpaceId
-        ) {
-            analyticsSession.markEdited()
-        }
+        )
     }
 
     @objc private func deleteMenuItem(_ sender: NSMenuItem) {
@@ -1190,11 +1138,8 @@ final class BookmarkManagerViewController: NSViewController {
 
     private func presentBookmarkEditor(for bookmark: Bookmark) {
         let bookmarkGuid = bookmark.guid
-        let originalTitle = bookmark.title
-        let originalURL = bookmark.url
         let originalParentGuid = bookmark.parent?.guid
         let originalSecondaryURL = bookmark.secondaryUrl
-        let originalSecondaryTitle = bookmark.secondaryTitle
         EditPinnedTabPresenter.presentModal(
             mode: .bookmark,
             title: bookmark.title,
@@ -1216,7 +1161,6 @@ final class BookmarkManagerViewController: NSViewController {
                     guid: guid,
                     spaceId: self.scope.spaceId
                 )
-                self.analyticsSession.markEdited()
                 return guid
             },
             onValidate: { [weak self] result in
@@ -1250,23 +1194,14 @@ final class BookmarkManagerViewController: NSViewController {
                 secondaryUrl: secondaryURLUpdate,
                 secondaryTitle: secondaryTitleUpdate
             )
-            let didUpdateFields = result.title != originalTitle
-                || result.url != originalURL
-                || (originalSecondaryURL != nil && result.secondaryUrl != originalSecondaryURL)
-                || (originalSecondaryURL != nil && result.secondaryTitle != originalSecondaryTitle)
-            if didUpdateFields {
-                self.analyticsSession.markEdited()
-            }
             guard result.parentFolderGuid != originalParentGuid else { return }
             if let targetGuid = result.parentFolderGuid {
                 if let target = self.manager.bookmark(withGuid: targetGuid) {
-                    if self.browserState.moveSelectedBookmarks(
+                    _ = self.browserState.moveSelectedBookmarks(
                         bookmarkGuids: [bookmarkGuid],
                         to: target,
                         index: Int.max
-                    ) {
-                        self.analyticsSession.markEdited()
-                    }
+                    )
                 } else {
                     self.browserState.localStore.moveBookmark(
                         bookmarkGuid,
@@ -1274,17 +1209,14 @@ final class BookmarkManagerViewController: NSViewController {
                         to: targetGuid,
                         newIndex: Int.max
                     )
-                    self.analyticsSession.markEdited()
                 }
                 return
             }
-            if self.browserState.moveSelectedBookmarks(
+            _ = self.browserState.moveSelectedBookmarks(
                 bookmarkGuids: [bookmarkGuid],
                 to: nil,
                 index: Int.max
-            ) {
-                self.analyticsSession.markEdited()
-            }
+            )
         }
     }
 
@@ -1294,7 +1226,6 @@ final class BookmarkManagerViewController: NSViewController {
         let requiresConfirmation = roots.count > 1 || roots.contains(where: \.isFolder)
         guard requiresConfirmation else {
             roots.forEach(manager.removeBookmark)
-            analyticsSession.markEdited()
             return
         }
 
@@ -1323,14 +1254,9 @@ final class BookmarkManagerViewController: NSViewController {
 
         let commit = { [weak self] in
             guard let self else { return }
-            var didDelete = false
             for root in roots {
                 guard let current = self.manager.bookmark(withGuid: root.guid) else { continue }
                 self.manager.removeBookmark(current)
-                didDelete = true
-            }
-            if didDelete {
-                self.analyticsSession.markEdited()
             }
         }
         if let window = view.window {
@@ -1460,19 +1386,9 @@ extension BookmarkManagerViewController: NSOutlineViewDataSource {
             to: targetFolder,
             index: plan.destinationIndex
         )
-        if didMove {
-            analyticsSession.markEdited()
-        }
         return didMove
     }
 
-    func outlineView(
-        _ outlineView: NSOutlineView,
-        draggingSession session: NSDraggingSession,
-        sourceOperationMaskFor context: NSDraggingContext
-    ) -> NSDragOperation {
-        .move
-    }
 }
 
 extension BookmarkManagerViewController: NSOutlineViewDelegate {
@@ -1503,7 +1419,6 @@ extension BookmarkManagerViewController: NSOutlineViewDelegate {
                     guard let self else { return false }
                     if title != bookmark.title {
                         self.manager.updateBookmark(guid: bookmark.guid, title: title)
-                        self.analyticsSession.markEdited()
                     }
                     return true
                 }
@@ -1522,7 +1437,6 @@ extension BookmarkManagerViewController: NSOutlineViewDelegate {
                         }
                         if url != bookmark.url {
                             self.manager.updateBookmark(guid: bookmark.guid, url: url)
-                            self.analyticsSession.markEdited()
                         }
                         return true
                     }

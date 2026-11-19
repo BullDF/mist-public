@@ -7,7 +7,7 @@ Defines what happens when a Space's NSWindow closes, depending on how the close 
 Every Space session is hosted: a slot owns one visible `ShellWindow` (`ShellWindowController.swift`) and Chromium never shows a browser window. The shell owns the window's one split (`ShellSplitViewController.swift`: the sidebar column with its vibrancy backdrop, width and collapsed state | the page area), so the sidebar reads as one sidebar across Space switches; each Space's `SpaceSessionController` keeps its sidebar content (`SidebarViewController.view`, painting no backdrop) *resident* in the column — added once it has a shell, hidden unless presented, sized with the column — and keeps its page tree (`MainSplitViewController.view`, which builds no split of its own when hosted) resident and hidden in the page area. A switch reuses these attachments: the vertical-layout switch shows the entering session's resident content with only its band visible and slides that band in while the leaving band slides out (`HostedBandSlide`), the entering page cross-fades on the same animation clock, and the Chromium round trips (`setPresented:`, the Browser spawn of a dormant Space) run one turn after the first frame. The session's Chromium NSWindow only carries the Browser's lifecycle and mirrors the shell's frame; the shell takes the presented session's title from it (its active tab's), since the Dock menu, the Window menu and Mission Control list the shell, and shows the Space name instead while the session has no Browser yet or is on the placeholder page (`SpaceWindowSlot.retitleShell`). The close model maps onto the legacy one as follows; `unregisterWindow` still classifies, then hands off to `unregisterHostedSession`.
 
 - **Window-driven close of the shell** (red ✕, ⇧⌘W on the shell): `ShellWindowController.windowShouldClose` → `slot.shellRequestedClose()`, which starts the same cascade a window-driven close does — `IDC_CLOSE_WINDOW` for every session through Chromium — and refuses the AppKit close. The shell is closed by `removeSlot` → `closeShellIfPresent` once the last session has unregistered, or kept (with the survivor re-presented by the cascade-veto recovery) when a `beforeunload` prompt vetoes.
-- **A session's Chromium window closing** (⌘W on the last tab, `window.close()`, an Incognito Space reap, a Space deleted): `windowWillClose` on the hidden window → `unregisterWindow` → `unregisterHostedSession`. Presented + tab-driven with a sibling that has tabs → `activate(sibling)`. Presented otherwise → cascade the rest, as above. A background session → dropped from the map with no side effects (it was never on screen). When the map empties, `removeSlot` closes the shell.
+- **A session's Chromium window closing** (tab-row ✕ on the last home page, `window.close()`, an Incognito Space reap, a Space deleted): `windowWillClose` on the hidden window → `unregisterWindow` → `unregisterHostedSession`. Presented + tab-driven with a sibling that has tabs → `activate(sibling)`. Presented otherwise → cascade the rest, as above. A background session → dropped from the map with no side effects (it was never on screen). When the map empties, `removeSlot` closes the shell.
 - **The shell closing with no live session left** (a vetoed cascade whose survivor then closed on its own, a presented dormant session whose spawn never landed): `shellDidClose` removes the slot itself, so a windowless slot never lingers in the registry.
 - **Dormant sessions** (`dormantSessionsBySpaceId`, built ahead of their Browser under a reserved window id) have no Chromium window and never reach `unregisterWindow`; `discardDormant` retires them when their Space leaves the slot or the slot closes.
 
@@ -61,8 +61,7 @@ the owning split; their publishers observe that split even while the session is
 dormant or concealed. Sidebar commands mutate the owning split directly.
 Creating, attaching, presenting, or switching sessions never applies sidebar
 geometry. Spawn contexts carry frame placement only. Standalone Incognito
-windows use their own `MainSplitViewController` split; Kiosk surfaces always
-report a collapsed, zero-width sidebar.
+windows use their own `MainSplitViewController` split.
 
 Every Space's strip in the window reads its sliding viewport from the slot
 (`SpaceWindowSlot.stripViewportStart`), every strip computes it at the row
@@ -140,19 +139,11 @@ removing the page from its window does. Switching back only unhides and sorts
 the tree; closing, rebinding and dropping a session still evict it. Hidden page
 trees follow shell resizing, avoiding stale geometry on the next switch.
 
-`[SpaceSwitchTiming]` info logs record each switch with a request ID, the
-presented sidebar (`pinned`, `floating`, `collapsed`, or `traditional`), target
-kind, and preparation path (`live`, `dormant`, `cold`, `spare_hit`, or
-`spare_miss`). `operation=new_incognito` starts before descriptor creation and
-continues through the same activation trace. No Space names, URLs, or profile
-identifiers are included.
-
-Each step has `t` (milliseconds from request creation) and `delta` (milliseconds
-since the previous recorded step). An input event, when available, precedes the
-request and has a negative `t`. The summary includes input/request-to-animation
-submission, sidebar preparation, profile loading, and Browser creation. Missing
-stages report `n/a`, including switches that do not animate. Async work can
-overlap other stages; nested durations must not be added together.
+`SpaceSwitchTiming` keeps a monotonic step timeline for tests to check stage
+coverage and ordering. Recording defaults to off; tests opt in with
+`recordsSteps: true`. Each step contains its name and milliseconds since the
+request began. An input event, when available, precedes the request and has a
+negative timestamp.
 
 The timeline covers state publication/persistence, incognito spare claim and
 binding, outgoing concealment, native presentation, pinned/floating mounting,
@@ -160,53 +151,42 @@ row refresh/layout/realization/display, page installation, animation setup and
 submission, deferred Chromium visibility, profile loading, Browser creation or
 ghost reconstruction, native window attachment, initial-tab seeding, and
 animation completion/cleanup. A forced settle or failure has its own marker.
-The animation clock and transaction submission are CPU-side milestones, not a
-measurement of the first frame displayed by the render server. Initial-tab
-seeding does not measure page-load completion.
-
-Timestamps are buffered on the UI thread; formatting and logging happen on a
-later turn after settlement or spawn completion. Later asynchronous stages may
-append another line with the same ID. For Canary, inspect the app's `PhiLogs`
-directory under `~/Library/Application Support/com.phibrowser.canary.Mac/Phi/`:
-
-```sh
-rg '\[SpaceSwitchTiming\]' "$HOME/Library/Application Support/com.phibrowser.canary.Mac/Phi/PhiLogs"
-```
-
-Compare repeated switches in each sidebar mode and keep spare hits separate
-from misses. Native tests validate stage coverage and ordering; they do not
-replace measurements from actual clicks in a running Canary build.
+`presentationFinished` tracks completion independently of step recording.
 
 ## Why two paths exist
 
 A `SpaceWindowSlot` is the user-perceived window. It hosts one `SpaceSessionController` per Space ever surfaced from this slot; exactly one is visible at a time. Two close triggers map to different user intent:
 
-- **Tab-driven close** — the user closed the last tab in the active Space through the tab UI. Chromium used to auto-close the Browser, which closed the NSWindow; today it enters placeholder mode instead and the window stays (see "The tag is cancelled…" below). The user is saying "I'm done with this Space," not "I'm done with this window."
+- **Tab-driven close** — the user closed the last normal home page in the active Space through the tab UI. Swift tags the close and dispatches `IDC_CLOSE_WINDOW` for that Space, allowing a sibling Space with tabs to take over.
 - **Window-driven close** — the user explicitly closed the window itself (red ✕, ⇧⌘W via the Close Window menu item's `performClose:` action, ⌘W on the last tab, Chromium's internal `BrowserWindowCocoa::Close`). The user is saying "I'm done with this whole window."
 
-⌘W on the last tab is deliberately window-driven, not tab-driven: closing a Space's last tab with the keyboard tears the whole slot down like ⇧⌘W / the red ✕, rather than switching to a sibling Space.
+In a normal, non-agent Space, closing the active tab when no normal tabs would remain first creates one home page if any closing normal tab is a real page. The home page is created before the specific old wrappers close, so the strip never empties. Pinned tabs do not count. Closing the last home page with ⌘W is deliberately window-driven: `performClose(nil)` on the shell tears the whole slot down like ⇧⌘W / the red ✕. Multi-select close uses the same policy for the complete selection and also closes the shell when all closing normal tabs are home pages. Inactive closes, Incognito Spaces, and agent Spaces retain their existing behavior.
+
+`BrowserState.applyLastTabClosePolicy(to:intent:)` evaluates the whole closing batch once. Sidebar group header and group context-menu closes (`BrowserState.closeTabGroup(token:intent:)`) and split-cell context-menu Close use tab-driven intent. The customizable `IDC_CLOSE_TAB_GROUP` command uses window-driven intent, like ⌘W and multi-select close. A group replacement home page is ungrouped; when the policy proceeds, group closes use Chromium's group-close operation and split closes keep their inactive-pane-first ordering. Agent API group closes bypass this policy, and agent-owned Spaces remain ineligible.
 
 By the time `windowWillClose` fires, tab strip state is identical in both cases (Chromium has torn the tabs down already), so the slot needs an out-of-band signal to tell them apart.
 
 ## How tab-driven close is tagged
 
-Only one entry point tags a tab-driven close:
+These entry points apply the policy with tab-driven intent:
 
-- `Tab.close()` (`Sources/UserInterface/Common/Tabs/Tab.swift`) — reached from the tab-row ✕ button and every other UI path that closes a tab through the `Tab` object: the tab context menu's Close, the split-pane close, the sidebar tab list, the tab-search palette, the group overview, AppleScript.
+- `Tab.close()` (`Sources/UserInterface/Common/Tabs/Tab.swift`) — reached from the tab-row ✕ button and every other UI path that closes a tab through the `Tab` object: the tab context menu's Close, the split-pane close, the sidebar tab list, the tab-search palette, AppleScript.
+- Sidebar group header and group context-menu closes — routed through `BrowserState.closeTabGroup(token:intent:)` for the whole group.
+- Split-cell context-menu Close (`SpaceSessionController+Actions.closeTab(_:)`) — evaluated for both live panes before either pane closes.
 
-It checks `browserState.tabs.count <= 1` and, if true, calls `slot.markTabDrivenClose(for: spaceId)`. The marker is a spaceId → expiration-deadline entry in `pendingTabDrivenCloseDeadlines` on the slot. Any close path that does NOT tag the slot is treated as window-driven by default.
+When the policy returns `closeWindow`, it calls `slot.markTabDrivenClose(for: spaceId)` before dispatching `IDC_CLOSE_WINDOW` for the Space's Chromium window. The existing `tabs.count <= 1` marker remains on the fallback close path for ineligible windows. The marker is a spaceId → expiration-deadline entry in `pendingTabDrivenCloseDeadlines` on the slot. Any close path that does NOT tag the slot is treated as window-driven by default.
 
-**The tag is cancelled when the window survives the last-tab close — on any of three signals.** Closing a Space's last tab in a normal, non-Incognito window no longer closes the window: Chromium keeps it alive showing the placeholder page (`Browser::TabStripEmpty` → `ShouldEnterPlaceholderMode` → `ShowPlaceholder`) and reports that over the bridge, which `PhiChromiumCoordinator.windowDidEnterPlaceholderMode` turns into `slot.cancelTabDrivenClose(for: spaceId)` — dropping the marker and the pre-captured composite together, before any fallible work in that callback. The second signal is the Space's tab list going from **empty back to non-empty**: `BrowserState.handleNewTabFromChromium` (and its peek-adoption twin, `adoptPeekTabIntoStrip`) runs the same cancel just before appending a tab to an emptied list. Today that transition is a tab opened into a placeholder window or a peek adopted after its sole opener closed; the signal is deliberately source-agnostic, so any flow that re-fills the strip in place of placeholder entry — such as a refill quota absorbing the clear — cancels through the same path. The third signal is a pending peek candidate settling: `resolvePeekCandidate` and `finishPeekCandidate` cancel in their prologs — before the outcome branches (presented, adopted, or discarded) and before `peekCandidate` is cleared — because settlement proves the armed close resolved against the candidate machinery while the window stays alive, and cancelling pre-outcome makes it independent of whether the async URL/timeout resolve or the queued close event applies first (a resolve that wins the race and presents would otherwise route the later close through the presented-peek cleanup branch, past every other signal). `adoptPeekTabIntoStrip` additionally cancels on every adoption, covering non-candidate adoptions such as expanding a presented peek. (The empty → non-empty judgment lives where the Mac-side list actually mutates — at event-apply time in `BrowserState` — not at bridge-callback time: inside Chromium's synchronous close→insert turn the queued close event has not been applied yet, so the coordinator would still see the closing tab in the list.) The auto-close the marker predicts never happens, so leaving it armed would make the user's *next* close of that same window — the one they mean as "close this window" — read as a tab-driven hand-off and switch to a sibling Space instead of closing the slot.
+**The tag is cancelled when the window survives a fallback last-tab close — on any of three signals.** `PhiChromiumCoordinator.windowDidEnterPlaceholderMode` cancels before fallible work when Chromium enters its tabless placeholder. `BrowserState.handleNewTabFromChromium` and `adoptPeekTabIntoStrip` cancel when the list goes from empty back to non-empty, including Chromium's automatic refill; that judgment happens when the queued event mutates the native list. Finally, `resolvePeekCandidate` and `finishPeekCandidate` cancel in their prologs before any outcome branch, and every peek adoption cancels unconditionally. These signals prove the window survived, so leaving a marker armed would misclassify the user's next window close as a tab-driven hand-off.
 
-Consequence: **no user gesture reaches `unregisterWindow` with a live tab-driven marker**, so the hand-off row of the matrix below is currently unreachable, as are the helpers only it uses (`firstSiblingWithTabs`, `pendingTabDrivenCloseSnapshots`, `activate`'s `leavingSnapshotOverride`). The one remaining way in is the vetoed-close residual below — a known defect, not a behavior.
+The explicit last-home-page `IDC_CLOSE_WINDOW` reaches `unregisterWindow` with its live marker and makes the sibling hand-off reachable. The survival cancellation signals above remain for fallback closes and non-user ways the strip can empty; placeholder mode and Chromium's refill behavior are unchanged.
 
-Keyboard ⌘W (`CommandDispatcher.dispatchCommand(.IDC_CLOSE_TAB, …)`) deliberately does **not** tag. Closing a Space's last tab with ⌘W is intended to tear the whole slot down like ⇧⌘W, so it dispatches `IDC_CLOSE_TAB` untagged and reaches `unregisterWindow` as a window-driven close. (⌘W is still swallowed by `handleCloseTab()` when the omnibox is open, which returns `true` without dispatching anything — no tag is involved either way.)
+Keyboard ⌘W (`CommandDispatcher.dispatchCommand(.IDC_CLOSE_TAB, …)`) deliberately does **not** tag. After the last real page has been replaced, closing its home page calls the shell's `performClose(nil)` → `ShellWindowController.windowShouldClose` → `slot.shellRequestedClose()`, which cascades the slot through Chromium. (⌘W is still swallowed by `handleCloseTab()` when the omnibox is open, which returns `true` without dispatching anything — no tag is involved either way.)
 
 **Incognito Spaces bypass the tag entirely on a last-tab close.** Both `Tab.close()` and the ⌘W dispatch intercept it up front and route into `SpaceManager.requestCloseIncognitoSpace(spaceId:)`: a confirmation ("This will also close this Incognito Space, are you sure?", suppressible via "Do not ask again") followed by `closeIncognitoSpace(spaceId:)`, which closes the Space's windows in every slot retreat-first (evict-then-close, like `deleteSpace`) and removes the runtime Space itself. Close paths that never reach the interception — a window-driven slot cascade, a scripted `window.close()` — are mopped up by `reapIncognitoSpaceIfWindowless(_:)`, called one turn deferred from `unregisterWindow`, which retires an Incognito Space once no slot holds a window for it.
 
 One robustness rule applies to the tag:
 
-- **Markers have a TTL (`tabDrivenCloseTTL`, currently 2s).** When a dispatched `IDC_CLOSE_TAB` is vetoed — typically an `onbeforeunload` prompt the user cancels — the tab stays put: the window enters no placeholder, no insertion re-fills an emptied strip, and no `unregisterWindow` fires, so nothing cancels or drains the marker. The TTL caps the stale window so a later window-driven close on the same Space is still correctly classified; inside that window it is still misclassified.
+- **Markers have a TTL (`tabDrivenCloseTTL`, currently 2s).** When a tagged close is vetoed — typically an `onbeforeunload` prompt the user cancels — the tab stays put: the window enters no placeholder, no insertion re-fills an emptied strip, and no `unregisterWindow` fires, so nothing cancels or drains the marker. The TTL caps the stale window so a later window-driven close on the same Space is still correctly classified; inside that window it is still misclassified.
 
 `unregisterWindow` reads `Date() < deadline` to decide `isTabDriven`. Expired markers are drained but not honored.
 
@@ -216,7 +196,7 @@ One robustness rule applies to the tag:
 
 | `wasVisible` | `isTabDriven` | sibling Space with tabs? | result |
 |---|---|---|---|
-| true | true | yes | `activate(spaceId: sibling)` — slot stays alive on the sibling. `visibleController` is left pointing at the closing controller so `activate` captures its frame as the inherited frame for the target. **Currently unreachable** except through the vetoed-close residual above. |
+| true | true | yes | `activate(spaceId: sibling)` — slot stays alive on the sibling after the closing session withdraws from the shell. |
 | true | true | no | cascade — `cascadeCloseRemainingWindows` closes every remaining sibling through Chromium. |
 | true | false | (ignored) | cascade. |
 | false | false | (ignored) | cascade. |
@@ -271,7 +251,7 @@ Window-driven close of a slot with N Spaces:
     and the last drop removes the slot.
 ```
 
-Tab-driven close with a viable sibling (currently unreachable — this line appearing after a plain last-tab close means the marker was not cancelled):
+Tab-driven last-home-page close with a viable sibling:
 
 ```
 [SpaceWindowSlot] tab-driven close of <visibleSpaceId>; switching to sibling <siblingSpaceId>

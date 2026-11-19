@@ -10,7 +10,6 @@ import Combine
 public protocol ThemeStateProvider: ThemeSource {
     var currentTheme: Theme { get }
     var currentAppearance: Appearance { get }
-    var userAppearanceChoice: UserAppearanceChoice { get }
     var themeAppearancePublisher: PassthroughSubject<(Theme, Appearance), Never> { get }
 }
 
@@ -132,18 +131,15 @@ public final class BrowserThemeContext: NSObject, ThemeStateProvider {
     /// the Space's own variant.
     public var spaceThemeResolver: (() -> Theme?)?
 
-    /// A fixed palette for surfaces such as Kiosk; appearance can still follow the app.
-    private let fixedTheme: Theme?
     private var cancellables = Set<AnyCancellable>()
 
     @MainActor
-    public init(configuration: BrowserThemeConfiguration, fixedTheme: Theme? = nil) {
-        self.fixedTheme = fixedTheme
+    public init(configuration: BrowserThemeConfiguration) {
         self.currentTheme = ThemeColorAdjustment.applyingStandardAlpha(
-            to: fixedTheme ?? configuration.currentTheme
+            to: configuration.currentTheme
         )
         self.userAppearanceChoice = configuration.userAppearanceChoice
-        self.mirrorsSharedTheme = fixedTheme == nil && configuration.mirrorsSharedTheme
+        self.mirrorsSharedTheme = configuration.mirrorsSharedTheme
         self.mirrorsSharedAppearance = configuration.mirrorsSharedAppearance
         super.init()
         bindSharedTheme()
@@ -173,7 +169,6 @@ public final class BrowserThemeContext: NSObject, ThemeStateProvider {
     }
     
     public func setTheme(_ theme: Theme) {
-        guard fixedTheme == nil else { return }
         currentTheme = ThemeColorAdjustment.applyingStandardAlpha(to: theme)
     }
     
@@ -192,7 +187,7 @@ public final class BrowserThemeContext: NSObject, ThemeStateProvider {
         manager.themePublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] theme in
-                guard let self, self.fixedTheme == nil else { return }
+                guard let self else { return }
                 if self.mirrorsSharedTheme {
                     self.currentTheme = ThemeColorAdjustment.applyingStandardAlpha(to: theme)
                 } else if let resolved = self.spaceThemeResolver?() {
@@ -291,13 +286,19 @@ public extension NSView {
 
 public extension ThemedColor {
     func resolve(in view: NSView?) -> NSColor {
-        let provider = view?.themeStateProvider ?? ThemeManager.shared
-        let theme = provider.currentTheme
-        let appearance = provider.currentAppearance
-        return resolver(theme, appearance)
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated {
+                let provider = view?.themeStateProvider ?? ThemeManager.shared
+                let theme = provider.currentTheme
+                let appearance = provider.currentAppearance
+                return resolver(theme, appearance)
+            }
+        }
+        let state = ThemeManager.resolutionState
+        return resolver(state.theme, state.appearance)
     }
     
-    func resolve(in window: NSWindow?) -> NSColor {
+    @MainActor func resolve(in window: NSWindow?) -> NSColor {
         let provider = window?.themeStateProvider ?? ThemeManager.shared
         let theme = provider.currentTheme
         let appearance = provider.currentAppearance

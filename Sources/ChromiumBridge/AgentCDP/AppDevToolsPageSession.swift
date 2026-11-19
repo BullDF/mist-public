@@ -9,9 +9,9 @@ import Foundation
 
 /// An app-owned DevTools (CDP) client session on one page target.
 ///
-/// The in-app autofill dispatch (`credentials.autofill`) must act on a page
-/// WITHOUT handing the secret to the agent that asked — so Phi itself has to
-/// be the CDP client. This opens a `socketpair()`, hands one end to Chromium's
+/// Phi's own page work (password fill, agent page theming) must drive a page
+/// without any agent connection, so Phi itself has to be the CDP client. This
+/// opens a `socketpair()`, hands one end to Chromium's
 /// DevTools server through the same FD-injection transport agent connections
 /// use (`attachDevToolsConnectionWithFD:`), performs the WebSocket upgrade to
 /// `/devtools/page/<targetId>` as a client, and speaks JSON CDP commands over
@@ -23,10 +23,12 @@ import Foundation
 /// frames are masked and inbound frames arrive unmasked (RFC 6455 §5.1).
 ///
 /// One instance = one connection = one page session. Commands are sent one at
-/// a time from a single async caller; CDP events are discarded (nothing here
-/// subscribes). Call `close()` when done — deinit does not tear down.
-/// `@unchecked Sendable`: all mutable state is confined to `queue`.
+/// a time from a single async caller. Optional CDP events are delivered on the
+/// main queue. Call `close()` when done — deinit does not tear down.
+/// `@unchecked Sendable`: transport state is confined to `queue`; the event hook
+/// is confined to the main actor.
 final class AppDevToolsPageSession: @unchecked Sendable {
+    @MainActor var onEvent: ((String, [String: Any]) -> Void)?
 
     enum SessionError: Error {
         /// The bridge is absent or the DevTools injection transport is not
@@ -244,8 +246,10 @@ final class AppDevToolsPageSession: @unchecked Sendable {
 
     /// Sends one CDP command and returns its `result` object. Throws
     /// `commandFailed` when the server replies with a CDP error.
+    /// Read-only waits may keep the connection on timeout; their late reply
+    /// is ignored by command id, allowing the next command to proceed.
     func command(_ method: String, params: [String: Any] = [:],
-                 timeout: TimeInterval = 15) async throws -> [String: Any] {
+                 timeout: TimeInterval = 15, closeOnTimeout: Bool = true) async throws -> [String: Any] {
         try await withCheckedThrowingContinuation { cont in
             queue.async {
                 guard !self.closed, self.pending == nil else {
@@ -260,7 +264,7 @@ final class AppDevToolsPageSession: @unchecked Sendable {
                     return
                 }
                 self.pending = (id, cont)
-                self.armTimeout(timeout)
+                self.armTimeout(timeout, closeSession: closeOnTimeout)
                 self.writeFrame(opcode: 0x1, payload: [UInt8](data))
             }
         }
@@ -302,12 +306,18 @@ final class AppDevToolsPageSession: @unchecked Sendable {
         source.resume()
     }
 
-    /// Fails whichever exchange is outstanding when it doesn't complete in
-    /// time, and drops the connection — a stuck page session has no second use.
-    private func armTimeout(_ seconds: TimeInterval) {
+    /// Most timeouts drop a stuck connection. A bounded, read-only paint wait
+    /// may finish later without closing the session that captures the page.
+    private func armTimeout(_ seconds: TimeInterval, closeSession: Bool = true) {
         timeoutItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            self?.fail(SessionError.timedOut)
+            guard let self else { return }
+            if closeSession {
+                self.fail(SessionError.timedOut)
+            } else if let pending = self.pending {
+                self.pending = nil
+                pending.cont.resume(throwing: SessionError.timedOut)
+            }
         }
         timeoutItem = item
         queue.asyncAfter(deadline: .now() + seconds, execute: item)
@@ -453,8 +463,14 @@ final class AppDevToolsPageSession: @unchecked Sendable {
 
     private func dispatchMessage(opcode: UInt8, data: Data) {
         guard opcode == 0x1 else { return }         // CDP is JSON text only
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = obj["id"] as? Int else { return }  // events have no id — drop
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        guard let id = obj["id"] as? Int else {
+            if obj["id"] == nil, let method = obj["method"] as? String {
+                let params = obj["params"] as? [String: Any] ?? [:]
+                DispatchQueue.main.async { [weak self] in self?.onEvent?(method, params) }
+            }
+            return
+        }
         guard let p = pending, p.id == id else { return }
         pending = nil
         timeoutItem?.cancel()

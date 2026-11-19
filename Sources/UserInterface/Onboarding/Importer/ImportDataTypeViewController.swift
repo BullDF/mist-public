@@ -33,17 +33,12 @@ enum ImportDataType: String, CaseIterable {
         switch browser {
         case .safari:
             return [.bookmarks, .history]
-        case .chrome, .arc, .dia:
+        case .chrome:
             return [.bookmarks, .history, .cookies, .extensions]
         case .file:
             // File import exposes no per-type toggles; the file row uses a picker
             // body instead. Chromium decides what the file contains.
             return []
-        case .zen:
-            // History only: Zen's bookmarks are parsed Mac-side by Migration, the
-            // Firefox importer has no cookie path, and Firefox extensions cannot
-            // be installed into Phi.
-            return [.history]
         default:
             return [.bookmarks, .history]
         }

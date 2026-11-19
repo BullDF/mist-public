@@ -5,7 +5,6 @@
 
 import AppKit
 import Combine
-import PostHog
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -429,18 +428,6 @@ struct SpacesStripView: View {
     /// the cursor across the strip doesn't flash cards.
     private static let hoverCardDelay: TimeInterval = 0.3
 
-    /// Preset palette used for new-Space creation. Ordered so successive new
-    /// Spaces are visually distinct without forcing the user into a color
-    /// picker on creation.
-    static let colorPalette: [(hex: String, name: String)] = [
-        ("#3A6FF8", "Blue"),
-        ("#E5484D", "Red"),
-        ("#46A758", "Green"),
-        ("#F76B15", "Orange"),
-        ("#8E4EC6", "Purple"),
-        ("#0091FF", "Cyan")
-    ]
-
     var body: some View {
         // Height is set by the caller (SnapKit constraint in the sidebar,
         // SwiftUI frame in the horizontal toolbar) so the picker can adapt
@@ -541,7 +528,7 @@ struct SpacesStripView: View {
             }
             .background(chipTooltipAnchor)
             .onAppear { wireTooltipPointerWatchdog() }
-            .onChange(of: slot.activeSpaceId) { newId in
+            .onChange(of: slot.activeSpaceId) { _, newId in
                 // The chip's card is keyed to the ACTIVE Space, which can
                 // change under a resting cursor (⌃-number, menu-bar switch, a
                 // swipe over the chip, active-Space delete). The hover state
@@ -608,7 +595,7 @@ struct SpacesStripView: View {
         .onAppear {
             if displayedSpaceId == nil { displayedSpaceId = slot.activeSpaceId }
         }
-        .onChange(of: slot.activeSpaceId) { newId in
+        .onChange(of: slot.activeSpaceId) { _, newId in
             let oldIndex = manager.spaces.firstIndex { $0.spaceId == displayedSpaceId }
             let newIndex = manager.spaces.firstIndex { $0.spaceId == newId }
             scrollEdge = (newIndex ?? 0) >= (oldIndex ?? 0) ? .bottom : .top
@@ -738,10 +725,10 @@ struct SpacesStripView: View {
         .onAppear {
             reanchorViewport(animated: false)
         }
-        .onChange(of: stripSelectedSpaceId) { _ in
+        .onChange(of: stripSelectedSpaceId) { _, _ in
             reanchorViewport(animated: animatesOnScreen)
         }
-        .onChange(of: slot.isCreatingSpace) { _ in
+        .onChange(of: slot.isCreatingSpace) { _, _ in
             // Opening the create form slides an overflowing row to its
             // end, where the dashed placeholder stands; closing it slides
             // back to the active pip's window.
@@ -757,7 +744,7 @@ struct SpacesStripView: View {
             }
             reanchorViewport(animated: false)
         }
-        .onChange(of: stripOrderedSpaces.map(\.spaceId)) { _ in
+        .onChange(of: stripOrderedSpaces.map(\.spaceId)) { _, _ in
             // A delete/reorder can push the active pip out of the window
             // (e.g. removing a pip ahead of it). Re-anchor — but never
             // mid-drag, where the live rearrangement is transient.
@@ -787,12 +774,12 @@ struct SpacesStripView: View {
             stripOrderedIds = manager.spaces.map(\.spaceId)
             wireTooltipPointerWatchdog()
         }
-        .onChange(of: slot.isCreatingSpace) { isCreating in
+        .onChange(of: slot.isCreatingSpace) { _, isCreating in
             guard isCreating else { return }
             stripDraggingId = nil
             stripOrderedIds = manager.spaces.map(\.spaceId)
         }
-        .onChange(of: manager.spaces.map(\.spaceId)) { ids in
+        .onChange(of: manager.spaces.map(\.spaceId)) { _, ids in
             // A deleted Space's pip leaves the ForEach with no mouse-exit, so
             // its `.onHover(false)` never fires and `hoveredSpaceId` /
             // `iconEditSpaceId` stay pinned to a Space that no longer exists.
@@ -817,7 +804,7 @@ struct SpacesStripView: View {
             guard stripDraggingId == nil else { return }
             stripOrderedIds = ids
         }
-        .onChange(of: slot.stripReorderDraggingId) { id in
+        .onChange(of: slot.stripReorderDraggingId) { _, id in
             // A drag sourced by another Space's strip has ended (dropped or
             // not): this strip's preview arrangement goes back to the model,
             // which a committed drop has already updated.
@@ -1237,7 +1224,7 @@ struct SpacesStripView: View {
     @ViewBuilder
     private func pipIcon(for space: Space) -> some View {
         if let task = agentSpaceManager.tasksBySpaceId[space.spaceId] {
-            let badge = AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+            let badge = AgentDriverBadge.make(agentName: task.agentName)
             Group {
                 if let asset = badge.assetName {
                     // Brand assets carry padding around their ink (see
@@ -1280,8 +1267,6 @@ struct SpacesStripView: View {
             .matchedGeometryEffect(id: space.spaceId, in: pipGlassNamespace)
             // Same frame again, measured for the hosting view's chip flight
             // (matchedGeometryEffect anchors are SwiftUI-internal).
-            // Layout callbacks can outlive the Guest store during migration.
-            // Capture the ID now, while the model's backing data is valid.
             .background(publishGeometry { [spaceId = space.spaceId] geometry, frame in
                 geometry.pipFrames[spaceId] = frame
             })
@@ -1629,47 +1614,6 @@ struct SpacesStripView: View {
         })
     }
 
-    /// The Space-switcher popover content. The horizontal chip lists every Space
-    /// with a "New Space" row; the sidebar's "…" overflow popover passes the
-    /// already-shown pip ids to `excludedSpaceIds` and `showsCreate: false`, so it
-    /// only surfaces the Spaces that didn't fit and leaves creation to the strip's
-    /// own "+" button.
-    @ViewBuilder
-    private func pickerPopup(excludedSpaceIds: Set<String> = [], showsCreate: Bool = true) -> some View {
-        SpacePickerPopup(
-            manager: manager,
-            slot: slot,
-            profileManager: profileManager,
-            windowAppearance: windowAppearance,
-            onActivate: { [storeIdentifier = manager.storeIdentifier] spaceId in
-                guard manager.acceptsStoreAction(from: storeIdentifier) else { return }
-                slot.activate(spaceId: spaceId, userInitiated: true)
-                isPickerOpen = false
-            },
-            onRename: { space in
-                isPickerOpen = false
-                promptRename(for: space)
-            },
-            onChangeIcon: { [storeIdentifier = manager.storeIdentifier] in
-                manager.changeIcon(spaceId: $0, iconName: $1, expectedStoreIdentifier: storeIdentifier)
-            },
-            onSetTheme: { [storeIdentifier = manager.storeIdentifier] in
-                manager.setTheme(forSpaceId: $0, themeId: $1, expectedStoreIdentifier: storeIdentifier)
-            },
-            currentThemeId: { manager.resolvedThemeId(forSpaceId: $0) },
-            onDelete: { space in
-                isPickerOpen = false
-                confirmDelete(space)
-            },
-            onCreate: {
-                isPickerOpen = false
-                CreateSpacePanel.requestCreation(initialProfileId: activeSpace?.profileId)
-            },
-            excludedSpaceIds: excludedSpaceIds,
-            showsCreate: showsCreate
-        )
-    }
-
     private var activeSpace: Space? {
         if let id = slot.activeSpaceId {
             return manager.spaces.first { $0.spaceId == id }
@@ -1704,32 +1648,6 @@ struct SpacesStripView: View {
         Color(nsColor: theme(for: space).color(for: .themeColor, appearance: windowAppearance))
     }
 
-    private func promptRename(for space: Space) {
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("sidebar.renameSpaceDialog.title", value: "Rename Space", comment: "Title of the rename-Space dialog")
-        alert.informativeText = NSLocalizedString("sidebar.renameSpaceDialog.message", value: "Enter a new name for this Space.", comment: "Body of the rename-Space dialog")
-        alert.addButton(withTitle: NSLocalizedString("sidebar.renameSpaceDialog.renameButton", value: "Rename", comment: "Rename button"))
-        alert.addButton(withTitle: NSLocalizedString("sidebar.renameSpaceDialog.cancelButton", value: "Cancel", comment: "Cancel button"))
-        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        textField.stringValue = space.name
-        textField.placeholderString = space.name
-        alert.accessoryView = textField
-        DispatchQueue.main.async {
-            textField.window?.makeFirstResponder(textField)
-            textField.selectText(nil)
-        }
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return }
-        let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != space.name else { return }
-        manager.renameSpace(spaceId: space.spaceId, to: trimmed, expectedStoreIdentifier: space.storeIdentifier)
-    }
-
-    private func confirmDelete(_ space: Space) {
-        guard SpaceDeletionConfirmation.run(space: space) else { return }
-        manager.deleteSpace(spaceId: space.spaceId, expectedStoreIdentifier: space.storeIdentifier)
-        PostHogSDK.shared.capture("space_deleted")
-    }
 }
 
 /// Popover content shown by the ellipsis button. Lists every Space with its
@@ -1841,7 +1759,7 @@ private struct SpacePickerPopup: View {
             }
         ))
         .onAppear { orderedIds = manager.spaces.map(\.spaceId) }
-        .onChange(of: manager.spaces.map(\.spaceId)) { ids in
+        .onChange(of: manager.spaces.map(\.spaceId)) { _, ids in
             // Don't fight an in-flight drag's local rearrangement; the
             // commit on drop writes through and re-syncs on the next pass.
             guard draggingSpaceId == nil else { return }

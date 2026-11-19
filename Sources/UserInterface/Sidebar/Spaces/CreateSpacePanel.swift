@@ -4,7 +4,6 @@
 // found in the LICENSE file.
 
 import AppKit
-import PostHog
 import SwiftUI
 
 /// Rich "Create a Space" panel. Replaces the bare name-only NSAlert that used
@@ -25,13 +24,6 @@ struct CreateSpacePanel: View {
         /// Embedded Library card; creation keeps the management surface visible.
         case library
 
-        var analyticsSurface: String {
-            switch self {
-            case .window: return "standalone_window"
-            case .sidebar: return "sidebar"
-            case .library: return "library"
-            }
-        }
     }
 
     var style: Style = .window
@@ -109,7 +101,7 @@ struct CreateSpacePanel: View {
                 onIconSelectionChange?(selectedIcon)
                 DispatchQueue.main.async { nameFocused = true }
             }
-            .onChange(of: selectedIcon.storageValue) { _ in
+            .onChange(of: selectedIcon.storageValue) { _, _ in
                 onIconSelectionChange?(selectedIcon)
             }
     }
@@ -500,14 +492,6 @@ struct CreateSpacePanel: View {
             iconName: selectedIcon.storageValue,
             profileId: profileId
         )
-        if newSpaceId != nil {
-            PostHogSDK.shared.capture("space_created", properties: [
-                "total_spaces": manager.spaces.count,
-                "non_default_profile": profileId != LocalStore.defaultProfileId,
-                "surface": style.analyticsSurface,
-            ])
-            FirstTimeActionTracker.capture(.spaceCreated)
-        }
         // Pin the chosen theme (and, when the user touched the slider, its
         // custom saturation or Pure brightness) to the new Space. Persisted
         // now; applied when its window spawns in activateInFocusedWindow.

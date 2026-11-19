@@ -584,7 +584,7 @@ final class DiffableOutlineViewTests: XCTestCase {
     }
 
     func testSideBarOutlineViewIsDiffableOutlineView() {
-        let view = SideBarOutlineView()
+        let view: NSOutlineView = SideBarOutlineView()
 
         XCTAssertTrue(view is DiffableOutlineView)
     }

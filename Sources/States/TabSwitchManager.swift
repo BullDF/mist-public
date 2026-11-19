@@ -14,7 +14,7 @@ enum TabSwitchDirection {
 @MainActor
 final class TabSwitchManager {
     private var visitHistoryTabIDs: [Int] = []
-    /// Switching priority includes unvisited background tabs and is limited to five items.
+    /// Switching priority: every visited tab plus unvisited background links.
     private(set) var recentTabIDs: [Int] = []
     /// Media ordering uses actual visits only, retaining every live visited tab.
     var visitedTabIDs: [Int] { visitHistoryTabIDs }
@@ -22,6 +22,7 @@ final class TabSwitchManager {
 
     private var session: Session?
     private var flagsMonitor: Any?
+    private var keyMonitor: Any?
     private var windowResignObserver: NSObjectProtocol?
     private var appResignObserver: NSObjectProtocol?
     private var windowController: TabSwitchWindowController?
@@ -43,7 +44,6 @@ final class TabSwitchManager {
 
     func recordActiveTab(_ tab: Tab) {
         guard let state = browserState else { return }
-        if BrowserState.isAIChatId(tab.guidInLocalDB) { return }
         guard state.tabs.contains(where: { $0.guid == tab.guid }) else { return }
 
         let tabID = tab.guid
@@ -52,29 +52,24 @@ final class TabSwitchManager {
         visitHistoryTabIDs.insert(tabID, at: 0)
         recentTabIDs.removeAll { $0 == tabID }
         recentTabIDs.insert(tabID, at: 0)
-        recentTabIDs = Array(recentTabIDs.prefix(TabSwitchMetrics.maxRecentTabs))
     }
 
     /// Admit an unvisited background tab as the next forward-switch target.
     /// Keep the focused tab first; an in-progress session retains its snapshot.
     func recordBackgroundTab(_ tab: Tab) {
         guard let state = browserState,
-              !BrowserState.isAIChatId(tab.guidInLocalDB),
               state.focusingTab?.guid != tab.guid,
               state.tabs.contains(where: { $0.guid == tab.guid }),
-              !recentTabIDs.contains(tab.guid),
-              !visitHistoryTabIDs.contains(tab.guid) else { return }
+              !recentTabIDs.contains(tab.guid) else { return }
 
         pruneHistory()
         if let currentTab = state.focusingTab,
-           !BrowserState.isAIChatId(currentTab.guidInLocalDB),
            state.tabs.contains(where: { $0.guid == currentTab.guid }) {
             recentTabIDs.removeAll { $0 == currentTab.guid }
             recentTabIDs.insert(currentTab.guid, at: 0)
         }
         let insertionIndex = recentTabIDs.first == state.focusingTab?.guid ? 1 : 0
         recentTabIDs.insert(tab.guid, at: min(insertionIndex, recentTabIDs.count))
-        recentTabIDs = Array(recentTabIDs.prefix(TabSwitchMetrics.maxRecentTabs))
     }
 
     func removeTab(tabID: Int) {
@@ -160,7 +155,7 @@ final class TabSwitchManager {
             return
         }
 
-        installFlagsMonitor()
+        installInputMonitors()
         installWindowResignObserver()
     }
 
@@ -223,7 +218,7 @@ final class TabSwitchManager {
         session?.pendingRevealWorkItem?.cancel()
         session = nil
         dismissOverlay()
-        removeFlagsMonitor()
+        removeInputMonitors()
         removeWindowResignObserver()
     }
 
@@ -236,35 +231,54 @@ final class TabSwitchManager {
         recentTabIDs.removeAll { !validIDs.contains($0) }
     }
 
-    private func buildCandidates() -> [Int] {
-        guard browserState != nil else { return [] }
+    /// Every tab of the window: most recent first, then never-visited ones in strip order.
+    func buildCandidates() -> [Int] {
+        guard let state = browserState else { return [] }
         pruneHistory()
-        return recentTabIDs
+        let ranked = Set(recentTabIDs)
+        return recentTabIDs + state.tabs.map(\.guid).filter { !ranked.contains($0) }
     }
 
     // MARK: - Input Monitoring
 
-    private func installFlagsMonitor() {
+    private func installInputMonitors() {
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleFlagsChanged(event)
             return event
         }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handleKeyDown(event) == true ? nil : event
+        }
+    }
+
+    private func isSessionWindowEvent(_ event: NSEvent) -> Bool {
+        guard let sessionWindow = browserState?.windowController?.window else { return false }
+        return event.window === sessionWindow || (event.window == nil && NSApp.keyWindow === sessionWindow)
     }
 
     func handleFlagsChanged(_ event: NSEvent) {
-        guard event.type == .flagsChanged, let anchor = session?.anchorModifiers,
-              let sessionWindow = browserState?.windowController?.window,
-              event.window === sessionWindow
-                || (event.window == nil && NSApp.keyWindow === sessionWindow) else { return }
+        guard event.type == .flagsChanged, let anchor = session?.anchorModifiers, isSessionWindowEvent(event) else { return }
         // Releasing any initiating hold key commits, even if another modifier
         // remains down. Additional Shift/Caps Lock never extend that lifetime.
         if event.modifierFlags.intersection(anchor) != anchor { commitSession() }
     }
 
-    private func removeFlagsMonitor() {
+    /// Esc while the hold keys are still down ends the gesture on the tab it started from. Returns whether it took
+    /// the key, which then reaches nothing else.
+    func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, event.keyCode == 53, session != nil, isSessionWindowEvent(event) else { return false }
+        cancelSession()
+        return true
+    }
+
+    private func removeInputMonitors() {
         if let monitor = flagsMonitor {
             NSEvent.removeMonitor(monitor)
             flagsMonitor = nil
+        }
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
         }
     }
 
@@ -276,7 +290,9 @@ final class TabSwitchManager {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.cancelSession()
+            MainActor.assumeIsolated {
+                self?.cancelSession()
+            }
         }
 
         appResignObserver = NotificationCenter.default.addObserver(
@@ -284,7 +300,9 @@ final class TabSwitchManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.cancelSession()
+            MainActor.assumeIsolated {
+                self?.cancelSession()
+            }
         }
     }
 
@@ -368,8 +386,7 @@ final class TabSwitchManager {
                 title: tab.title,
                 snapshotImage: snapshot,
                 liveFaviconImage: liveFavicon,
-                faviconPageURL: pageURL,
-                isCurrentTab: tab.guid == state.focusingTab?.guid
+                faviconPageURL: pageURL
             )
         }
     }
@@ -423,7 +440,8 @@ extension TabSwitchManager: TabSwitchWindowControllerDelegate {
 
     func tabSwitchWindowDidHoverItem(tabID: Int) {
         guard var session,
-              let index = session.candidateTabIDs.firstIndex(of: tabID) else { return }
+              let index = session.candidateTabIDs.firstIndex(of: tabID),
+              index != session.selectedIndex else { return }
         session.selectedIndex = index
         self.session = session
         windowController?.updateSelection(selectedTabID: tabID)

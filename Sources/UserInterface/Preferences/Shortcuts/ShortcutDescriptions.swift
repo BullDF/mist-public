@@ -166,46 +166,55 @@ extension CommandWrapper {
             return NSLocalizedString("settings.shortcuts.description.viewTree", value: "Print the browser view hierarchy for debugging.", comment: "Shortcuts settings - Description of the viewTree command")
         case .IDC_DEBUG_PRINT_VIEW_TREE_DETAILS:
             return NSLocalizedString("settings.shortcuts.description.viewTreeDetails", value: "Print the detailed browser view hierarchy for debugging.", comment: "Shortcuts settings - Description of the viewTreeDetails command")
-        case .IDC_FEEDBACK:
-            return NSLocalizedString("settings.shortcuts.description.feedback", value: "Open the feedback page.", comment: "Shortcuts settings - Description of the feedback command")
         case .IDC_HELP_PAGE_VIA_MENU:
             return NSLocalizedString("settings.shortcuts.description.help", value: "Open browser help.", comment: "Shortcuts settings - Description of the help command")
         case .PHI_TOGGLE_SIDEBAR:
             return NSLocalizedString("settings.shortcuts.description.sidebar", value: "Show or hide the sidebar.", comment: "Shortcuts settings - Description of the sidebar command")
         case .PHI_TOGGLE_CHATBAR:
             return NSLocalizedString("settings.shortcuts.description.chatbar", value: "Show or hide the chat panel.", comment: "Shortcuts settings - Description of the chatbar command")
+        case .PHI_SWITCH_CHAT_PANEL_AND_TAB:
+            return NSLocalizedString("settings.shortcuts.description.switchChatPanelAndTab", value: "Go from the chat panel to the chat's tab, or from a chat tab back to its chat panel.", comment: "Shortcuts settings - Description of switching between a chat panel and tab")
+        case .PHI_OPEN_CLIPBOARD: return Self.openAppDescription(.clipboard)
+        case .PHI_MAKE_PRIMARY_WINDOW:
+            return NSLocalizedString("settings.shortcuts.description.makePrimaryWindow", value: "Make the focused window the primary window, where links from other apps open.", comment: "Shortcuts settings description for making the focused window primary")
+        case .PHI_OPEN_DRIFTER: return Self.openAppDescription(.drifter)
+        case .PHI_NEW_DRIFTER_CHAT:
+            return NSLocalizedString("settings.shortcuts.description.newDrifterChat", value: "Opens a new empty Drifter chat in a tab.", comment: "Shortcuts settings - Description of the new Drifter chat command")
+        case .PHI_OPEN_MAIL: return Self.openAppDescription(.mail)
         case .PHI_TAB_SWITCHER_FORWARD:
             return NSLocalizedString("settings.shortcuts.description.tabSwitcher", value: "Show the tab switcher and move forward through recent tabs.", comment: "Shortcuts settings - Description of the tabSwitcher command")
         case .PHI_TAB_SWITCHER_BACKWARD:
             return NSLocalizedString("settings.shortcuts.description.tabSwitcherReverse", value: "Show the tab switcher and move backward through recent tabs.", comment: "Shortcuts settings - Description of the tabSwitcherReverse command")
         case .PHI_NEW_CONVERSATION:
-            return NSLocalizedString("settings.shortcuts.description.newConversation", value: "Start a new conversation in Phi Chat.", comment: "Shortcuts settings - Description of the newConversation command")
+            return NSLocalizedString("settings.shortcuts.description.newConversation", value: "Start a new Drifter chat in the chat panel.", comment: "Shortcuts settings - Description of the newConversation command")
+        case .PHI_DRIFTER_MODEL_MENU:
+            return NSLocalizedString("settings.shortcuts.description.drifterModelMenu", value: "Open the model list while typing in a Drifter composer.", comment: "Shortcuts settings - Description of the command that opens the model list of the Drifter message field being typed in")
+        case .PHI_DRIFTER_EFFORT_MENU:
+            return NSLocalizedString("settings.shortcuts.description.drifterEffortMenu", value: "Open the effort list while typing in a Drifter composer.", comment: "Shortcuts settings - Description of the command that opens the reasoning effort list of the Drifter message field being typed in")
+        case .PHI_DRIFTER_PREVIOUS_MARKER:
+            return NSLocalizedString("settings.shortcuts.description.drifterPreviousMarker", value: "Jump to the previous marker in a Drifter chat.", comment: "Shortcuts settings - Description of the previous marker command")
+        case .PHI_DRIFTER_NEXT_MARKER:
+            return NSLocalizedString("settings.shortcuts.description.drifterNextMarker", value: "Jump to the next marker in a Drifter chat.", comment: "Shortcuts settings - Description of the next marker command")
         case .PHI_SELECT_NEXT_SPACE:
             return NSLocalizedString("settings.shortcuts.description.nextSpace", value: "Switch to the next Space.", comment: "Shortcuts settings - Description of the nextSpace command")
         case .PHI_SELECT_PREVIOUS_SPACE:
             return NSLocalizedString("settings.shortcuts.description.previousSpace", value: "Switch to the previous Space.", comment: "Shortcuts settings - Description of the previousSpace command")
-        case .PHI_FARRINGDON_TOGGLE:
-            return NSLocalizedString("settings.shortcuts.description.organizeTabs", value: "Organize tabs with AI.", comment: "Shortcuts settings - Description of the organizeTabs command")
         case .PHI_COPY_URL:
             return NSLocalizedString("settings.shortcuts.description.copyURL", value: "Copy the current page's URL to the clipboard.", comment: "Shortcuts settings - Description of the copyURL command")
         case .PHI_TOGGLE_READER:
             return NSLocalizedString("settings.shortcuts.description.reader", value: "Open or close Reader for the current page.", comment: "Shortcuts settings - Description of the reader command")
-        case .PHI_NEW_KIOSK_WINDOW:
-            return NSLocalizedString("settings.shortcuts.description.newKiosk", value: "Open a new Kiosk window.", comment: "Shortcuts settings - Description of the newKiosk command")
         case .PHI_NEW_INCOGNITO_SPACE:
             return NSLocalizedString("settings.shortcuts.description.newIncognitoSpace", value: "Create a new Incognito Space.", comment: "Shortcuts settings - Description of the newIncognitoSpace command")
         case .PHI_SHARE_PAGE:
             return NSLocalizedString("settings.shortcuts.description.sharePage", value: "Share the current page.", comment: "Shortcuts settings - Description of the sharePage command")
+        case .PHI_ALTERNATE_NEW_TAB:
+            return NSLocalizedString("settings.shortcuts.description.alternateNewTab", value: "Open the New Tab Page if New Tab opens the Omnibox, or the Omnibox if it opens the New Tab Page.", comment: "Shortcuts settings - Alternate New Tab opens the opposite of the configured New Tab action")
         case .PHI_CAPTURE_FULL_PAGE:
             return NSLocalizedString("settings.shortcuts.description.captureFullPage", value: "Capture the entire current webpage and copy it as an image.", comment: "Shortcuts settings - Description of the full page screenshot command")
         case .PHI_CAPTURE_AREA:
             return NSLocalizedString("settings.shortcuts.description.captureArea", value: "Select a visible webpage area to capture and edit.", comment: "Shortcuts settings - Description of the area screenshot command")
-        case .PHI_KIOSK_OPEN_IN_SPACE:
-            return NSLocalizedString("settings.shortcuts.description.kioskOpenInSpace", value: "Open the current Peek or Kiosk page in a Space.", comment: "Shortcuts settings - Description of the kioskOpenInSpace command")
-        case .PHI_KIOSK_CHOOSE_SPACE:
-            return NSLocalizedString("settings.shortcuts.description.kioskChooseSpace", value: "Choose a Space for the current Peek or Kiosk page.", comment: "Shortcuts settings - Description of the kioskChooseSpace command")
-        case .PHI_SAVE_FOR_LATER:
-            return NSLocalizedString("settings.shortcuts.description.saveForLater", value: "Save the current page for later.", comment: "Shortcuts settings - Description of the saveForLater command")
+        case .PHI_PEEK_OPEN_IN_SPACE:
+            return NSLocalizedString("settings.shortcuts.description.peekOpenInSpace", value: "Open the current Peek page in a Space.", comment: "Shortcuts settings - Description of the peekOpenInSpace command")
         case .IDS_HIDE_OTHERS_MAC:
             return NSLocalizedString("settings.shortcuts.description.hideOthers", value: "Hide other applications.", comment: "Shortcuts settings - Description of the hideOthers command")
         case .IDS_CLOSE_ALL_WINDOWS_MAC:
@@ -253,5 +262,9 @@ extension CommandWrapper {
         case .PHI_SELECT_SPACE_8:
             return String(format: NSLocalizedString("settings.shortcuts.description.numberedSpace", value: "Switch to Space %d in the current window.", comment: "Shortcuts settings - Description for a numbered space; %d is its position"), 9)
         }
+    }
+
+    private static func openAppDescription(_ app: MistAppID) -> String {
+        String(format: NSLocalizedString("settings.shortcuts.description.openApp", value: "Open %@.", comment: "Shortcuts settings - Description of a command that opens one of Mist's apps; %@ is the app's name, which stays in English"), app.name)
     }
 }

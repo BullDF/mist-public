@@ -9,6 +9,7 @@ import AppKit
 
 struct SideTabView: View {
     static let trailingHoverDeadZoneWidth: CGFloat = 6
+    static let leadingContentInset: CGFloat = 6
 
     var model: TabViewModel
     var onClose: (() -> Void)? = nil
@@ -63,12 +64,15 @@ struct SideTabView: View {
             }
 
             UnifiedTabTitleView(viewModel: model)
-                .themedForeground(.textPrimary)
+                .opacity(model.isRenaming ? 0 : 1)
+                .themedForeground(model.isEndedAgentChat ? .textTertiary : .textPrimary)
 
             if model.showsPeek, let peekModel {
                 SidebarPeekIndicatorView(viewModel: peekModel,
                                          onClose: { onClosePeek?() })
             }
+
+            AgentSidebarStatusView(status: model.agentSidebarStatus)
 
             // While a peek is attached, the row's only close affordance is
             // the peek indicator's "minus" (same rule as the bookmark row).
@@ -78,7 +82,7 @@ struct SideTabView: View {
         }
 //        .debugBorder(.green)
         .help(model.showsTabPreview ? "" : model.displayTitle)
-        .padding(.leading, 6)
+        .padding(.leading, Self.leadingContentInset)
         .padding(.trailing, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
@@ -109,6 +113,37 @@ struct SideTabView: View {
             model.setHovered(hovering)
         }
 //        .debugBorder(.red)
+    }
+}
+
+struct AgentSidebarStatusView: View {
+    /// The working spinner's side: close to a chat favicon's glyph, never past its 16 pt slot.
+    static let spinnerSize: CGFloat = 12
+
+    let status: AgentSidebarStatus
+
+    var body: some View {
+        switch status {
+        case .none: EmptyView()
+        case .running:
+            ProgressView().controlSize(.small).scaleEffect(Self.spinnerSize / 16)
+                .frame(width: Self.spinnerSize, height: Self.spinnerSize)
+                .accessibilityLabel(Text(NSLocalizedString("mist.sidebar.agents.status.running", value: "Running", comment: "Agent sidebar - Running status accessibility label")))
+        case .background:
+            // A static ring, never the spinner: the agent's turn ended, but its background work still runs.
+            MistDot(color: .themeColor, isHollow: true)
+                .accessibilityLabel(Text(NSLocalizedString("mist.sidebar.agents.status.background", value: "Running in background", comment: "Agent sidebar - Accessibility label for an idle chat whose background task or monitor still runs")))
+        case .needsInput:
+            dot(.orange, label: NSLocalizedString("mist.sidebar.agents.status.needsInput", value: "Needs input", comment: "Agent sidebar - Needs input status accessibility label"))
+        case .done:
+            dot(.green, label: NSLocalizedString("mist.sidebar.agents.status.done", value: "Done", comment: "Agent sidebar - Unseen completion status accessibility label"))
+        case .failed:
+            dot(.red, label: NSLocalizedString("mist.sidebar.agents.status.failed", value: "Failed", comment: "Agent sidebar - Failed status accessibility label"))
+        }
+    }
+
+    private func dot(_ color: Color, label: String) -> some View {
+        Circle().fill(color).frame(width: 7, height: 7).accessibilityLabel(Text(label))
     }
 }
 

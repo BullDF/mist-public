@@ -46,7 +46,8 @@ class BookmarkSectionController: NSObject {
         isActive = true
         cancellables.removeAll()
         bookmarkManager.$rootFolder
-            .sink { [weak self] root in
+            .combineLatest(MistSidebarBookmarksHeader.expandedPublisher)
+            .sink { [weak self] root, _ in
                 self?.refreshBookmarkItems(root, notifyDelegate: true)
             }
             .store(in: &cancellables)
@@ -79,7 +80,7 @@ class BookmarkSectionController: NSObject {
     }
 
     private func refreshBookmarkItems(_ root: Bookmark, notifyDelegate: Bool) {
-        bookmarkItems = root.children
+        bookmarkItems = MistSidebarBookmarksHeader.outlineItems(from: root)
         let isFirstLoad = !isInitialDataLoaded && !bookmarkItems.isEmpty
         if isFirstLoad {
             isInitialDataLoaded = true
@@ -94,29 +95,8 @@ class BookmarkSectionController: NSObject {
         }
     }
     
-    func addBookmarkFromTab(_ tab: Tab, to folder: Bookmark? = nil, index: Int?) {
-        guard let url = tab.url else { return }
-        
-        let title = tab.title.count > 0 ? tab.title : url
-        let targetFolder = folder ?? bookmarkManager.rootFolder
-        
-        bookmarkManager.addBookmark(title: title,
-                                    url: url,
-                                    to: targetFolder,
-                                    targetIndex: index,
-                                    faviconData: tab.liveFaviconData ?? tab.cachedFaviconData)
-    }
-    
-    func deleteBookmark(_ bookmark: Bookmark) {
-        bookmarkManager.removeBookmark(bookmark)
-    }
-    
     func moveBookmark(_ bookmark: Bookmark, to newParent: Bookmark, at index: Int? = nil) {
         bookmarkManager.moveBookmark(bookmark, to: newParent, at: index)
-    }
-    
-    func createFolder(title: String, in parent: Bookmark? = nil) {
-        bookmarkManager.addFolder(title: title, to: parent)
     }
     
     // MARK: - Query

@@ -13,14 +13,10 @@ class SideAddressBar: NSView {
     private enum LayoutMetrics {
         static let extensionButtonWidth: CGFloat = 24
         static let extensionButtonSpacing: CGFloat = 2
-        static let rightStackSpacing: CGFloat = 6
-        static let textFieldLeadingInset: CGFloat = 12
-        static let textFieldTrailingSpacing: CGFloat = 8
         static let textFadeWidth: CGFloat = 24
         static let accessoryFadeDuration: TimeInterval = 0.1
-        static let rightStackTrailingInset: CGFloat = 4
-        // Allow Reader View and Memory to consume part of the original text budget.
-        static let minimumAddressTextWidth: CGFloat = 84 - 2 * (extensionButtonWidth + extensionButtonSpacing)
+        // Allow Reader View to consume part of the original text budget.
+        static let minimumAddressTextWidth: CGFloat = 84 - (extensionButtonWidth + extensionButtonSpacing)
     }
 
     private var containerView: HoverableView!
@@ -50,33 +46,6 @@ class SideAddressBar: NSView {
         button.snp.makeConstraints { make in
             make.size.equalTo(CGSize(width: 24, height: 24))
         }
-        return button
-    }()
-
-    private lazy var memoryMenuButton: HoverableButtonNSView = {
-        let title = NSLocalizedString("browser.webContentAddressBar.manageSiteMemoriesTooltip", value: "Manage Site Memories", comment: "Address bar - Button tooltip for opening memory controls for the current website")
-        let config = HoverableButtonConfig(
-            image: NSImage(named: "memory-manage-icon"),
-            imageSize: .init(width: 16, height: 16),
-            hoverBackgroundColor: .hover,
-            imageTintColor: .textPrimary,
-            cornerRadius: 4
-        )
-        let button = HoverableButtonNSView(config: config) { [weak self] in
-            guard let self else { return }
-            self.window?.customTooltipController.dismissAll()
-            WebContentAddressBarMenuPresenter.presentMemoryMenu(
-                browserState: self.sessionBrowserState,
-                currentTab: self.currentTab,
-                anchorView: self.memoryMenuButton,
-                onPresentationChanged: { _ in }
-            )
-        }
-        button.setAccessibilityLabel(title)
-        button.snp.makeConstraints { make in
-            make.size.equalTo(CGSize(width: 24, height: 24))
-        }
-        button.isHidden = true
         return button
     }()
 
@@ -131,6 +100,9 @@ class SideAddressBar: NSView {
     private let isFloating: Bool
     
     private var cancellables = Set<AnyCancellable>()
+    private var chatSubscription: AnyCancellable?
+    private var chatId: UUID?
+    private var chatThemeSubscription: AnyObject?
     // The last (unfiltered) pinned set handed to updateExtensionIcons, so a
     // dynamic-icon or visibility change can rebuild and re-apply the visibility
     // filter without re-deriving the display gating.
@@ -279,23 +251,14 @@ class SideAddressBar: NSView {
         $currentTab
             .compactMap { $0 }
             .map { tab in
-                tab.$url
+                tab.$url.combineLatest(tab.$title).map { $0.0 }
                     .eraseToAnyPublisher()
             }
             .switchToLatest()
-            .removeDuplicates()
             .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
             .sink { [weak self] url in
                 guard browserState.isInPlaceholderMode != true else { return }
                 self?.updateDisplayedURL(url)
-            }
-            .store(in: &cancellables)
-
-        browserState.$groupOverviewState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                guard browserState.isInPlaceholderMode != true else { return }
-                self?.updateDisplayedURL(self?.currentTab?.url)
             }
             .store(in: &cancellables)
 
@@ -312,9 +275,10 @@ class SideAddressBar: NSView {
                 } else {
                     self.updateDisplayedURL(self.currentTab?.url)
                 }
-                self.copyURLButton.isHidden = isPlaceholder
-                self.extensionMenuHostingView.isHidden = isPlaceholder
-                self.extensionIconsStackView.isHidden = isPlaceholder
+                self.copyURLButton.isHidden = isPlaceholder || MistAppAddressDisplay.resolve(self.currentTab) != nil
+                // Mist: extensions button removed from window chrome
+                self.extensionMenuHostingView.isHidden = true
+                self.extensionIconsStackView.isHidden = true
                 self.updateReaderButtonVisibility()
             }
             .store(in: &cancellables)
@@ -333,30 +297,6 @@ class SideAddressBar: NSView {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateReaderButtonVisibility()
-            }
-            .store(in: &cancellables)
-
-        $currentTab
-            .map { tab -> AnyPublisher<String?, Never> in
-                tab?.$url.eraseToAnyPublisher() ?? Just(nil).eraseToAnyPublisher()
-            }
-            .switchToLatest()
-            .combineLatest(
-                browserState.$isInPlaceholderMode,
-                NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
-                    .map { _ in PhiPreferences.AISettings.phiAIEnabled.loadValue() }
-                    .prepend(PhiPreferences.AISettings.phiAIEnabled.loadValue())
-                    .removeDuplicates()
-            )
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] url, isPlaceholder, isPhiAIEnabled in
-                guard let self else { return }
-                let visible = !isPlaceholder && SiteMemoryMenuActions(
-                    urlString: url ?? "", profileID: browserState.profileId,
-                    isIncognito: browserState.isIncognito,
-                    isPhiAIEnabled: isPhiAIEnabled, service: nil
-                ) != nil
-                self.memoryMenuButton.isHidden = !visible
             }
             .store(in: &cancellables)
 
@@ -469,8 +409,27 @@ class SideAddressBar: NSView {
     }
 
     private func updateDisplayedURL(_ url: String?) {
-        guard sessionBrowserState?.groupOverviewState == nil,
-              let url,
+        let id = MistApps.address(url)?.chatId
+        let display = MistAppAddressDisplay.resolve(currentTab)
+        copyURLButton.isHidden = display != nil || sessionBrowserState?.isInPlaceholderMode == true
+        if id != chatId {
+            chatId = id
+            chatSubscription = id.flatMap { AgentChatStore.shared.conversation(for: $0) }?.$title
+                .receive(on: DispatchQueue.main).sink { [weak self] _ in
+                    guard let self else { return }
+                    self.updateDisplayedURL(self.currentTab?.url)
+                }
+        }
+        if let display {
+            textField.attributedStringValue = display.attributedString(
+                primary: themeStateProvider.currentTheme.color(for: .textPrimary, appearance: currentAppearance),
+                separator: themeStateProvider.currentTheme.color(for: .separator, appearance: currentAppearance))
+            textField.lineBreakMode = .byTruncatingTail
+            textField.toolTip = nil
+            return
+        }
+        textField.lineBreakMode = .byClipping
+        guard let url,
               !url.isNTP else {
             textField.stringValue = ""
             return
@@ -484,24 +443,8 @@ class SideAddressBar: NSView {
         pinnedExtensionCount: Int,
         containerWidth: CGFloat
     ) -> Bool {
-        guard pinnedExtensionCount > 0 else { return false }
-
-        let pinnedIconsWidth = CGFloat(pinnedExtensionCount) * LayoutMetrics.extensionButtonWidth
-        let pinnedIconsSpacing = CGFloat(max(0, pinnedExtensionCount - 1)) * LayoutMetrics.extensionButtonSpacing
-        // Reserve Reader View and Memory regardless of the current page so
-        // their visibility never changes where pinned extensions are displayed.
-        let optionalControlsWidth = 2 * (LayoutMetrics.extensionButtonWidth + LayoutMetrics.extensionButtonSpacing)
-        let rightControlsWidth = pinnedIconsWidth
-            + pinnedIconsSpacing
-            + LayoutMetrics.rightStackSpacing
-            + LayoutMetrics.extensionButtonWidth
-            + optionalControlsWidth
-        let reservedHorizontalInsets = LayoutMetrics.textFieldLeadingInset
-            + LayoutMetrics.textFieldTrailingSpacing
-            + LayoutMetrics.rightStackTrailingInset
-        let remainingTextWidth = containerWidth - rightControlsWidth - reservedHorizontalInsets
-
-        return remainingTextWidth < LayoutMetrics.minimumAddressTextWidth
+        // Mist: extensions button removed from window chrome
+        return false
     }
     
     private func createExtensionButton(for ext: Extension) -> HoverableButtonNSView {
@@ -589,7 +532,7 @@ class SideAddressBar: NSView {
     private func toggleReaderView() {
         guard let tab = currentTab,
               let browserState = sessionBrowserState else { return }
-        browserState.toggleReaderView(for: tab, from: .addressBar)
+        browserState.toggleReaderView(for: tab)
     }
 
     private func updateReaderButtonVisibility() {
@@ -673,6 +616,10 @@ class SideAddressBar: NSView {
         textField.lineBreakMode = .byClipping
         textField.cell?.truncatesLastVisibleLine = false
         textField.setAccessibilityIdentifier(Self.addressTextFieldAccessibilityIdentifier)
+        chatThemeSubscription = subscribe { [weak self] _, _ in
+            guard let self, self.chatId != nil else { return }
+            self.updateDisplayedURL(self.currentTab?.url)
+        }
         containerView.addSubview(textField)
     }
     
@@ -704,11 +651,11 @@ class SideAddressBar: NSView {
             self?.commitExtensionReorderDrop(atX: x) ?? false
         }
         
-        rightStackView.addArrangedSubview(extensionIconsStackView)
+        // Mist: extensions button removed from window chrome
+        extensionIconsStackView.isHidden = true
+        extensionMenuHostingView.isHidden = true
         rightStackView.addArrangedSubview(readerButton)
-        rightStackView.addArrangedSubview(memoryMenuButton)
         rightStackView.addArrangedSubview(copyURLButton)
-        rightStackView.addArrangedSubview(extensionMenuHostingView)
         extensionMenuHostingView.snp.makeConstraints { make in
             make.width.height.equalTo(24)
         }
@@ -738,28 +685,6 @@ class SideAddressBar: NSView {
         }
     }
     
-    private func createIconButton(systemName: String? = nil, size: CGFloat, image: NSImage?) -> NSButton {
-        let button = NSButton()
-        button.isBordered = false
-        button.title = ""
-        if let image {
-            button.image = image
-        } else if let systemName {
-            if let image = NSImage(systemSymbolName: systemName, accessibilityDescription: nil) {
-                let config = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
-                button.image = image.withSymbolConfiguration(config)
-            }
-        }
-       
-        
-        button.imageScaling = .scaleProportionallyDown
-        
-        button.snp.makeConstraints { make in
-            make.size.equalTo(CGSize(width: size + 4, height: size + 4))
-        }
-        
-        return button
-    }
 }
 
 struct ExtensionPopoverButton: View {

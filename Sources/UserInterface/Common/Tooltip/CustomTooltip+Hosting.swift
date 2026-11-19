@@ -104,9 +104,18 @@ final class CustomTooltipRegistration: NSObject {
         activeController = nil
     }
 
+    // The tracking area also fires under a view laid over this one (Mail's recipient suggestions over compose's
+    // toolbar), so each enter and move checks that nothing covers the view.
     @objc(mouseEntered:)
     private func handleMouseEntered(_ event: NSEvent) {
+        guard let view, view.isUncovered(at: event.locationInWindow) else { return handleCoveredPointer() }
         handlePointerEntered()
+    }
+
+    @objc(mouseMoved:)
+    private func handleMouseMoved(_ event: NSEvent) {
+        guard let view, view.isUncovered(at: event.locationInWindow) else { return handleCoveredPointer() }
+        if !isHovering { handlePointerEntered() }
     }
 
     @objc(mouseExited:)
@@ -114,11 +123,16 @@ final class CustomTooltipRegistration: NSObject {
         handlePointerExited()
     }
 
+    private func handleCoveredPointer() {
+        if isHovering { handlePointerExited() }
+    }
+
     private func installTrackingArea(on view: NSView) {
         let trackingArea = NSTrackingArea(
             rect: .zero,
             options: [
                 .mouseEnteredAndExited,
+                .mouseMoved,
                 .activeInKeyWindow,
                 .inVisibleRect,
                 .enabledDuringMouseDrag,
@@ -308,32 +322,6 @@ struct CustomTooltipContainer<Content: View>: View {
         )
     }
 
-    func help(_ textKey: LocalizedStringKey) -> Self {
-        applyingFallbackHelp(Text(textKey))
-    }
-
-    @available(macOS 13.0, *)
-    func help(_ textKey: LocalizedStringResource) -> Self {
-        applyingFallbackHelp(Text(textKey))
-    }
-
-    func help(_ text: Text) -> Self {
-        applyingFallbackHelp(text)
-    }
-
-    func help<S: StringProtocol>(_ text: S) -> Self {
-        applyingFallbackHelp(Text(verbatim: String(text)))
-    }
-
-    private func applyingFallbackHelp(_ text: Text) -> Self {
-        guard tooltipContent == nil else { return self }
-        return CustomTooltipContainer(
-            content: content,
-            tooltipContent: tooltipContent,
-            configuration: configuration,
-            fallbackNativeHelp: text
-        )
-    }
 }
 
 private struct CustomTooltipAnchor: NSViewRepresentable {

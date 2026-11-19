@@ -11,7 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong, nullable) id<PhiChromiumBridgeProtocol> bridge;
 +(instancetype)sharedInstance;
 
-- (void)launchChromiumWithArgc:(int)argc argv:(const char **)argv;
+- (void)launchChromiumWithArgc:(int)argc argv:(const char * _Nullable * _Nonnull)argv;
 
 @end
 

@@ -51,7 +51,7 @@ final class TimeMachineMenuPresenterTests: XCTestCase {
 
         XCTAssertEqual(entries, [
             TimeMachineMenuEntry(
-                title: "Phi 1.6.0 (590) on 2026.6.11",
+                title: "Mist 1.6.0 (590) on 2026.6.11",
                 backupID: record.id,
                 isEnabled: true
             )
@@ -75,7 +75,7 @@ final class TimeMachineMenuPresenterTests: XCTestCase {
 
         XCTAssertEqual(entries, [
             TimeMachineMenuEntry(
-                title: "Phi Canary (590) on 2026.6.11",
+                title: "Mist Canary (590) on 2026.6.11",
                 backupID: record.id,
                 isEnabled: true
             )

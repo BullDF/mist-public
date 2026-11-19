@@ -67,17 +67,6 @@ final class ExtensionMessaging: @MainActor ExtensionMessagingProtocol {
         }
     }
 
-    /// Delivers to the browser's extensions only, never to direct agent
-    /// channels. For events that carry user content (a page being saved, a
-    /// note the user typed) and have no task driver to scope them to.
-    @MainActor
-    func broadcastToExtensions(type: String, payload: String) {
-        DispatchQueue.main.async {
-            _ = ChromiumLauncher.sharedInstance().bridge?
-                .broadcastMessageToExtensions(withType: type, payload: payload)
-        }
-    }
-
     /// Agent card decisions never cross the extension broadcast channel.
     @MainActor
     func broadcastToAgent(type: String, payload: String, principalId: String) {
@@ -88,23 +77,15 @@ final class ExtensionMessaging: @MainActor ExtensionMessagingProtocol {
     }
 
     /// Delivers a task event only to that task's driver. External CDP tasks
-    /// stay inside their app-issued principal; in-app phi-agent tasks continue
-    /// through the Chromium extension bridge. This prevents user messages and
+    /// stay inside their app-issued principal. This prevents user messages and
     /// ownership changes from leaking across approved direct connections.
     @MainActor
     func broadcastToTaskDriver(type: String, payload: String,
-                               origin: AgentTaskOrigin,
                                driverPrincipalId: String?) {
         DispatchQueue.main.async {
-            switch origin {
-            case .cdp:
-                guard let driverPrincipalId, !driverPrincipalId.isEmpty else { return }
-                AgentDirectChannelRegistry.shared.broadcast(
-                    type: type, payloadJson: payload, principalId: driverPrincipalId)
-            case .phiAgent:
-                _ = ChromiumLauncher.sharedInstance().bridge?
-                    .broadcastMessageToExtensions(withType: type, payload: payload)
-            }
+            guard let driverPrincipalId, !driverPrincipalId.isEmpty else { return }
+            AgentDirectChannelRegistry.shared.broadcast(
+                type: type, payloadJson: payload, principalId: driverPrincipalId)
         }
     }
 }

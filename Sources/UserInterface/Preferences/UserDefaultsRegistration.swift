@@ -25,9 +25,6 @@ enum UserDefaultsRegistration {
         // General Settings
         defaults.merge(generalSettingsDefaults) { _, new in new }
         
-        // AI Settings
-        defaults.merge(aiSettingsDefaults) { _, new in new }
-        
         // Theme Settings
         defaults.merge(themeDefaults) { _, new in new }
         
@@ -43,16 +40,6 @@ enum UserDefaultsRegistration {
         }
         defaults[PhiPreferences.GeneralSettings.appLanguagePreferenceKey] =
             AppLanguagePreference.system.storageValue
-        return defaults
-    }
-    
-    // MARK: - AI Settings
-    
-    private static var aiSettingsDefaults: [String: Any] {
-        var defaults = [String: Any]()
-        for setting in PhiPreferences.AISettings.allCases {
-            defaults[setting.rawValue] = setting.defaultValue
-        }
         return defaults
     }
     

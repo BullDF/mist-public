@@ -139,11 +139,6 @@ enum PhiIconCatalog {
         iconsByName[name]
     }
 
-    static func icon(forAssetName assetName: String) -> Icon? {
-        guard let canonicalId = canonicalId(for: assetName) else { return nil }
-        return iconsByAssetName[canonicalId]
-    }
-
     static func canonicalId(for assetName: String) -> String? {
         if iconsByAssetName[assetName] != nil {
             return assetName

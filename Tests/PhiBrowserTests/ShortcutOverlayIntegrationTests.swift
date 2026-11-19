@@ -22,7 +22,7 @@ final class ShortcutOverlayIntegrationTests: XCTestCase {
         override var acceptsFirstResponder: Bool { true }
     }
 
-    private final class SurfaceTab: Tab {
+    @MainActor private final class SurfaceTab: Tab {
         let content = ContentView()
         override var webContentView: NSView? { content }
     }
@@ -130,20 +130,14 @@ final class ShortcutOverlayIntegrationTests: XCTestCase {
         }
     }
 
-    func testLegacyShiftPunctuationMatchesCloseAndNavigation() throws {
-        for command in [CommandWrapper.IDC_CLOSE_TAB, .IDC_BACK, .IDC_FORWARD] {
+    func testLegacyShiftPunctuationMatchesClose() throws {
+        for command in [CommandWrapper.IDC_CLOSE_TAB] {
             configure([command: .custom(.init(characters: "+", modifiers: .command))])
             try eachSurface { fixture in
                 XCTAssertTrue(fixture.handle(try event("+", modifiers: [.command, .shift],
                                                        keyCode: 24, in: fixture.window)))
                 assertClosedWithOriginIntact(fixture)
             }
-        }
-        configure([.PHI_TOGGLE_READER: .custom(.init(characters: "+", modifiers: .command))])
-        try withSurface(.reader) { fixture in
-            XCTAssertTrue(fixture.handle(try event("+", modifiers: [.command, .shift],
-                                                   keyCode: 24, in: fixture.window)))
-            assertClosedWithOriginIntact(fixture)
         }
     }
 

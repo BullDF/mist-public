@@ -44,8 +44,8 @@ The tab arrangement order the user sees in the sidebar or TabStrip. References t
 | Priority | Scenario | Insertion Position |
 |----------|----------|-------------------|
 | 1 | Explicitly specified (e.g. moving back from pinned/bookmark, drag-drop target) | Specified position |
-| 2 | Foreground link open | Immediately to the right of the opener |
-| 3 | Background link open | After the opener's last visible descendant |
+| 2 | Foreground link open | Appended to the end |
+| 3 | Background link open | Appended to the end |
 | 4 | Cmd+T / menu new tab | Appended to the end |
 | 5 | Fallback | Appended to the end |
 
@@ -57,8 +57,8 @@ The tab arrangement order the user sees in the sidebar or TabStrip. References t
 Initial order: A  B  C
 Foreground open a link from A → creates A1
 
-Result: A  A1  B  C
-             ↑ A1 inserted to the right of A
+Result: A  B  C  A1
+                 ↑ A1 appended to the end
 ```
 
 **Example 2: Background link open**
@@ -67,12 +67,12 @@ Result: A  A1  B  C
 Initial order: A  B  C
 Background open A1 from A
 
-Result: A  A1  B  C
+Result: A  B  C  A1
 
 Continue background opening A2 from A
 
-Result: A  A1  A2  B  C
-              ↑ A2 inserted after A's last descendant (A1)
+Result: A  B  C  A1  A2
+                     ↑ A2 appended to the end
 ```
 
 **Example 3: Background open producing nested descendants**
@@ -82,12 +82,12 @@ Initial order: A  B  C
 Background open A1 from A
 Background open A1a from A1
 
-Result: A  A1  A1a  B  C
+Result: A  B  C  A1  A1a
 
 Continue background opening A2 from A
 
-Result: A  A1  A1a  A2  B  C
-                    ↑ A2 inserted after A's last visible descendant (A1a)
+Result: A  B  C  A1  A1a  A2
+                          ↑ A2 appended to the end
 ```
 
 **Example 4: Cmd+T**

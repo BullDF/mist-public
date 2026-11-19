@@ -68,34 +68,59 @@ final class TabSwitchManagerTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(state.tabs.first { $0.guid == 3 }).isActive)
     }
 
-    func testNewestBackgroundLinksTakePriorityAndPreserveHistoryLimit() throws {
+    func testNewestBackgroundLinksTakePriorityWithoutBecomingVisits() throws {
         let state = try makeState()
 
         for id in 3...8 {
             openBackgroundTab(id, in: state)
         }
 
-        XCTAssertEqual(state.tabSwitchManager.recentTabIDs, [1, 8, 7, 6, 5])
-        XCTAssertEqual(state.tabSwitchManager.recentTabIDs.count, TabSwitchMetrics.maxRecentTabs)
+        XCTAssertEqual(state.tabSwitchManager.recentTabIDs, [1, 8, 7, 6, 5, 4, 3, 2])
         XCTAssertEqual(state.tabSwitchManager.visitedTabIDs, [1, 2],
-                       "Background arrivals are not visits, even when they displace visited switcher entries")
+                       "Background arrivals are not visits")
         XCTAssertEqual(state.focusingTab?.guid, 1)
     }
 
-    func testBackgroundAdmissionDeduplicatesHistoryOutsideSwitcherLimit() throws {
+    func testSwitcherListsEveryTabWithNeverVisitedOnesLastInStripOrder() throws {
         let state = try makeState()
-        for id in 3...8 {
-            openBackgroundTab(id, in: state)
-            state.focuseTab(try XCTUnwrap(state.tabs.first { $0.guid == id }))
+        state.tabs += (3...12).map(makeTab)
+        openBackgroundTab(13, in: state)
+        state.focuseTab(try XCTUnwrap(state.tabs.first { $0.guid == 7 }))
+
+        XCTAssertEqual(state.tabSwitchManager.buildCandidates(),
+                       [7, 1, 13, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12])
+    }
+
+    func testPanelFitsItsWindowAndScrollsSelectionIntoView() throws {
+        let state = try makeState()
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        parent.isReleasedWhenClosed = false
+        defer { parent.close() }
+        let controller = TabSwitchWindowController(parentWindow: parent)
+        defer { controller.dismiss() }
+        let ids = Array(1...12)
+        let items = ids.map {
+            TabSwitchItem(tabID: $0, title: "Tab \($0)", snapshotImage: nil,
+                          liveFaviconImage: nil, faviconPageURL: nil)
         }
-        state.focuseTab(state.tabs[0])
-        let manager = state.tabSwitchManager
-        let history = manager.visitedTabIDs
+        let metrics = TabSwitchMetrics.self
+        let fitting = metrics.visibleCellCount(fittingPanelWidth: 900 - metrics.windowParentMargin * 2)
 
-        manager.recordBackgroundTab(try XCTUnwrap(state.tabs.first { $0.guid == 3 }))
+        controller.update(items: items, selectedTabID: 2, themeProvider: state.themeContext)
+        XCTAssertEqual(controller.window?.frame.width, metrics.panelWidth(cellCount: fitting))
+        XCTAssertEqual(controller.fullyVisibleTabIDs, Array(ids.prefix(fitting)))
 
-        XCTAssertEqual(manager.visitedTabIDs, history)
-        XCTAssertEqual(manager.recentTabIDs, [1, 8, 7, 6, 5])
+        controller.updateSelection(selectedTabID: 12)
+        XCTAssertEqual(controller.fullyVisibleTabIDs, Array(ids.suffix(fitting)))
+        controller.updateSelection(selectedTabID: 12 - fitting)
+        XCTAssertEqual(controller.fullyVisibleTabIDs, Array(ids.dropLast().suffix(fitting)))
+        controller.updateSelection(selectedTabID: 1)
+        XCTAssertEqual(controller.fullyVisibleTabIDs, Array(ids.prefix(fitting)))
+
+        controller.update(items: Array(items.prefix(2)), selectedTabID: 2, themeProvider: state.themeContext)
+        XCTAssertEqual(controller.window?.frame.width, metrics.panelWidth(cellCount: 2))
+        XCTAssertEqual(controller.fullyVisibleTabIDs, [1, 2])
     }
 
     func testBackgroundArrivalsPreserveCompleteMediaVisitOrder() throws {
@@ -111,7 +136,7 @@ final class TabSwitchManagerTests: XCTestCase {
             openBackgroundTab(id, in: state)
         }
 
-        XCTAssertEqual(manager.recentTabIDs, [8, 14, 13, 12, 11])
+        XCTAssertEqual(manager.recentTabIDs, [8, 14, 13, 12, 11, 10, 9, 7, 6, 5, 4, 3, 1, 2])
         XCTAssertEqual(manager.visitedTabIDs, [8, 7, 6, 5, 4, 3, 1, 2])
     }
 
@@ -188,17 +213,4 @@ final class TabSwitchManagerTests: XCTestCase {
         XCTAssertEqual(manager.recentTabIDs, [1, 4, 3, 2])
     }
 
-    func testBackgroundAIChatNeverEntersHistory() throws {
-        let state = try makeState()
-        let tab = makeTab(3)
-        tab.guidInLocalDB = BrowserState.aiChatId(for: "test")
-
-        state.handleNewTabFromChromium(
-            tab,
-            context: NativeTabCreationContext(creationKind: .linkBackground, openerTabId: 1)
-        )
-
-        XCTAssertEqual(state.tabSwitchManager.recentTabIDs, [1, 2])
-        XCTAssertFalse(state.tabs.contains { $0.guid == 3 })
-    }
 }

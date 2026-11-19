@@ -109,7 +109,7 @@ import XCTest
 /// Members then occupied the wrong hash buckets, and the next Foundation diff reported
 /// duplicate identifiers and threw.
 @MainActor
-final class PhiSyncPinnedTabSnapshotIdentityTests: XCTestCase {
+final class PinnedTabRebindSnapshotIdentityTests: XCTestCase {
     private func makeTab(chromiumGuid: Int, rowGuid: String) -> Tab {
         Tab(guid: chromiumGuid,
             url: "https://example.test/\(rowGuid)",

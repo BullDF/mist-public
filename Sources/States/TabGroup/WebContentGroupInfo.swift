@@ -11,9 +11,7 @@ import Combine
 /// Owned by `BrowserState.groups` (keyed by `token`). Plain data: holds no
 /// reference to BrowserState or to the Tab list. Membership is **not stored
 /// here** — `Tab.groupToken` is the single source of truth, so callers
-/// derive the member set via `state.normalTabs.filter { $0.groupToken == token }`
-/// and pass the resulting count to `displayTitle(memberCount:)` when they
-/// need a rendered title.
+/// derive the member set via `state.normalTabs.filter { $0.groupToken == token }`.
 final class WebContentGroupInfo: ObservableObject {
     /// Hex string identifying the Chromium `TabGroupId` (see
     /// `TabGroupsProxy::TokenToHexString`). Immutable for the lifetime of
@@ -21,7 +19,7 @@ final class WebContentGroupInfo: ObservableObject {
     let token: String
 
     /// User-set title. Empty string means "use auto-name" — see
-    /// `displayTitle(memberCount:)`.
+    /// `displayTitle`.
     @Published var title: String
 
     @Published var color: GroupColor
@@ -38,20 +36,9 @@ final class WebContentGroupInfo: ObservableObject {
         self.isCollapsed = isCollapsed
     }
 
-    /// True iff the user has set an explicit title. When false the
-    /// `displayTitle(memberCount:)` auto-name already encodes the count, so
-    /// callers showing a separate count badge should hide it.
-    var hasUserSetTitle: Bool { !title.isEmpty }
-
-    /// Title shown in the sidebar header. Falls back to "<Color> · N tabs"
-    /// when the user hasn't set an explicit title. The count is supplied by
-    /// the caller because membership lives on `Tab.groupToken`, not here.
-    func displayTitle(memberCount: Int) -> String {
-        if !title.isEmpty { return title }
-        let format = NSLocalizedString("tabs.tabGroup.summaryWithTabCount", value: "%@ · %d tabs",
-            comment: "Tab Groups - auto-generated group title, e.g. 'Blue · 3 tabs'")
-        return String(format: format, color.localizedName, memberCount)
-    }
+    /// Title shown for the group. Falls back to the localized color name
+    /// when the user hasn't set an explicit title.
+    var displayTitle: String { title.isEmpty ? color.localizedName : title }
 
     /// Reconciles a per-token cancellable map against the current
     /// `groups` snapshot, dropping subscriptions for vanished tokens

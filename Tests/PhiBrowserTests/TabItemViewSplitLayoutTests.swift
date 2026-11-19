@@ -293,9 +293,8 @@ final class TabItemViewSplitLayoutTests: XCTestCase {
 
     func test_statusBadgeOverhangsTheTopTrailingCornerAndRemainsVisibleOnHover() throws {
         let tab = Tab(guid: 1, url: "https://example.com", isActive: false, index: 0)
-        tab.hasPairedChat = true
-        tab.hasStartedChatGeneration = true
-        tab.aiChatCollapsed = false
+        AgentAnimationManager.shared.setActive(true, for: tab.guid)
+        defer { AgentAnimationManager.shared.setActive(false, for: tab.guid) }
         let view = TabItemView()
         view.configure(with: TabRenderData(
             id: "tab-1",
@@ -344,9 +343,8 @@ final class TabItemViewSplitLayoutTests: XCTestCase {
 
     func test_compactStatusBadgeRemainsVisibleWhileHovered() throws {
         let tab = Tab(guid: 1, url: "https://example.com", isActive: false, index: 0)
-        tab.hasPairedChat = true
-        tab.hasStartedChatGeneration = true
-        tab.aiChatCollapsed = false
+        AgentAnimationManager.shared.setActive(true, for: tab.guid)
+        defer { AgentAnimationManager.shared.setActive(false, for: tab.guid) }
         let view = TabItemView()
         view.configure(with: TabRenderData(
             id: "tab-1",
@@ -519,9 +517,10 @@ final class SplitViewLayoutTests: XCTestCase {
             dragPoint: nil
         )
 
-        XCTAssertEqual(active.width, base.width * 1.3, accuracy: 0.0001)
-        XCTAssertEqual(active.height, base.height * 1.3, accuracy: 0.0001)
-        XCTAssertEqual(active, CGRect(x: 0, y: 45.5, width: 208, height: 598))
+        XCTAssertEqual(active.width, base.width * 1.1, accuracy: 0.0001)
+        XCTAssertEqual(active.height, base.height * 1.1, accuracy: 0.0001)
+        XCTAssertEqual(active.minX, 6, accuracy: 0.0001)
+        XCTAssertEqual(active.midY, area.midY, accuracy: 0.0001)
     }
 
     func testApproachingCreateDropHintMovesMonotonicallyAsPointerConverges() throws {
@@ -556,9 +555,10 @@ final class SplitViewLayoutTests: XCTestCase {
             approachRects.append(presentedRect)
         }
 
-        XCTAssertEqual(approachRects[0].midX, 242.5, accuracy: 0.0001)
-        XCTAssertEqual(approachRects[1].midX, 242.5, accuracy: 0.0001)
-        XCTAssertEqual(approachRects[2].midX, 242.5, accuracy: 0.0001)
+        // The movement range scales the available travel to 25%, excluding card width.
+        XCTAssertEqual(approachRects[0].midX, 132.625, accuracy: 0.0001)
+        XCTAssertEqual(approachRects[1].midX, 132.625, accuracy: 0.0001)
+        XCTAssertEqual(approachRects[2].midX, 132.625, accuracy: 0.0001)
         XCTAssertTrue(zip(approachRects, approachRects.dropFirst()).allSatisfy {
             $0.1.midX >= $0.0.midX
         })
@@ -581,8 +581,8 @@ final class SplitViewLayoutTests: XCTestCase {
 
         XCTAssertEqual(entered.maxX, entryRect.maxX, accuracy: 0.0001)
         XCTAssertEqual(entered.midY, entryRect.midY, accuracy: 0.0001)
-        XCTAssertEqual(entered.width, base.width * 1.3, accuracy: 0.0001)
-        XCTAssertEqual(entered.height, base.height * 1.3, accuracy: 0.0001)
+        XCTAssertEqual(entered.width, base.width * 1.1, accuracy: 0.0001)
+        XCTAssertEqual(entered.height, base.height * 1.1, accuracy: 0.0001)
         XCTAssertFalse(SplitTabDropContainer.shouldExpandCreateDropHint(
             presentedRect: approachRects[0],
             wasExpandedInCurrentZone: false,
@@ -794,7 +794,9 @@ final class SplitViewLayoutTests: XCTestCase {
     func testExpandedCreateDropHintDampsPointerMotionFromEntryAnchor() throws {
         let area = CGRect(x: 0, y: 0, width: 1290, height: 689)
         let leftEntryPoint = CGPoint(x: 200, y: area.midY)
-        let leftEntryCenter = CGPoint(x: 150, y: area.midY)
+        // Keep the anchors inside the current travel limits so this tests damping,
+        // independently of the boundary-clamping cases below.
+        let leftEntryCenter = CGPoint(x: 90, y: area.midY)
         let movingLeft = SplitTabDropContainer.createDropHintRect(
             for: .left,
             in: area,
@@ -807,7 +809,7 @@ final class SplitViewLayoutTests: XCTestCase {
         XCTAssertEqual(movingLeft.midY, leftEntryCenter.y + 4, accuracy: 0.0001)
 
         let topEntryPoint = CGPoint(x: area.midX, y: 600)
-        let topEntryCenter = CGPoint(x: area.midX, y: 600)
+        let topEntryCenter = CGPoint(x: area.midX, y: 620)
         let movingTop = SplitTabDropContainer.createDropHintRect(
             for: .top,
             in: area,

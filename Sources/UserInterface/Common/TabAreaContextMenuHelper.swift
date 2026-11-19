@@ -27,32 +27,48 @@ final class TabAreaContextMenuHelper: NSObject {
         menu.addItem(NSMenuItem(
             title: NSLocalizedString("common.tabAreaContextMenu.newTabAction", value: "New Tab", comment: "Tab area context menu - Open a new browser tab"),
             action: agentLocked ? nil : #selector(newTab),
-            keyEquivalent: "t"
-        ).configured { $0.keyEquivalentModifierMask = .command; $0.target = agentLocked ? nil : self })
+            keyEquivalent: ""
+        ).configured {
+            $0.tag = CommandWrapper.IDC_NEW_TAB.rawValue
+            Shortcuts.updateShortcut(for: $0)
+            $0.target = agentLocked ? nil : self
+        })
 
         menu.addItem(NSMenuItem(
             title: NSLocalizedString("common.tabAreaContextMenu.reopenClosedTabAction", value: "Reopen Closed Tab", comment: "Tab area context menu - Reopen the last closed tab"),
             action: #selector(reopenClosedTab),
-            keyEquivalent: "t"
-        ).configured { $0.keyEquivalentModifierMask = [.command, .shift]; $0.target = self })
+            keyEquivalent: ""
+        ).configured {
+            $0.tag = CommandWrapper.IDC_RESTORE_TAB.rawValue
+            Shortcuts.updateShortcut(for: $0)
+            $0.target = self
+        })
 
         // Bookmark writes are unavailable off-the-record, so incognito
         // windows skip the folder/bookmark block entirely.
         if browserState?.isIncognito != true {
             menu.addItem(.separator())
 
-            menu.addItem(NSMenuItem(
-                title: NSLocalizedString("common.tabAreaContextMenu.newBookmarkFolderAction", value: "New Folder", comment: "Tab area context menu - Create a new bookmark folder"),
-                action: #selector(newFolder),
-                keyEquivalent: ""
-            ).configured { $0.target = self })
+            // The sidebar lists bookmarks flat, without folder rows, so only
+            // the horizontal layout's bookmark bar can show a new folder.
+            if isHorizontalLayout {
+                menu.addItem(NSMenuItem(
+                    title: NSLocalizedString("common.tabAreaContextMenu.newBookmarkFolderAction", value: "New Folder", comment: "Tab area context menu - Create a new bookmark folder"),
+                    action: #selector(newFolder),
+                    keyEquivalent: ""
+                ).configured { $0.target = self })
+            }
 
             let hasBookmarkableTabs = browserState?.normalTabs.contains { !$0.isLocalPage } ?? false
             menu.addItem(NSMenuItem(
                 title: NSLocalizedString("common.tabAreaContextMenu.bookmarkAllTabsAction", value: "Bookmark All Tabs", comment: "Tab area context menu - Bookmark all open tabs"),
                 action: hasBookmarkableTabs ? #selector(bookmarkAllTabs) : nil,
-                keyEquivalent: "d"
-            ).configured { $0.keyEquivalentModifierMask = [.command, .shift]; $0.target = self })
+                keyEquivalent: ""
+            ).configured {
+                $0.tag = CommandWrapper.IDC_BOOKMARK_ALL_TABS.rawValue
+                Shortcuts.updateShortcut(for: $0)
+                $0.target = self
+            })
         }
 
         menu.addItem(.separator())
@@ -85,8 +101,11 @@ final class TabAreaContextMenuHelper: NSObject {
         browserState?.windowController?.newBrowserTab(nil)
     }
 
-    @objc private func reopenClosedTab() {
+    @MainActor @objc private func reopenClosedTab() {
         guard let state = browserState else { return }
+        if !state.isIncognito, AgentChatStore.shared.restoreClosedTabSkippingAgentFolders(windowId: state.windowId) {
+            return
+        }
         ChromiumLauncher.sharedInstance().bridge?.executeCommand(
             Int32(CommandWrapper.IDC_RESTORE_TAB.rawValue),
             windowId: Int64(state.windowId)
@@ -95,17 +114,12 @@ final class TabAreaContextMenuHelper: NSObject {
 
     @MainActor @objc private func newFolder() {
         guard let state = browserState else { return }
-        if isHorizontalLayout {
-            EditPinnedTabPresenter.presentModal(
-                mode: .newFolder,
-                from: state.windowController?.window
-            ) { result in
-                guard let folderName = result.title, !folderName.isEmpty else { return }
-                state.bookmarkManager.addFolder(title: folderName)
-            }
-        } else {
-            let untitledName = NSLocalizedString("common.bookmarkFolder.defaultName", value: "Untitled", comment: "Default name for new bookmark folder in root")
-            state.bookmarkManager.addFolderWithEditing(title: untitledName, to: nil)
+        EditPinnedTabPresenter.presentModal(
+            mode: .newFolder,
+            from: state.windowController?.window
+        ) { result in
+            guard let folderName = result.title, !folderName.isEmpty else { return }
+            state.bookmarkManager.addFolder(title: folderName)
         }
     }
 

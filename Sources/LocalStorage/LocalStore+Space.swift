@@ -79,40 +79,18 @@ extension LocalStore {
             do {
                 try self.createSpaceBody(profileId: profileId, name: name, colorHex: colorHex,
                                          iconName: iconName, spaceId: spaceId,
-                                         createdDate: nil, in: context)
+                                         in: context)
             } catch {
                 AppLogError("[LocalStore] createSpace failed: \(error)")
             }
         }
     }
 
-    /// Throwing sibling used ONLY by the sync layer: `PhiSyncEngine` may write
-    /// the `reconciled` / `server` baselines only after the row landed, and the
-    /// fire-and-forget original swallows its own failure (§5.6).
-    func createSpaceThrowing(profileId: String,
-                             name: String,
-                             colorHex: String,
-                             iconName: String,
-                             spaceId: String,
-                             createdDate: Date?) async throws {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.createSpaceBody(profileId: profileId, name: name, colorHex: colorHex,
-                                     iconName: iconName, spaceId: spaceId,
-                                     createdDate: createdDate, in: context)
-        }
-    }
-
-    /// Single implementation shared by both entry points; the body is the
-    /// existing one verbatim, plus the optional `createdDate` the sync layer
-    /// needs so `created_at_ms` (merged with `min()`) really reaches the row.
     private func createSpaceBody(profileId: String, name: String, colorHex: String,
                                  iconName: String, spaceId: String,
-                                 createdDate: Date?, in context: ModelContext) throws {
+                                 in context: ModelContext) throws {
         // Spaces from every profile share one strip order.
         let existing = try context.fetch(FetchDescriptor<SpaceModel>())
-        // `spaceId` is unique, so inserting a duplicate would silently overwrite the existing row
-        // (profile binding and order reset, bookmark root orphaned). No caller relies on that: UI
-        // creation passes a fresh UUID, and sync lands an existing row through its update branch.
         guard !existing.contains(where: { $0.spaceId == spaceId }) else {
             throw LocalStoreWriteError.spaceAlreadyExists
         }
@@ -124,7 +102,7 @@ extension LocalStore {
             colorHex: colorHex,
             iconName: iconName,
             sortOrder: nextOrder,
-            createdDate: createdDate ?? Date()
+            createdDate: Date()
         )
         context.insert(space)
         // Materialize an empty bookmark root immediately so the first
@@ -144,27 +122,15 @@ extension LocalStore {
         performBackgroundWrite { context in
             do {
                 try self.updateSpaceBody(spaceId: spaceId, name: name, colorHex: colorHex,
-                                         iconName: iconName, createdDate: nil, in: context)
+                                         iconName: iconName, in: context)
             } catch {
                 AppLogError("[LocalStore] updateSpace failed: \(error)")
             }
         }
     }
 
-    /// Throwing sibling used ONLY by the sync layer — see `createSpaceThrowing`.
-    func updateSpaceThrowing(spaceId: String, name: String?, colorHex: String?,
-                             iconName: String?, createdDate: Date?) async throws {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.updateSpaceBody(spaceId: spaceId, name: name, colorHex: colorHex,
-                                     iconName: iconName, createdDate: createdDate, in: context)
-        }
-    }
-
-    /// Single implementation shared by both entry points; the existing body plus
-    /// the optional `createdDate` the sync layer needs so a remote
-    /// `created_at_ms` (merged with `min()`) really reaches the row.
     private func updateSpaceBody(spaceId: String, name: String?, colorHex: String?,
-                                 iconName: String?, createdDate: Date?,
+                                 iconName: String?,
                                  in context: ModelContext) throws {
         let descriptor = FetchDescriptor<SpaceModel>(
             predicate: #Predicate { $0.spaceId == spaceId }
@@ -173,7 +139,6 @@ extension LocalStore {
         if let name { space.name = name }
         if let colorHex { space.colorHex = colorHex }
         if let iconName { space.iconName = iconName }
-        if let createdDate { space.createdDate = createdDate }
         space.updatedDate = Date()
     }
 
@@ -186,14 +151,14 @@ extension LocalStore {
     /// untouched — the strip sorts by it first, so keeping the value keeps
     /// the Space's position; any tie with the new profile's existing values
     /// stays deterministic via the `getAllSpaces` tiebreaks.
-    /// The default space is excluded: its bookmark root is shared with the
-    /// legacy `profile.bookmarkRoot` (see `ensureDefaultSpace`), so migrating
-    /// it would mutate the old profile's root.
-    func changeSpaceProfile(spaceId: String, toProfileId newProfileId: String) {
+    /// User actions exclude the default Space. Sync may explicitly rebind it,
+    /// transferring the legacy shared bookmark-root link to the new profile.
+    func changeSpaceProfile(spaceId: String, toProfileId newProfileId: String, allowsDefaultSpace: Bool = false) {
         performBackgroundWrite { context in
             do {
                 try self.changeSpaceProfileBody(spaceId: spaceId,
                                                 toProfileId: newProfileId,
+                                                allowsDefaultSpace: allowsDefaultSpace,
                                                 in: context)
             } catch {
                 AppLogError("[LocalStore] changeSpaceProfile failed: \(error)")
@@ -201,20 +166,11 @@ extension LocalStore {
         }
     }
 
-    /// Throwing sibling used ONLY by the sync layer — see `createSpaceThrowing`.
-    func changeSpaceProfileThrowing(spaceId: String, toProfileId newProfileId: String) async throws {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.changeSpaceProfileBody(spaceId: spaceId,
-                                            toProfileId: newProfileId,
-                                            in: context)
-        }
-    }
-
-    /// Single implementation shared by both entry points; the existing body,
-    /// unchanged.
+    /// Shared profile-rebinding transaction, including the bookmark subtree.
     private func changeSpaceProfileBody(spaceId: String, toProfileId newProfileId: String,
-                                        in context: ModelContext) throws {
-        guard spaceId != Self.defaultSpaceId else { return }
+                                allowsDefaultSpace: Bool = false,
+                                in context: ModelContext) throws {
+        guard allowsDefaultSpace || spaceId != Self.defaultSpaceId else { return }
         let descriptor = FetchDescriptor<SpaceModel>(
             predicate: #Predicate { $0.spaceId == spaceId }
         )
@@ -223,6 +179,11 @@ extension LocalStore {
         guard let newProfile = try self.profile(with: newProfileId,
                                                 in: context,
                                                 createIfNeeded: true) else { return }
+        if spaceId == Self.defaultSpaceId, let root = space.bookmarkRoot {
+            if let old = try profile(with: space.profileId, in: context, createIfNeeded: false),
+               old.bookmarkRoot?.guid == root.guid { old.bookmarkRoot = nil }
+            newProfile.bookmarkRoot = root
+        }
         // Flat fetch by spaceId rather than a walk from
         // `space.bookmarkRoot`: it also catches orphan roots left by
         // the heal-on-read path in `bookmarkRoot(profileId:spaceId:)`,
@@ -244,93 +205,27 @@ extension LocalStore {
         space.updatedDate = Date()
     }
 
-    /// Deletes a space row. Tagged pinned tabs / bookmarks are NOT cascade-deleted
-    /// here — callers must decide whether to reassign them to another space or
-    /// delete them, because the right call depends on the UX flow (e.g. confirm
-    /// dialog vs. silent reassign-to-default).
-    func deleteSpace(spaceId: String) {
-        performBackgroundWrite { context in
-            do {
-                let descriptor = FetchDescriptor<SpaceModel>(
-                    predicate: #Predicate { $0.spaceId == spaceId }
-                )
-                for space in try context.fetch(descriptor) {
-                    context.delete(space)
-                }
-            } catch {
-                AppLogError("[LocalStore] deleteSpace failed: \(error)")
-            }
-        }
-    }
-
-    /// Cascade helper for `SpaceManager.deleteSpace`. Removes every `TabDataModel`
-    /// (pinned tabs and bookmarks, since both share that entity) carrying the
-    /// supplied `spaceId`, so the rows don't linger as orphans after the Space
-    /// row itself is gone. Kept separate from `deleteSpace` so callers that
-    /// want a "reassign to default" UX can opt into it later without paying
-    /// for the cascade.
-    func deleteTaggedRows(forSpaceId spaceId: String) {
-        performBackgroundWrite { context in
-            do {
-                let descriptor = FetchDescriptor<TabDataModel>(
-                    predicate: #Predicate { $0.spaceId == spaceId }
-                )
-                for row in try context.fetch(descriptor) {
-                    context.delete(row)
-                }
-            } catch {
-                AppLogError("[LocalStore] deleteTaggedRows failed: \(error)")
-            }
-        }
-    }
-}
-
-/// Origin of a Space cascade deletion (R-M3-4a-85), affecting rules only. `.userIntent` soft-deletes with
-/// `deletedDate = now`, expressing account deletion intent. `.retentionPurge` uses `context.delete`: retention
-/// follows prior decisions (R-M3-4a-5); setting `deletedDate` would make §5.7 `explicitDeletions` bypass both
-/// owner gates and delete still-valid remote rules. Neither origin sets `pendingLocalEdit` (R-M3-4a-69
-/// classifies entry points, not shared bodies). TabDataModel and SpaceModel deletion is identical for both
-/// origins.
-enum SpaceCascadeOrigin {
-    case userIntent
-    case retentionPurge
 }
 
 extension LocalStore {
-    /// Atomically removes a Space and everything tagged to it — the `SpaceModel` row, its tagged pinned tabs /
-    /// bookmarks (`TabDataModel`), and its URL routing rules (`SpaceURLRule`) — in a single write/save.
-    /// `SpaceManager.deleteSpace` uses this instead of issuing the three deletes as separate transactions: a
-    /// crash between separate saves would otherwise leave a content-less ghost Space (or orphaned tagged
-    /// rows), and the intermediate saves would briefly publish an inconsistent strip/bookmark state.
-    /// `deleteSpace` / `deleteTaggedRows` / `applyURLRuleEditsThrowing` stay separate for callers that want a
-    /// non-cascade or reassign-to-default flow.
-    ///
-    /// `origin` has no default: `SpaceManager.deleteSpace` and `PhiSpaceLocalAccess.purge` must each choose
-    /// explicitly (R-M3-4a-85).
-    func deleteSpaceCascade(spaceId: String, origin: SpaceCascadeOrigin) {
+    func deleteSpaceCascade(spaceId: String) {
         performBackgroundWrite { context in
             do {
-                try self.deleteSpaceCascadeBody(spaceId: spaceId, origin: origin, in: context)
+                try self.deleteSpaceCascadeBody(spaceId: spaceId, in: context)
             } catch {
                 AppLogError("[LocalStore] deleteSpaceCascade failed: \(error)")
             }
         }
     }
 
-    /// Throwing sibling used ONLY by the sync layer — see `createSpaceThrowing`.
-    func deleteSpaceCascadeThrowing(spaceId: String, origin: SpaceCascadeOrigin) async throws {
+    func deleteSpaceCascadeThrowing(spaceId: String) async throws {
         try await performBackgroundWriteAndWaitThrowing { context in
-            try self.deleteSpaceCascadeBody(spaceId: spaceId, origin: origin, in: context)
+            try self.deleteSpaceCascadeBody(spaceId: spaceId, in: context)
         }
     }
 
-    /// Single implementation shared by both entry points. Only rules branch on `origin`; TabDataModel and
-    /// SpaceModel handling remains unchanged.
     func deleteSpaceCascadeBody(spaceId: String,
-                                        origin: SpaceCascadeOrigin,
-                                        in context: ModelContext) throws {
-        // All rule rows in this cascade share one `now` stamp.
-        let now = Date()
+                                in context: ModelContext) throws {
         for row in try context.fetch(FetchDescriptor<TabDataModel>(
             predicate: #Predicate { $0.spaceId == spaceId }
         )) {
@@ -339,16 +234,7 @@ extension LocalStore {
         for rule in try context.fetch(FetchDescriptor<SpaceURLRule>(
             predicate: #Predicate { $0.spaceId == spaceId }
         )) {
-            switch origin {
-            case .retentionPurge:
-                context.delete(rule)
-            case .userIntent:
-                // Soft-delete (R-M3-4a-41), leaving existing deletion dates unchanged. Never touch
-                // `pendingLocalEdit`: deletion is not editing (R-M3-4a-69).
-                if rule.deletedDate == nil {
-                    rule.deletedDate = now
-                }
-            }
+            context.delete(rule)
         }
         for space in try context.fetch(FetchDescriptor<SpaceModel>(
             predicate: #Predicate { $0.spaceId == spaceId }
@@ -370,27 +256,6 @@ extension LocalStore {
             } catch {
                 AppLogError("[LocalStore] reorderSpaces failed: \(error)")
             }
-        }
-    }
-
-    /// How many Spaces the account holds. Separate from `getAllSpaces` because
-    /// callers that only need the size pay for neither the rows nor the three
-    /// sort descriptors that make the strip's order deterministic.
-    @MainActor
-    func spaceCount() -> Int {
-        guard let context = mainContext else { return 0 }
-        do {
-            return try context.fetchCount(FetchDescriptor<SpaceModel>())
-        } catch {
-            AppLogError("[LocalStore] spaceCount failed: \(error)")
-            return 0
-        }
-    }
-
-    /// Throwing sibling used ONLY by the sync layer — see `createSpaceThrowing`.
-    func reorderSpacesThrowing(orderedSpaceIds: [String]) async throws {
-        try await performBackgroundWriteAndWaitThrowing { context in
-            try self.reorderSpacesBody(orderedSpaceIds: orderedSpaceIds, in: context)
         }
     }
 

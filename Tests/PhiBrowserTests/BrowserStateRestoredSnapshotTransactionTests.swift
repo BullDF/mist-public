@@ -365,6 +365,47 @@ final class BrowserStateRestoredSnapshotTransactionTests: XCTestCase {
 
     // MARK: - Transaction guarantees
 
+    func testImportedPhiHelperTabsCloseOnIndividualArrival() throws {
+        let state = try makeBrowserState()
+        for (index, marker) in ["ai-chat-for:42", "travel-back-pending:import"].enumerated() {
+            let wrapper = BookmarkLayoutTestWebContentWrapper(urlString: "chrome-extension://disabled/index.html")
+            let tab = Tab(guid: 900 + index, url: wrapper.urlString, isActive: false,
+                          index: index, webContentView: wrapper, customGuid: marker)
+            state.handleNewTabFromChromium(tab, context: NativeTabCreationContext(creationKind: .restore))
+            XCTAssertEqual(wrapper.closeCount, 1)
+            XCTAssertNil(state.resolveTab(tab.guid))
+        }
+        XCTAssertTrue(state.normalTabs.isEmpty)
+        XCTAssertNil(state.focusingTab)
+        for guid in [nil, "", "bookmark-id", "prefix-ai-chat-for:42", "travel-back-pending"] as [String?] {
+            XCTAssertFalse(BrowserState.isRetiredPhiAITabGuid(guid))
+        }
+    }
+
+    func testImportedPhiHelperTabsCloseAfterSnapshotReplayWithoutEnteringTheStrip() async throws {
+        let state = try makeBrowserState()
+        let markers = ["ai-chat-for:42", "travel-back-pending:import"]
+        let wrappers = markers.map { _ in
+            BookmarkLayoutTestWebContentWrapper(urlString: "chrome-extension://disabled/index.html")
+        }
+        var items = makeItems([RestoreTabSpec(guid: 910), RestoreTabSpec(guid: 913)])
+        for index in markers.indices {
+            let tab = Tab(guid: 911 + index, url: wrappers[index].urlString, isActive: false,
+                          index: index + 1, webContentView: wrappers[index], customGuid: markers[index])
+            items.insert((tab, NativeTabCreationContext(creationKind: .restore)), at: index + 1)
+        }
+        state.handleRestoredWindowSnapshot(.init(tabs: items, activeTabId: 913, splitActions: []))
+        XCTAssertEqual(state.tabs.map(\.guid), [910, 913])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [910, 913])
+        XCTAssertEqual(state.focusingTab?.guid, 913)
+        XCTAssertEqual(wrappers.map(\.closeCount), [0, 0], "Never call Chromium from its restore stack")
+
+        let unwound = expectation(description: "Restore stack unwound")
+        DispatchQueue.main.async { unwound.fulfill() }
+        await fulfillment(of: [unwound], timeout: 1)
+        XCTAssertEqual(wrappers.map(\.closeCount), [1, 1])
+    }
+
     func testDuplicateGuidPayloadDroppedBatchSurvives() throws {
         let state = try makeBrowserState()
         // Pre-existing tab with guid 71 — the snapshot's duplicate must be

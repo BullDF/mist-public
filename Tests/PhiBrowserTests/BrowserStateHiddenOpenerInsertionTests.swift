@@ -9,12 +9,24 @@ import XCTest
 @MainActor
 final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
     private var tempDirectories: [URL] = []
+    private var originalAutoPeek: Any?
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        let key = PhiPreferences.GeneralSettings.autoPeekViewEnabled.rawValue
+        originalAutoPeek = UserDefaults.standard.object(forKey: key)
+        // These cases test tab ordering, not automatic cross-site Peek diversion.
+        UserDefaults.standard.set(false, forKey: key)
+    }
 
     override func tearDownWithError() throws {
+        UserDefaults.standard.set(originalAutoPeek,
+                                  forKey: PhiPreferences.GeneralSettings.autoPeekViewEnabled.rawValue)
         for directory in tempDirectories {
             try? FileManager.default.removeItem(at: directory)
         }
         tempDirectories.removeAll()
+        try super.tearDownWithError()
     }
 
     private func makeState() throws -> BrowserState {
@@ -37,7 +49,7 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
         state.updateNormalTabs()
     }
 
-    func testNewTabsFromHiddenPinnedOpenerStayAtStartOfNormalTabs() throws {
+    func testNewTabsFromHiddenPinnedOpenerAppendToNormalTabs() throws {
         let state = try makeState()
         seedNormalTabs(state)
 
@@ -70,10 +82,10 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(state.normalTabs.map(\.guid), [10, 11, 1, 2, 3])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10, 11])
     }
 
-    func testHiddenPinnedOpenerIgnoresInitialChromiumTailOrderEcho() throws {
+    func testHiddenPinnedOpenerIgnoresInitialChromiumAdjacentOrderEcho() throws {
         let state = try makeState()
         seedNormalTabs(state)
 
@@ -97,14 +109,14 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
         )
 
         state.reorderTabs([
-            1: 0,
-            2: 1,
-            3: 2,
-            9: 3,
-            10: 4,
+            9: 0,
+            10: 1,
+            1: 2,
+            2: 3,
+            3: 4,
         ])
 
-        XCTAssertEqual(state.normalTabs.map(\.guid), [10, 1, 2, 3])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
     }
 
     func testHiddenPinnedOpenerProtectionClearsAfterInitialEcho() throws {
@@ -131,23 +143,23 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
         )
 
         state.reorderTabs([
-            1: 0,
-            2: 1,
-            3: 2,
-            9: 3,
-            10: 4,
+            9: 0,
+            10: 1,
+            1: 2,
+            2: 3,
+            3: 4,
         ])
-        XCTAssertEqual(state.normalTabs.map(\.guid), [10, 1, 2, 3])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
 
         state.reorderTabs([
-            1: 0,
-            2: 1,
-            3: 2,
-            9: 3,
-            10: 4,
+            9: 0,
+            10: 1,
+            1: 2,
+            2: 3,
+            3: 4,
         ])
 
-        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [10, 1, 2, 3])
     }
 
     func testProtectedHiddenOpenerStillAcceptsOtherChromiumReorders() throws {
@@ -174,28 +186,30 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
         )
 
         state.reorderTabs([
-            3: 0,
-            2: 1,
-            1: 2,
-            9: 3,
-            10: 4,
+            9: 0,
+            10: 1,
+            3: 2,
+            2: 3,
+            1: 4,
         ])
 
-        XCTAssertEqual(state.normalTabs.map(\.guid), [10, 3, 2, 1])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [3, 2, 1, 10])
     }
 
-    func testNewTabFromHiddenBookmarkOpenerUsesPinnedStyleStartInsertion() throws {
+    func testNewTabFromBookmarkLauncherAppendsToNormalTabs() throws {
         let state = try makeState()
         seedNormalTabs(state)
 
         let bookmark = Bookmark(guid: "bookmark-p",
                                 title: "Bookmark P",
                                 url: "https://p.example")
-        bookmark.isOpened = true
         state.bookmarkManager.rootFolder.addChild(bookmark)
 
         let bookmarkLiveTab = Tab(guid: 9, url: "https://p.example", isActive: true, index: 3, customGuid: bookmark.guid)
         state.tabs.append(bookmarkLiveTab)
+        state.updateNormalTabs()
+        state.reorderTabs([1: 0, 9: 1, 2: 2, 3: 3])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 9, 2, 3])
 
         state.handleNewTabFromChromium(
             Tab(guid: 10, url: "https://d.example", isActive: true, index: 4),
@@ -203,12 +217,92 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
                 isActiveAtCreation: true,
                 creationKind: .linkForeground,
                 openerTabId: 9,
-                insertAfterTabId: 3,
+                insertAfterTabId: 9,
                 sourceTabId: 9
             )
         )
 
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 9, 2, 3, 10])
+    }
+
+    func testVisibleOpenerAppendsAndSurvivesInitialChromiumEcho() throws {
+        for kind in [NativeTabCreationKind.linkForeground, .linkBackground] {
+            let state = try makeState()
+            seedNormalTabs(state)
+
+            state.handleNewTabFromChromium(
+                Tab(guid: 10, url: "https://d.example", isActive: kind == .linkForeground, index: 1),
+                context: NativeTabCreationContext(
+                    isActiveAtCreation: kind == .linkForeground,
+                    creationKind: kind,
+                    openerTabId: 1,
+                    insertAfterTabId: 1,
+                    sourceTabId: 1
+                )
+            )
+            XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
+
+            let chromiumOrder = [1: 0, 10: 1, 2: 2, 3: 3]
+            state.reorderTabs(chromiumOrder)
+            XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
+
+            state.reorderTabs(chromiumOrder)
+            XCTAssertEqual(state.normalTabs.map(\.guid), [1, 10, 2, 3])
+        }
+    }
+
+    /// Mail's links: a typed tab Chromium inserted next to a hidden pinned tab.
+    func testTypedTabAtExplicitIndexAppendsAndSurvivesInitialChromiumEcho() throws {
+        let state = try makeState()
+        seedNormalTabs(state)
+
+        let pinnedRecord = Tab(guid: 9, url: "https://p.example", isActive: true, index: 3, customGuid: "pinned-p")
+        pinnedRecord.isOpenned = true
+        state.pinnedTabs = [pinnedRecord]
+
+        let pinnedLiveTab = Tab(guid: 9, url: "https://p.example", isActive: true, index: 3, customGuid: "pinned-p")
+        pinnedLiveTab.isPinned = true
+        state.tabs.append(pinnedLiveTab)
+
+        state.handleNewTabFromChromium(
+            Tab(guid: 10, url: "https://d.example", isActive: true, index: 1),
+            context: NativeTabCreationContext(
+                isActiveAtCreation: true,
+                creationKind: .typedNewTab,
+                insertAfterTabId: 9,
+                sourceTabId: 9
+            )
+        )
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
+
+        let chromiumOrder = [9: 0, 10: 1, 1: 2, 2: 3, 3: 4]
+        state.reorderTabs(chromiumOrder)
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
+
+        state.reorderTabs(chromiumOrder)
         XCTAssertEqual(state.normalTabs.map(\.guid), [10, 1, 2, 3])
+    }
+
+    func testTypedTabCreatedInsideGroupKeepsChromiumSlot() throws {
+        let state = try makeState()
+        seedNormalTabs(state)
+        state.tabs[0].groupToken = "g"
+        state.tabs[1].groupToken = "g"
+
+        let grouped = Tab(guid: 10, url: "https://d.example", isActive: true, index: 2)
+        grouped.groupToken = "g"
+        state.handleNewTabFromChromium(
+            grouped,
+            context: NativeTabCreationContext(
+                isActiveAtCreation: true,
+                creationKind: .typedNewTab,
+                insertAfterTabId: 2,
+                sourceTabId: 2
+            )
+        )
+
+        state.reorderTabs([1: 0, 2: 1, 10: 2, 3: 3])
+        XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 10, 3])
     }
 
     func testToggleSplitPinStatusUnpinsOpenPinnedSplitOnce() throws {

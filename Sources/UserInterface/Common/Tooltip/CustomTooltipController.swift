@@ -401,6 +401,7 @@ final class CustomTooltipController {
     private var warmUntil: Date?
     private var warmHandoffGroup: CustomTooltipHandoffGroup?
     private var lifecycleObservers: [NSObjectProtocol] = []
+    private var trackingMenus: Set<ObjectIdentifier> = []
 
     var pendingOwnerID: UUID? { pendingRequest?.ownerID }
     var activeOwnerID: UUID? { activeRequest?.ownerID }
@@ -446,6 +447,7 @@ final class CustomTooltipController {
         anchorRectProvider: CustomTooltipAnchorRectProvider? = nil,
         prepareForPresentation: CustomTooltipPresentationPreparation? = nil
     ) {
+        guard trackingMenus.isEmpty else { return }
         let request = CustomTooltipRequest(
             ownerID: ownerID,
             anchorView: anchorView,
@@ -629,7 +631,7 @@ final class CustomTooltipController {
     private func presentationContext(
         for request: CustomTooltipRequest
     ) -> (anchorScreenRect: CGRect, screen: NSScreen?, themeProvider: ThemeStateProvider)? {
-        guard let window,
+        guard trackingMenus.isEmpty, let window,
               let anchorView = request.anchorView,
               anchorView.window === window,
               !anchorView.isHiddenOrHasHiddenAncestor,
@@ -747,6 +749,17 @@ final class CustomTooltipController {
 
     private func observeLifecycle(of window: NSWindow) {
         let center = NotificationCenter.default
+        for name in [NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification] {
+            lifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                MainActor.assumeIsolated {
+                    guard let self, let menu = notification.object as? NSMenu else { return }
+                    if name == NSMenu.didBeginTrackingNotification {
+                        self.trackingMenus.insert(ObjectIdentifier(menu))
+                        self.dismissAll()
+                    } else { self.trackingMenus.remove(ObjectIdentifier(menu)) }
+                }
+            })
+        }
         let windowNotifications: [Notification.Name] = [
             NSWindow.didResignKeyNotification,
             NSWindow.didMiniaturizeNotification,

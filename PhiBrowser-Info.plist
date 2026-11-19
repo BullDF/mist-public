@@ -67,7 +67,7 @@
 	<key>CrProductDirName</key>
 	<string>$(CR_PRODUCT_DIR_NAME)</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSRequiresNativeExecution</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
@@ -85,15 +85,5 @@
 	</array>
 	<key>OSAScriptingDefinition</key>
 	<string>Phi.sdef</string>
-	<key>SUAutomaticallyUpdate</key>
-	<true/>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUFeedURL</key>
-	<string>$(SUFEED_URL)</string>
-	<key>SUPublicEDKey</key>
-	<string>eu4wYg6JQMROgPO7MjCHhVSZ+hcmjAEqmc1gecvGWSA=</string>
-	<key>SUScheduledCheckInterval</key>
-	<integer>7200</integer>
 </dict>
 </plist>

@@ -72,6 +72,7 @@ final class ScreenshotEditorTests: XCTestCase {
         let model = ScreenshotEditorModel(canvas: image())
         stroke(model, tool: .freehand, from: CGPoint(x: 40, y: 40), to: CGPoint(x: 140, y: 140))
         let first = try XCTUnwrap(model.selected)
+        model.selectTool(.select)
         model.beginInteraction(at: CGPoint(x: 140, y: 140), tolerance: 3)
         model.continueInteraction(at: CGPoint(x: 240, y: 240)); model.endInteraction()
         XCTAssertEqual(model.selected?.points, [CGPoint(x: 40, y: 40), CGPoint(x: 240, y: 240)])

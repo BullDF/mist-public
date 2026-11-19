@@ -22,9 +22,7 @@ class WebContentHeaderState: ObservableObject {
     @Published var showAddressBar: Bool = false
     @Published var showNavigationButtons: Bool = false
     @Published var showChatButton: Bool = false
-    @Published var showFeedbackButton: Bool = false
     @Published var showDownloadButton: Bool = false
-    @Published var showMemoryButton: Bool = false
     @Published var showSidebarButton: Bool = false
     @Published var canGoBack: Bool = false
     @Published var canGoForward: Bool = false
@@ -45,13 +43,9 @@ class WebContentHeaderState: ObservableObject {
         let layoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
         let navigationAtTop = layoutMode.showsNavigationAtTop
         let traditionalLayout = layoutMode.isTraditional
-        let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
         self.showAddressBar = navigationAtTop
         self.showNavigationButtons = navigationAtTop
         self.showDownloadButton = traditionalLayout
-        self.showMemoryButton = traditionalLayout && phiAIEnabled
-        self.showFeedbackButton = traditionalLayout
-            && !ApplicationState.shared.isGuest
         self.allowsWindowDrag = layoutMode == .balanced
         self.showChatButton = false
     }
@@ -61,7 +55,7 @@ class WebContentHeaderState: ObservableObject {
             isProgressVisible = false
             return
         }
-        
+
         if progress == 0 {
             isProgressVisible = false
         } else if progress >= 1.0 {
@@ -215,12 +209,6 @@ class WebContentHeader: NSView {
             onChatTap: { [weak self] in
                 self?.aiChatButtonClicked()
             },
-            onFeedbackTap: { [weak self] in
-                self?.feedbackButtonClicked()
-            },
-            onMemoryTap: { [weak self] in
-                self?.memoryButtonClicked()
-            },
             onDownloadTap: { [weak self] in
                 self?.downloadButtonClicked()
             },
@@ -261,7 +249,6 @@ class WebContentHeader: NSView {
         guard let unsafeBrowserState = owningBrowserState else { return }
         unsafeBrowserState
             .$layoutMode
-            .combineLatest(unsafeBrowserState.$lastPhiAIEnabled)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateLayoutVisibility()
@@ -293,21 +280,7 @@ class WebContentHeader: NSView {
             }
             .store(in: &cancellables)
 
-        NotificationCenter.default.publisher(for: .browserAccessStateDidChange)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateLayoutVisibility()
-            }
-            .store(in: &cancellables)
-
         owningBrowserState?.sidebarCollapsedPublisher
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateLayoutVisibility()
-            }
-            .store(in: &cancellables)
-
-        owningBrowserState?.$groupOverviewState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateLayoutVisibility()
@@ -331,6 +304,10 @@ class WebContentHeader: NSView {
         state.isProgressVisible = false
         updateLayoutVisibility()
         guard let currentTab else { return }
+
+        currentTab.$remoteMarkdown.map { $0 != nil }.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updatePageColor() }
+            .store(in: &cancellables)
 
         currentTab.$pageColor
             .combineLatest(currentTab.$url, currentTab.$crashState, currentTab.$hasWebContent)
@@ -409,7 +386,6 @@ class WebContentHeader: NSView {
         let traditionalLayout = layoutMode.isTraditional
         let isCollapsed = owningBrowserState?.sidebarCollapsed ?? false
         let isIncognito = owningBrowserState?.isIncognito ?? false
-        let overviewActive = owningBrowserState?.groupOverviewState != nil
         let focusedAIChat = currentTab?.aiChatEnabled ?? false
         // In a split the chat is shared between the two panes, so keep the
         // button visible while either pane has chat enabled (e.g. one side
@@ -417,21 +393,15 @@ class WebContentHeader: NSView {
         let partnerAIChat = splitPartner()?.aiChatEnabled ?? false
         let aiChatEnabled = focusedAIChat || partnerAIChat
         let isInPlaceholder = owningBrowserState?.isInPlaceholderMode ?? false
-        let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
-        let isGuest = ApplicationState.shared.isGuest
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.state.showAddressBar = navigationAtTop
             self.state.showNavigationButtons = navigationAtTop && !isInPlaceholder
-            self.state.showChatButton = navigationAtTop && !overviewActive && !isIncognito && aiChatEnabled && phiAIEnabled && !isInPlaceholder
-            self.state.showFeedbackButton =
-                (traditionalLayout || (navigationAtTop && isCollapsed))
-                && !isInPlaceholder
-                && !isGuest
+            self.state.showChatButton = navigationAtTop && !isIncognito && aiChatEnabled && !isInPlaceholder
+                && self.owningBrowserState?.isAgentSpace != true
             self.state.allowsWindowDrag = layoutMode == .balanced
             self.state.showDownloadButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && !isInPlaceholder
-            self.state.showMemoryButton = (traditionalLayout || (navigationAtTop && isCollapsed)) && phiAIEnabled && !isIncognito && !isInPlaceholder
             self.state.showSidebarButton = !traditionalLayout && navigationAtTop && isCollapsed
             self.state.isIncognito = isIncognito
             self.state.isInPlaceholderMode = isInPlaceholder
@@ -450,8 +420,9 @@ class WebContentHeader: NSView {
             && tab?.isNTP != true
             && tab?.crashState == nil
             && !BookmarkManagerRoute.matches(tab?.url)
+            && tab?.appAddress == nil
+            && tab?.showsMarkdownReader != true
             && owningBrowserState?.isInPlaceholderMode != true
-            && owningBrowserState?.groupOverviewState == nil
             && tab.map { owningBrowserState?.splitGroup(forTabId: $0.guid) == nil } == true
         let background = canApplyPageColor
             ? tab?.pageColor.map { Self.compositePageColor($0, over: fallback) }
@@ -510,45 +481,26 @@ class WebContentHeader: NSView {
     }
 
     @objc private func refreshButtonClicked() {
-        owningBrowserState?.focusingTab?.reload()
+        owningBrowserState?.reloadFocusingTab()
     }
 
     @objc private func stopLoadingButtonClicked() {
-        owningBrowserState?.focusingTab?.stopLoading()
+        owningBrowserState?.stopLoadingFocusingTab()
     }
 
     @objc private func aiChatButtonClicked() {
         // Defense in depth: chat button should already be hidden in placeholder
         // mode (see updateLayoutVisibility). Belt-and-braces guard avoids
         // toggling chat if a stale tap somehow reaches this handler.
-        guard owningBrowserState?.isInPlaceholderMode != true else {
+        guard owningBrowserState?.canShowChatPanel(for: currentTab) == true else {
             NSSound.beep()
             return
         }
-        guard owningBrowserState?.groupOverviewState == nil else {
-            NSSound.beep()
-            return
-        }
-        FeatureEntryAnalytics.capture(.chat, surface: .webContentHeader)
         owningBrowserState?.toggleAIChat()
     }
 
-    @objc private func feedbackButtonClicked() {
-        owningBrowserState?.windowController?.showFeedbackWindow()
-    }
-
-    @objc private func memoryButtonClicked() {
-        guard let state = BrowserState.currentState() else { return }
-        FeatureEntryAnalytics.capture(.memory, surface: .webContentHeader)
-        state.createTab(
-            "chrome://memory/memory.html",
-            focusAfterCreate: true
-        )
-        FirstTimeActionTracker.capture(.memoryOpened)
-    }
 
     private func downloadButtonClicked() {
-        FeatureEntryAnalytics.capture(.download, surface: .webContentHeader)
     }
 
     // MARK: - Public Methods

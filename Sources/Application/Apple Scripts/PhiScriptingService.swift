@@ -60,15 +60,15 @@ enum PhiScriptingError: Error, Equatable {
         case .invalidArgument:
             "One or more command arguments are invalid."
         case .noWindows:
-            "Phi has no open browser windows."
+            "Mist has no open browser windows."
         case .noActiveWindow:
-            "Phi has no active normal browser window."
+            "Mist has no active normal browser window."
         case .spaceNotFound:
             "The selected Space is no longer available."
         case .tabNotFound:
             "The selected tab or saved item is no longer available."
         case .operationFailed:
-            "Phi could not complete the requested operation."
+            "Mist could not complete the requested operation."
         }
     }
 }
@@ -248,7 +248,6 @@ struct PhiScriptingDependencies {
     var openBookmark: (String, String) -> PhiScriptingOperationResult
     var openTab: (String, String?) -> PhiScriptingOperationResult
     var createWindow: (PhiScriptingWindowKind) -> PhiScriptingOperationResult
-    var createKioskWindow: (String) -> PhiScriptingOperationResult
     var createIncognitoSpace: () -> PhiScriptingOperationResult
     var applicationVersion: () -> (version: String, build: String)
     var chromiumDataDirectory: () -> String
@@ -425,11 +424,6 @@ final class PhiScriptingService {
         createWindow(kind: .incognito)
     }
 
-    func newKioskWindow(url: String?) -> [String: Any] {
-        let targetURL = normalizedKioskURL(url)
-        return response(for: dependencies.createKioskWindow(targetURL))
-    }
-
     func newIncognitoSpace() -> [String: Any] {
         response(for: dependencies.createIncognitoSpace())
     }
@@ -487,19 +481,6 @@ final class PhiScriptingService {
         return value
     }
 
-    private func normalizedKioskURL(_ value: String?) -> String {
-        guard let value = nonEmpty(value) else {
-            return "about:blank"
-        }
-        guard let scheme = URLComponents(string: value)?.scheme else {
-            return URLProcessor.processUserInput(value)
-        }
-        guard scheme.caseInsensitiveCompare("phi") == .orderedSame else {
-            return value
-        }
-        return "chrome:" + String(value.dropFirst(scheme.count + 1))
-    }
-
     private func success(_ payload: [String: Any] = [:]) -> [String: Any] {
         var response = payload
         response["schemaVersion"] = Self.schemaVersion
@@ -534,7 +515,6 @@ extension PhiScriptingDependencies {
             openBookmark: openLiveBookmark,
             openTab: openLiveTab,
             createWindow: createLiveWindow,
-            createKioskWindow: createLiveKioskWindow,
             createIncognitoSpace: createLiveIncognitoSpace,
             applicationVersion: {
                 let info = Bundle.main.infoDictionary
@@ -587,7 +567,10 @@ extension PhiScriptingDependencies {
                         title: tab.title,
                         url: tab.url,
                         isActive: state.focusingTab?.guid == tab.guid,
-                        isPinned: tab.isPinned
+                        // A pin opened from its record keeps `isPinned` false on the live tab.
+                        isPinned: tab.isPinned || tab.guidInLocalDB.map { guid in
+                            !guid.isEmpty && state.pinnedTabs.contains { $0.guidInLocalDB == guid }
+                        } == true
                     )
                 }
                 return PhiScriptingWindowSnapshot(
@@ -608,13 +591,7 @@ extension PhiScriptingDependencies {
     private static func makeLiveSavedItemsSnapshot(
         targetSpaceId: String?
     ) -> PhiScriptingSavedItemsSnapshot {
-        guard let store = AccountController.shared.localDataAccount?.localStorage
-        else {
-            return PhiScriptingSavedItemsSnapshot(
-                pinnedTabs: [],
-                bookmarks: []
-            )
-        }
+        let store = AccountController.shared.localDataAccount.localStorage
 
         let allSpaces = SpaceManager.shared.userSpaces
         let selectedSpaces: [Space]
@@ -821,22 +798,22 @@ extension PhiScriptingDependencies {
         windowId: String,
         tabId: String
     ) -> PhiScriptingOperationResult {
-        guard let target = liveTab(windowId: windowId, tabId: tabId) else {
+        guard let target = liveTab(windowId: windowId, tabId: tabId),
+              target.tab.reloadPage() else {
             return .failed
         }
-        target.tab.reload()
-        return .completed
+        return .accepted
     }
 
     private static func forceReloadLiveTab(
         windowId: String,
         tabId: String
     ) -> PhiScriptingOperationResult {
-        guard let target = liveTab(windowId: windowId, tabId: tabId) else {
+        guard let target = liveTab(windowId: windowId, tabId: tabId),
+              target.tab.reloadPage(bypassingCache: true) else {
             return .failed
         }
-        target.tab.reloadBypassingCache()
-        return .completed
+        return .accepted
     }
 
     private static func addLiveSplitView(
@@ -1132,18 +1109,6 @@ extension PhiScriptingDependencies {
         }
     }
 
-    private static func createLiveKioskWindow(
-        _ url: String
-    ) -> PhiScriptingOperationResult {
-        guard let appController = AppController.shared else {
-            return .failed
-        }
-        return appController.openNewKioskWindow(
-            url: url,
-            bringToFront: true
-        ) ? .completed : .failed
-    }
-
     private static func createLiveIncognitoSpace() -> PhiScriptingOperationResult {
         let spaceManager = SpaceManager.shared
         guard !PhiScriptingService.shouldBlockIncognitoSpaceCreation(
@@ -1151,8 +1116,6 @@ extension PhiScriptingDependencies {
                   isLazyReopenArmed: spaceManager.lastReopenArmedLazyRestore
               ),
               PhiPreferences.GeneralSettings.spacesFeatureEnabled.loadValue(),
-              ApplicationState.shared.canUseBrowser,
-              !SpaceSessionControllersManager.shared.isGuestTransitionInteractionBlocked,
               ChromiumLauncher.sharedInstance().bridge != nil,
               let appController = AppController.shared else {
             return .failed
@@ -1182,7 +1145,7 @@ enum PhiScriptingJSON {
         guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
               let string = String(data: data, encoding: .utf8) else {
-            return "{\"error\":{\"code\":\"serialization_failed\",\"message\":\"Phi could not serialize the scripting response.\"},\"ok\":false,\"schemaVersion\":1}"
+            return "{\"error\":{\"code\":\"serialization_failed\",\"message\":\"Mist could not serialize the scripting response.\"},\"ok\":false,\"schemaVersion\":1}"
         }
         return string
     }

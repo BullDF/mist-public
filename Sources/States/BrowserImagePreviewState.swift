@@ -16,8 +16,6 @@ final class BrowserImagePreviewState: ObservableObject {
     @Published private(set) var zoomScale: CGFloat = 1
     @Published private(set) var fitScale: CGFloat = 1
     @Published private(set) var minScale: CGFloat = 1
-    @Published private(set) var maxScale: CGFloat = 8
-
     private let loader: ImagePreviewLoading
     private var activeLoadTask: Task<Void, Never>?
 
@@ -76,18 +74,6 @@ final class BrowserImagePreviewState: ObservableObject {
     func retryCurrentItem() {
         guard activeItem != nil else { return }
         loadCurrentItem()
-    }
-
-    func append(items newItems: [ImagePreviewItem]) {
-        guard !newItems.isEmpty else { return }
-
-        guard isVisible, !items.isEmpty else {
-            open(items: newItems, currentIndex: 0)
-            return
-        }
-
-        items.append(contentsOf: newItems)
-        loader.preloadAdjacentItems(around: items, currentIndex: currentIndex)
     }
 
     func updateZoom(scale: CGFloat, fitScale: CGFloat, minScale: CGFloat) {

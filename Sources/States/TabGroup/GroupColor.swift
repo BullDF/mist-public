@@ -26,7 +26,7 @@ enum GroupColor: String, Codable, CaseIterable {
     var localizedName: String {
         switch self {
         case .grey:
-            return NSLocalizedString("tabs.tabGroup.colorName.grey", value: "Grey",
+            return NSLocalizedString("tabs.tabGroup.colorName.grey", value: "Gray",
                 comment: "Tab Groups - color name shown in auto-named group title and color picker")
         case .blue:
             return NSLocalizedString("tabs.tabGroup.colorName.blue", value: "Blue",

@@ -136,7 +136,6 @@ final class KeyCaptureNSView: NSView {
     var onModifiersChanged: ((NSEvent.ModifierFlags) -> Void)?
     private var eventMonitor: Any?
     private var resignObserver: NSObjectProtocol?
-    private var resumeGlobalShortcut: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
     
@@ -179,7 +178,6 @@ final class KeyCaptureNSView: NSView {
     
     private func startMonitoring() {
         stopMonitoring()
-        resumeGlobalShortcut = AppController.shared?.suspendKioskGlobalShortcutForRecording()
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             return self.process(event)
@@ -195,9 +193,6 @@ final class KeyCaptureNSView: NSView {
             NotificationCenter.default.removeObserver(resignObserver)
             self.resignObserver = nil
         }
-        let resume = resumeGlobalShortcut
-        resumeGlobalShortcut = nil
-        resume?()
     }
     
     deinit {
@@ -261,14 +256,6 @@ final class CommandShortcutCaptureNSView: NSView {
     }
 }
 
-extension View {
-    func debugBorder(_ color: Color = .red) -> some View {
-        self.overlay(
-            Rectangle()
-                .stroke(color, lineWidth: 1)
-        )
-    }
-}
 
 #Preview {
     ShortcutsSettingsView()

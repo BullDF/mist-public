@@ -287,7 +287,6 @@ private extension View {
     }
 }
 
-#if DEBUG
 struct OverlayToastView_Previews: PreviewProvider {
     static var previews: some View {
         ZStack {
@@ -305,4 +304,3 @@ struct OverlayToastView_Previews: PreviewProvider {
         .frame(width: 600, height: 220)
     }
 }
-#endif

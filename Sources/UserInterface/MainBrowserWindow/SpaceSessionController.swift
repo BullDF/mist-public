@@ -9,16 +9,15 @@ import SnapKit
 import SwiftUI
 class SpaceSessionController: NSWindowController {
     static let defaultWindowSize = NSSize(width: 1280, height: 860)
-    
+
     let mainSplitViewController: MainSplitViewController
-    
+
     let account: Account
     let browserType: ChromiumBrowserType
     let profileId: String
     let spaceId: String
     /// The window-group this controller belongs to. Set by the caller
-    /// (`PhiChromiumCoordinator.mainBrowserWindowCreated`,
-    /// `SpaceSessionControllersManager.processDanglingWindow`) right
+    /// (`PhiChromiumCoordinator.mainBrowserWindowCreated`) right
     /// after construction. Weak so the controller doesn't pin a slot the
     /// manager has already dropped from its registry.
     weak var slot: SpaceWindowSlot?
@@ -54,11 +53,11 @@ class SpaceSessionController: NSWindowController {
     /// window-level side effect (panels, traffic lights, overlays) that a
     /// background session of the shared shell must not perform.
     var isPresentedOrLegacy: Bool { !isHosted || isPresented }
-    
+
     var omniBoxContainerViewController: OmniBoxContainerViewController?
-    
+
     var searchTabsContainerViewController: SearchTabsContainerViewController?
-    
+
     private lazy var toastContainerViewController: OverlayToastViewController = {
         return OverlayToastViewController(state: browserState)
     }()
@@ -195,7 +194,7 @@ class SpaceSessionController: NSWindowController {
         let inWindow = contentView.convert(contentView.bounds, to: nil)
         panel.setFrame(window.convertToScreen(inWindow), display: true)
     }
-    
+
     lazy var omnibackgroundView: EventBlockBgView = {
        return EventBlockBgView()
     }()
@@ -203,7 +202,7 @@ class SpaceSessionController: NSWindowController {
     lazy var searchTabsBackgroundView: EventBlockBgView = {
         EventBlockBgView()
     }()
-    
+
     private var originalContentView: NSView?
     /// Holds the native traffic lights on the chrome row beside them;
     /// see `updateTrafficLightPlacement(fullScreen:)`.
@@ -211,26 +210,24 @@ class SpaceSessionController: NSWindowController {
     /// The layout the live positioner was built for, so the titlebar is
     /// only handed back and re-shifted when the layout actually changes.
     private var trafficLightLayoutMode: LayoutMode?
-    private var kioskContentViewController: KioskBrowserContentViewController?
     lazy var cancellables = Set<AnyCancellable>()
     private var multiSelectionEscapeMonitor: Any?
     private(set) var windowId = 0
     @Published private(set) var browserState: BrowserState
     var tabStripView: TabStrip? {
-        guard !browserState.isKioskWindow else { return nil }
         return mainSplitViewController.webContentContainerViewController.tabStripView
     }
-    
+
     required init?(coder: NSCoder) {
         fatalError("not support")
     }
-    
+
     init(window: NSWindow,
          windowId: Int,
          browserType: ChromiumBrowserType = .normal,
          profileId: String = LocalStore.defaultProfileId,
          spaceId: String = SpaceManager.shared.currentDefaultSpaceId,
-         account: Account = AccountController.shared.account ?? AccountController.defaultAccount,
+         account: Account = AccountController.shared.localDataAccount,
          slot: SpaceWindowSlot? = nil,
          browserState suppliedBrowserState: BrowserState? = nil,
          chromiumWindow: NSWindow? = nil,
@@ -244,8 +241,7 @@ class SpaceSessionController: NSWindowController {
             profileId: profileId,
             spaceId: spaceId,
             isIncognito: browserType == .incognito
-                || browserType == .incognitoSpace
-                || browserType == .kioskIncognito,
+                || browserType == .incognitoSpace,
             isIncognitoSpace: browserType == .incognitoSpace,
             isAgentSpace: browserType == .agentSpace
         )
@@ -329,7 +325,7 @@ class SpaceSessionController: NSWindowController {
     deinit {
         removeMultiSelectionEscapeMonitor()
     }
-    
+
     override var windowNibName: NSNib.Name? { "" }
 
     private func installMultiSelectionEscapeMonitor() {
@@ -357,22 +353,6 @@ class SpaceSessionController: NSWindowController {
         in window: NSWindow,
         browserState: BrowserState
     ) -> NSEvent? {
-        if event.type == .keyDown,
-           event.window === window,
-           SpaceSessionControllersManager.shared
-            .isGuestTransitionInteractionBlocked {
-            let modifiers = event.modifierFlags.intersection([
-                .command,
-                .option,
-                .shift,
-                .control,
-            ])
-            if modifiers == [.command],
-               event.charactersIgnoringModifiers?.lowercased() == "q" {
-                return event
-            }
-            return nil
-        }
 
         guard event.type == .keyDown,
               event.keyCode == 53,
@@ -383,7 +363,7 @@ class SpaceSessionController: NSWindowController {
         browserState.clearMultiSelection()
         return nil
     }
-    
+
     /// Hosted-mode counterpart of `setupWindow()`. The shell is dressed by
     /// `ShellWindowController`; this session only wires what is its own —
     /// teardown on ITS Chromium window's close, theme following while
@@ -538,11 +518,11 @@ class SpaceSessionController: NSWindowController {
 
     private func setupWindow() {
         guard let window = self.window else { return }
-        
+
         window.contentView?.removeFromSuperview()
-        
+
         originalContentView = window.contentView
-        
+
         window.backgroundColor = NSColor.windowBackgroundColor
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -643,7 +623,6 @@ class SpaceSessionController: NSWindowController {
     /// and deminiaturizing doesn't re-trigger it — leaving the restored window
     /// blank. Drive the content setup now that the window is visible again.
     @objc private func handleWindowDidDeminiaturize(_ note: Notification) {
-        guard !browserState.isKioskWindow else { return }
         mainSplitViewController.phiHandleRestoreFromMinimized()
     }
 
@@ -705,24 +684,14 @@ class SpaceSessionController: NSWindowController {
         let context = browserState.themeContext
         return context.windowAppearance ?? context.currentAppearance.nsAppearance
     }
-    
+
     private func setupContentView() {
         guard let _ = self.window else { return }
 
-        if let kioskState = browserState as? KioskBrowserState {
-            let controller = KioskBrowserContentViewController(state: kioskState)
-            kioskContentViewController = controller
-            contentViewController = controller
-            window?.standardWindowButton(.closeButton)?.isHidden = false
-            window?.standardWindowButton(.miniaturizeButton)?.isHidden = false
-            window?.standardWindowButton(.zoomButton)?.isHidden = false
-            return
-        }
-        
         if !isHosted {
             self.contentViewController = mainSplitViewController
         }
-        
+
         $browserState.compactMap { $0 }
             .flatMap { state in
                 state.sidebarCollapsedPublisher.combineLatest(
@@ -852,8 +821,7 @@ class SpaceSessionController: NSWindowController {
     /// Handles blocking overlays for every browser window. The Omnibox host
     /// panel must stop accepting input when it dismisses; regular windows also
     /// use this signal to eclipse peek/reader panels or conceal them for tab
-    /// search. Kiosk returns before that regular content setup, but shares the
-    /// same full-window Omnibox host and therefore needs this observer too.
+    /// search.
     private func observeBlockingOverlayVisibility() {
         NotificationCenter.default.publisher(for: .phiInWindowOverlayVisibilityChanged)
             .receive(on: DispatchQueue.main)
@@ -1065,7 +1033,7 @@ class SpaceSessionController: NSWindowController {
     /// Hosted mode: tells Chromium the presented Browser lost (or regained)
     /// the activation a key window carries. Presentation is not activation:
     /// this session stays presented in its shell while the user works in
-    /// another shell, a standalone Incognito or Kiosk window, or another
+    /// another shell, a standalone Incognito window, or another
     /// app, and Chromium's activation order — `chrome.windows.getLastFocused`,
     /// the Dock's "New Window", external URL opens — has to follow key, not
     /// what is on screen. The shell resigning key is the only signal for
@@ -1478,8 +1446,6 @@ class SpaceSessionController: NSWindowController {
     /// most one layout. The lights are what moves, rather than the rows: a row
     /// carries the header's vertical rhythm and the strip's hit targets with
     /// it, and the lights carry nothing.
-    /// `KioskBrowserWindowController` moves its own lights the same way, by
-    /// `KioskBrowserToolbar.titlebarVerticalShift`.
     ///
     /// The row centre is handed over as an absolute distance from the top of
     /// the window rather than as a shift off AppKit's placement, so a titlebar
@@ -1547,9 +1513,6 @@ class SpaceSessionController: NSWindowController {
     }
 
     @objc private func myWindowWillClose(_ notification: Notification) {
-        // Before the Library leaves: its Folio pane closes the pane tab when
-        // it leaves its window, and the tab is torn down with the strip.
-        browserState.teardownLibraryPaneForWindowClose()
         libraryWindowController?.close()
         libraryWindowController = nil
         // Defensive teardown for placeholder mode. In practice Chromium's
@@ -1568,85 +1531,11 @@ class SpaceSessionController: NSWindowController {
     }
 
 
-    /// Restore and show a window that was previously hidden (e.g., dangling window after login)
-    /// This restores the window to normal state and makes it visible
-    func restoreAndShowWindow() {
-        guard let window = self.window else { return }
-
-        if isHosted {
-            // `window` is the slot's shared shell, placed by the slot; only the
-            // hidden Chromium window was parked by `hideDanglingWindow`. Undo
-            // that without showing it, and front the shell only for the
-            // session it presents.
-            if let chromiumWindow = hostedChromiumWindow {
-                chromiumWindow.level = .normal
-                chromiumWindow.alphaValue = 1.0
-            }
-            mirrorFrameToChromiumWindow()
-            if isPresented {
-                window.makeKeyAndOrderFront(nil)
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            AppLogInfo("🪟 [WindowController] Hosted dangling session restored - windowId: \(windowId) presented: \(isPresented)")
-            return
-        }
-        
-        window.level = .normal
-        window.setContentSize(Self.defaultWindowSize)
-        window.alphaValue = 1.0
-        window.setIsVisible(true)
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        
-        // Ensure the app is activated
-        NSApp.activate(ignoringOtherApps: true)
-
-        AppLogInfo("🪟 [WindowController] Window restored and displayed - windowId: \(windowId)")
-    }
-
-    /// Rubber-band nudge for traditional layout, played when a swipe-to-switch
-    /// can't proceed because the active Space is already the first or last one.
-    /// Mirrors the horizontal window slide's motion — the live window content
-    /// shifts a short distance in the swipe's push direction and springs back —
-    /// without swapping windows. `forward` follows the swap convention:
-    /// next-Space swipes push the content left, previous-Space swipes push it
-    /// right. The window clips the overshoot and the traffic lights live in the
-    /// titlebar (outside contentView), so they stay put as in a real slide.
-    func bounceContentForSpaceSwitchEdge(forward: Bool) {
-        guard let subviews = window?.contentView?.subviews, !subviews.isEmpty else { return }
-        let offset: CGFloat = forward ? -32 : 32
-        for view in subviews {
-            view.wantsLayer = true
-            guard let layer = view.layer else { continue }
-            let bounce = CAKeyframeAnimation(keyPath: "transform.translation.x")
-            bounce.values = [0, offset, 0]
-            bounce.keyTimes = [0, 0.4, 1]
-            bounce.timingFunctions = [
-                CAMediaTimingFunction(name: .easeInEaseOut),
-                CAMediaTimingFunction(name: .easeInEaseOut)
-            ]
-            bounce.duration = 0.3
-            layer.add(bounce, forKey: "spaceSwitchEdgeBounce")
-        }
-    }
-
     func containsTabDragBoundary(at screenLocation: CGPoint) -> Bool {
-        guard !browserState.isKioskWindow else { return false }
         if tabStripView?.containsScreenLocation(screenLocation) == true {
             return true
         }
         return mainSplitViewController.containsSidebarTabDragBoundary(at: screenLocation)
-    }
-
-    // =========================================================================
-    // Tab first paint
-    // =========================================================================
-
-    /// Called when a tab has completed its first visually non-empty paint.
-    /// Only Kiosk's content uses it: the page container mounts a tab
-    /// without waiting for its first paint (mac ADR 0011).
-    func handleTabReadyToDisplay(tabId: Int) {
-        kioskContentViewController?.handleTabReadyToDisplay(tabId: tabId)
     }
 
     // =========================================================================

@@ -5,12 +5,9 @@ import Foundation
 /// produced by Chromium (the Mac side carries zero crash-page copy); the
 /// authoritative `data` dictionary keys live in `PhiChromiumBridgeHeader.h`.
 struct CrashPageData: Equatable {
-    /// Behaviour of the primary action button. Derived locally from
-    /// `showFeedbackButton` — the bridge sends no explicit action key: a
-    /// repeatedly-crashing tab offers feedback, otherwise reload.
+    /// Chromium can request a feedback button, which Mist does not show.
     enum PrimaryAction {
         case reload
-        case feedback
     }
 
     let title: String
@@ -29,8 +26,8 @@ struct CrashPageData: Equatable {
     let kind: Int
     let terminationStatus: Int
 
-    var primaryAction: PrimaryAction {
-        showFeedbackButton ? .feedback : .reload
+    var primaryAction: PrimaryAction? {
+        showFeedbackButton ? nil : .reload
     }
 
     init(dictionary: [AnyHashable: Any]) {

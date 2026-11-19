@@ -992,7 +992,6 @@ private struct FolderPopUpButton: NSViewRepresentable {
 
 // MARK: - Preview
 
-#if DEBUG
 struct EditPinnedTab_Previews: PreviewProvider {
     static var previews: some View {
         Group {
@@ -1049,4 +1048,3 @@ struct EditPinnedTab_Previews: PreviewProvider {
         .padding()
     }
 }
-#endif

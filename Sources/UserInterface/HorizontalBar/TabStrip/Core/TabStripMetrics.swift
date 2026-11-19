@@ -11,9 +11,6 @@ enum TabStripMetrics {
         static let tabHeight: CGFloat = 32
         static let bottomSpacing: CGFloat = 4
         static let height: CGFloat = tabHeight + bottomSpacing
-        static let insets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
-        static let backgroundColor = NSColor.clear
-
         static let pinnedContainerCornerRadius: CGFloat = 8
 
         static let gapBetweenPinnedAndNormal: CGFloat = 4
@@ -44,7 +41,6 @@ enum TabStripMetrics {
     // Layout constants for tab content.
     enum Content {
         static let faviconSize = CGSize(width: 16, height: 16)
-        static let faviconCornerRadius: CGFloat = 4
         static let faviconLeading: CGFloat = 6
 
         static let titleFontSize: CGFloat = 13
@@ -53,16 +49,8 @@ enum TabStripMetrics {
         static let titleToFavicon: CGFloat = 8
         static let titleTrailing: CGFloat = 10
         static let titleToCloseButton: CGFloat = 6
-        static let titleColor = NSColor(calibratedWhite: 0, alpha: 0.80)
-
         static let closeButtonSize = CGSize(width: 24, height: 24)
-        static let closeButtonCornerRadius: CGFloat = 4
         static let closeButtonTrailing: CGFloat = 4
-        static let closeButtonIconSize: CGFloat = 12
-        static let closeButtonIconPointSize: CGFloat = 9
-        static let closeButtonIconColor = NSColor(calibratedWhite: 0, alpha: 0.7)
-        static let closeButtonHoverColor = NSColor(calibratedWhite: 0, alpha: 0.04)
-
         static let separatorSize = CGSize(width: 1, height: 16)
         static let separatorColor = ThemedColor { _, appearance in
             DefaultColors.separator.color(for: appearance)

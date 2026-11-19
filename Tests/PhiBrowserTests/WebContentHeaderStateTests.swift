@@ -35,32 +35,18 @@ final class WebContentHeaderStateTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    func testFeedbackIconFitsBesideDownloadAtNinetyPoints() {
+    func testDownloadFitsWithoutReservingExtensionWidth() {
         let fit = HeaderTrailingArea.widthFit(
-            availableWidth: 90,
-            pinnedCount: 0,
+            availableWidth: 66,
+            pinnedCount: 3,
             showDownload: true,
-            showMemory: false,
-            showFeedback: true,
             showChat: false
         )
 
-        XCTAssertTrue(fit.showFeedback)
         XCTAssertTrue(fit.showDownload)
+        XCTAssertEqual(fit.visiblePinnedCount, 0)
     }
 
-    func testFeedbackIconCollapsesWhenItsSlotDoesNotFit() {
-        let fit = HeaderTrailingArea.widthFit(
-            availableWidth: 59,
-            pinnedCount: 0,
-            showDownload: false,
-            showMemory: false,
-            showFeedback: true,
-            showChat: false
-        )
-
-        XCTAssertFalse(fit.showFeedback)
-    }
 
     func testBalancedLayoutAllowsWindowDrag() {
         PhiPreferences.GeneralSettings.saveLayoutMode(.balanced)
@@ -106,17 +92,5 @@ final class WebContentHeaderStateTests: XCTestCase {
         )
     }
 
-    func testFeatureEntryAnalyticsUsesOnlySupportedButtons() {
-        XCTAssertEqual(
-            FeatureEntryAnalytics.Button.allCases.map(\.rawValue),
-            ["chat", "memory", "download", "organize_tabs"]
-        )
-    }
 
-    func testFeatureEntryAnalyticsUsesStableSurfaces() {
-        XCTAssertEqual(
-            FeatureEntryAnalytics.Surface.allCases.map(\.rawValue),
-            ["sidebar", "web_content_header"]
-        )
-    }
 }

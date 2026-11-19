@@ -298,7 +298,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     /// separators on both sides of the chip while hovered (mirrors the
     /// tab hover rule).
     private var hoveredChipToken: String?
-    private var selectedGroupTokenForOverviewPlaceholder: String?
     private var multiSelectionRangeAnchor: TabStripMultiSelectionUnit?
 
     // MARK: - Layout Lock
@@ -1345,7 +1344,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     }
 
     private func visibleActiveTabForChrome() -> Tab? {
-        browserState.groupOverviewState == nil ? browserState.focusingTab : nil
+        browserState.focusingTab
     }
 
     // MARK: - Data Binding
@@ -1505,9 +1504,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                     }
                 }
 
-                // Refresh chip widths for any group whose member count
-                // affects the rendered title (auto-named groups always;
-                // user-named groups only the count badge).
+                // Refresh chip widths: the member count sizes the
+                // expanded chip's count badge.
                 for token in self.browserState.groups.keys {
                     self.refreshChipWidth(for: token)
                 }
@@ -1527,16 +1525,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self, self.isActive else { return }
-                self.performLayout(context: self.dataChangedLayoutContext())
-                self.needsLayout = true
-            }
-            .store(in: &cancellables)
-
-        browserState.$groupOverviewState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                guard let self, self.isActive else { return }
-                self.selectedGroupTokenForOverviewPlaceholder = state?.groupToken
                 self.performLayout(context: self.dataChangedLayoutContext())
                 self.needsLayout = true
             }
@@ -1580,8 +1568,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
     /// via `handleTabJoinedGroup` / `handleTabLeftGroup`) or when a
     /// group's title / color / collapsed flag mutates without a
     /// `groups` dictionary reassignment (`handleTabGroupVisualDataChanged`).
-    /// Without this, the chip's auto-name count badge and underline
-    /// color stay stale until the next unrelated relayout.
+    /// Without this, the chip's count badge and underline color stay
+    /// stale until the next unrelated relayout.
     private func rebuildGroupChangeSubscriptions(groups: [String: WebContentGroupInfo]) {
         WebContentGroupInfo.reconcileSubscriptions(
             groups: groups,
@@ -2529,9 +2517,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             chip.configure(
                 token: token,
                 color: group.color,
-                displayTitle: group.displayTitle(memberCount: memberCount),
+                displayTitle: group.displayTitle,
                 memberCount: memberCount,
-                hasUserSetTitle: group.hasUserSetTitle,
                 isCollapsed: effectiveIsCollapsed(for: token),
                 memberFavicons: collectMosaicFaviconData(for: token)
             )
@@ -2554,16 +2541,12 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             view.removeFromSuperview()
             chipViews.removeValue(forKey: token)
             if hoveredChipToken == token { hoveredChipToken = nil }
-            if selectedGroupTokenForOverviewPlaceholder == token {
-                selectedGroupTokenForOverviewPlaceholder = nil
-            }
         }
         // Mirror teardown for chip-right separators.
         for (token, view) in chipRightSeparatorViews where chipFrames[token] == nil {
             view.removeFromSuperview()
             chipRightSeparatorViews.removeValue(forKey: token)
         }
-        updateGroupChipSelectionState()
     }
 
     /// Renders the chip→right-neighbor separator for each visible chip.
@@ -2628,11 +2611,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         if browserState.multiSelection.isActive {
             browserState.clearMultiSelection()
         }
-        browserState.showGroupOverview(token: token)
-        AppLogDebug(
-            "[TAB_GROUPS][STRIP] chip overview windowId=\(browserState.windowId) " +
-            "token=\(token)"
-        )
+        handleChipCollapseToggle(token: token)
     }
 
     private func handleChipCollapseToggle(token: String) {
@@ -2647,12 +2626,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             tokenHex: token,
             isCollapsed: next
         )
-    }
-
-    private func updateGroupChipSelectionState() {
-        for (token, chip) in chipViews {
-            chip.setOverviewSelected(token == selectedGroupTokenForOverviewPlaceholder)
-        }
     }
 
     @MainActor
@@ -2802,7 +2775,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             runs.append(GroupRun(token: token, range: i...j, isCollapsed: isCollapsed))
             i = j + 1
         }
-        #if DEBUG
         // Contiguity invariant: each group token should appear in at
         // most one run. A repeat means somewhere along the way a
         // group's members got split by an intruder tab — `applyLayout`
@@ -2831,7 +2803,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
                 "appears in \(count) runs in normalTabs=\(liveOrder)"
             )
         }
-        #endif
         return runs
     }
 
@@ -2901,7 +2872,7 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
 
     /// Re-measures the full-mode chip width for `token`. Called on group
     /// creation and whenever the group's title / color / member count
-    /// changes (or when the tab list changes for an auto-named group).
+    /// changes.
     private func refreshChipWidth(for token: String) {
         guard let group = browserState.groups[token] else {
             chipFullWidths.removeValue(forKey: token)
@@ -2909,10 +2880,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         }
         let memberCount = browserState.normalTabs
             .lazy.filter { $0.groupToken == token }.count
-        let title = group.displayTitle(memberCount: memberCount)
         let width = TabGroupChipView.chipWidth(
-            forTitle: title,
-            hasUserSetTitle: group.hasUserSetTitle,
+            forTitle: group.displayTitle,
             memberCount: memberCount,
             isCollapsed: effectiveIsCollapsed(for: token)
         )
@@ -2972,7 +2941,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
 
     private func handleTabSelection(tab: Tab?) {
         guard let tab = tab else { return }
-        browserState.clearGroupOverview()
         if tab.isPinned {
             self.browserState.openOrFocusPinnedTab(tab)
         } else {
@@ -3974,6 +3942,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         index: Int
     ) -> Bool {
         guard let wrapper = tab.webContentWrapper else { return false }
+        SpaceSessionControllersManager.shared.getBrowserState(for: tab.windowId)?
+            .seedNewTabBeforeMovingOut(tabIds: [tab.guid])
         // Split-aware: when the dragged tab belongs to a split, the Chromium
         // bridge re-creates the pair atomically at the requested index. Skip
         // the local schedule + tail-insert dance — its post-arrival per-tab
@@ -4041,6 +4011,8 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
         // See `BrowserState.crossWindowFaviconStash` for the why.
         BrowserState.stashCrossWindowFavicons(forMemberIds: [tab.guid], in: [tab])
 
+        SpaceSessionControllersManager.shared.getBrowserState(for: tab.windowId)?
+            .seedNewTabBeforeMovingOut(tabIds: [tab.guid])
         let targetWindowId = targetState.windowId.int64Value
         if anchorIsBefore {
             wrapper.moveSelf(
@@ -4056,28 +4028,6 @@ final class TabStrip: NSView, TitlebarAwareHitTestable {
             )
         }
         return true
-    }
-
-    private func dropTarget(forScreenPoint screenPoint: CGPoint) -> (zone: TabContainerType, index: Int) {
-        guard let window else {
-            return (.normal, browserState.normalTabs.count)
-        }
-        let windowPoint = window.convertPoint(fromScreen: NSPoint(x: screenPoint.x, y: screenPoint.y))
-        let localPoint = convert(windowPoint, from: nil)
-        let metrics = dragControllerRequestMetrics()
-
-        if metrics.pinnedContainerFrame.contains(localPoint) {
-            let localX = localPoint.x - metrics.pinnedContainerFrame.minX
-            let index = calculateGapIndex(localX: localX, tabFrames: metrics.pinnedTabFrames, excludedIndex: nil)
-            return (.pinned, index)
-        }
-        if metrics.normalContainerFrame.contains(localPoint) {
-            let localX = localPoint.x - metrics.normalContainerFrame.minX + metrics.normalScrollOffset
-            let index = calculateGapIndex(localX: localX, tabFrames: metrics.normalTabFrames, excludedIndex: nil)
-            return (.normal, index)
-        }
-
-        return (.normal, browserState.normalTabs.count)
     }
 
     private func calculateGapIndex(
@@ -4512,7 +4462,6 @@ extension TabStrip: TabStripDragDelegate {
         return TabStripMetricsSnapshot(
             pinnedContainerFrame: pinnedContainer.frame,
             normalContainerFrame: normalContainer.frame,
-            pinnedTabWidth: TabStripMetrics.PinnedTab.width,
             normalTabFrames: normalFrames,
             pinnedTabFrames: pinnedFrames,
             normalScrollOffset: currentScrollOffset,

@@ -11,7 +11,6 @@ app_path=$1
 contents_path="$app_path/Contents"
 macos_path="$contents_path/MacOS"
 info_plist_path="$contents_path/Info.plist"
-expected_bundle_identifier="com.phibrowser.opensource.Mac"
 
 if [ ! -d "$app_path" ] || [ ! -d "$macos_path" ] || [ ! -f "$info_plist_path" ]; then
     echo "error: OpenSource app product is incomplete: $app_path" >&2
@@ -19,10 +18,13 @@ if [ ! -d "$app_path" ] || [ ! -d "$macos_path" ] || [ ! -f "$info_plist_path" ]
 fi
 
 bundle_identifier=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$info_plist_path" 2>/dev/null || true)
-if [ "$bundle_identifier" != "$expected_bundle_identifier" ]; then
-    echo "error: OpenSource bundle identifier is '$bundle_identifier', expected '$expected_bundle_identifier'" >&2
-    exit 1
-fi
+case "$bundle_identifier" in
+    com.bulldf.mist|com.bulldf.mist.dev|com.bulldf.mist.tests) ;;
+    *)
+        echo "error: unexpected OpenSource bundle identifier '$bundle_identifier'" >&2
+        exit 1
+        ;;
+esac
 
 remove_component() {
     component_path=$1
@@ -104,4 +106,30 @@ do
     fi
 done
 
+/bin/sh "${SRCROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}/mist/scripts/rebrand_app.sh" "$app_path"
+
+# Sign the stub outside the bundle so its signature binds only its bytes and ID,
+# not Info.plist or the changing Phi.debug.dylib and other bundle resources.
+executable_name=${EXECUTABLE_NAME:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info_plist_path")}
+executable_path="$macos_path/$executable_name"
+executable_mode=$(/usr/bin/stat -f '%Lp' "$executable_path")
+signed_executable=$(/usr/bin/mktemp /tmp/mist-executable.XXXXXX)
+trap '/bin/rm -f "${signed_executable:?}" "${executable_path:?}.new"' 0
+/bin/cp "$executable_path" "$signed_executable"
+/usr/bin/codesign --force --sign - --identifier "$bundle_identifier" "$signed_executable"
+/bin/cp "$signed_executable" "$executable_path.new"
+/bin/chmod "$executable_mode" "$executable_path.new"
+# A new inode also prevents stale kernel signature caches for the test host.
+/bin/mv -f "$executable_path.new" "$executable_path"
+
+signature=$(/usr/bin/codesign -dv --verbose=4 "$app_path" 2>&1) || {
+    echo "error: could not read OpenSource executable signature" >&2
+    exit 1
+}
+if ! printf '%s\n' "$signature" | /usr/bin/grep -Fxq "Identifier=$bundle_identifier" ||
+   ! printf '%s\n' "$signature" | /usr/bin/grep -Fxq 'Sealed Resources=none' ||
+   [ -e "$contents_path/_CodeSignature" ]; then
+    echo "error: OpenSource executable must use bundle identifier $bundle_identifier without sealing the bundle" >&2
+    exit 1
+fi
 echo "Verified pruned OpenSource product"

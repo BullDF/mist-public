@@ -10,9 +10,6 @@ final class SpaceManagerDefaultSpaceProfileBindingTests: XCTestCase {
     func testGuestUsesObservedChromiumProfile() {
         XCTAssertEqual(
             SpaceManager.profileIdForDefaultSpaceCreation(
-                isGuest: true,
-                isGuestAccountPromotionInProgress: false,
-                isBoundToDefaultAccount: true,
                 observedNormalWindowProfileId: "Profile 1"
             ),
             "Profile 1"
@@ -22,47 +19,11 @@ final class SpaceManagerDefaultSpaceProfileBindingTests: XCTestCase {
     func testGuestWaitsUntilAChromiumProfileIsObserved() {
         XCTAssertNil(
             SpaceManager.profileIdForDefaultSpaceCreation(
-                isGuest: true,
-                isGuestAccountPromotionInProgress: false,
-                isBoundToDefaultAccount: true,
                 observedNormalWindowProfileId: nil
             )
         )
     }
 
-    func testGuestPromotionDoesNotCreateDefaultSpace() {
-        XCTAssertNil(
-            SpaceManager.profileIdForDefaultSpaceCreation(
-                isGuest: true,
-                isGuestAccountPromotionInProgress: true,
-                isBoundToDefaultAccount: true,
-                observedNormalWindowProfileId: "Profile 1"
-            )
-        )
-    }
-
-    func testGuestBindingDoesNotApplyToNonDefaultAccount() {
-        XCTAssertNil(
-            SpaceManager.profileIdForDefaultSpaceCreation(
-                isGuest: true,
-                isGuestAccountPromotionInProgress: false,
-                isBoundToDefaultAccount: false,
-                observedNormalWindowProfileId: "Profile 1"
-            )
-        )
-    }
-
-    func testSignedInAccessKeepsTheDefaultProfile() {
-        XCTAssertEqual(
-            SpaceManager.profileIdForDefaultSpaceCreation(
-                isGuest: false,
-                isGuestAccountPromotionInProgress: false,
-                isBoundToDefaultAccount: false,
-                observedNormalWindowProfileId: "Profile 1"
-            ),
-            LocalStore.defaultProfileId
-        )
-    }
 }
 
 @MainActor

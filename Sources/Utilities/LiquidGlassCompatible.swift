@@ -5,14 +5,6 @@
 
 import Foundation
 enum LiquidGlassCompatible {
-    static var cornerRadius: CGFloat {
-        return 12
-    }
-    
-    static var liquidGlassOrVisualEffectBgView: NSView {
-        return NSVisualEffectView()
-    }
-    
     static var webContentContainerCornerRadius: CGFloat {
         return SystemUtils.isMacOS26OrLater ? 14 : 6
     }

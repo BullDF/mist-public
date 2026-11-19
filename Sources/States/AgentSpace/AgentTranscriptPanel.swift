@@ -549,7 +549,16 @@ private struct TranscriptTextFeed: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSTextView.scrollableTextView()
+        let scroll = NSScrollView()
+        let documentView = AgentChatTextView(frame: .zero, textContainer: nil)
+        documentView.minSize = .zero
+        documentView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        documentView.isVerticallyResizable = true
+        documentView.isHorizontallyResizable = false
+        documentView.autoresizingMask = [.width]
+        scroll.documentView = documentView
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .noBorder
         scroll.drawsBackground = false
         scroll.hasHorizontalScroller = false
         if let textView = scroll.documentView as? NSTextView {
@@ -561,7 +570,7 @@ private struct TranscriptTextFeed: NSViewRepresentable {
             textView.delegate = context.coordinator
             textView.linkTextAttributes = [
                 .foregroundColor: NSColor.linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .underlineStyle: 0,
                 .cursor: NSCursor.pointingHand,
             ]
             context.coordinator.textView = textView
@@ -583,6 +592,7 @@ private struct TranscriptTextFeed: NSViewRepresentable {
         let selections = textView.selectedRanges
         let document = build()
         textView.textStorage?.setAttributedString(document)
+        (textView as? AgentChatTextView)?.updateCodeControls()
 
         // Restore a still-valid selection; the transcript is append-mostly,
         // so an in-progress selection keeps its place across new lines.
@@ -677,7 +687,6 @@ struct AgentTranscriptPanelView: View {
         static let errorNS = adaptiveNS(
             light: NSColor(red: 0.8, green: 0.22, blue: 0.17, alpha: 1),
             dark: NSColor(red: 1.0, green: 0.48, blue: 0.42, alpha: 1))
-        static let error = Color(nsColor: errorNS)
         // Claude Code's brand rust, used only by the mirrored Claude Code
         // status line (spinner + verb).
         static let claudeAccent = adaptive(
@@ -707,7 +716,6 @@ struct AgentTranscriptPanelView: View {
         /// status pill, hints) uses the UI font so controls read as controls,
         /// not as more console output.
         static let font = Font.system(size: 11.5, design: .monospaced)
-        static let fontSmall = Font.system(size: 10, design: .monospaced)
         static let fontUI = Font.system(size: 11)
         static let fontUISmall = Font.system(size: 10)
         // NSFont twins for the attributed transcript document.
@@ -715,7 +723,6 @@ struct AgentTranscriptPanelView: View {
         static let nsFontBold = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .bold)
         static let nsFontSemibold = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .semibold)
         static let nsFontSmall = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        static let nsFontSmallBold = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
         static let nsFontHeading = NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)
         static let nsFontSubheading = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .bold)
 
@@ -789,18 +796,6 @@ struct AgentTranscriptPanelView: View {
         if state.phase == .idle, state.shellsRunning == 0,
            (state.durationMs ?? 0) < 1000 { return nil }
         return state
-    }
-
-    private var activitySignature: String {
-        activityTasks.compactMap { task -> String? in
-            if let state = claudeActivity(for: task) {
-                return "\(task.taskId):claude:\(state.phase.rawValue)"
-                    + ":\(state.startTimestampMs ?? 0):\(state.durationMs ?? 0)"
-                    + ":\(state.shellsRunning)"
-            }
-            guard let state = codexActivity(for: task) else { return nil }
-            return "\(task.taskId):\(state.rawValue)"
-        }.joined(separator: "|")
     }
 
     var body: some View {
@@ -995,9 +990,9 @@ struct AgentTranscriptPanelView: View {
     /// code-agent glyph.
     private func badge(for taskId: String) -> AgentDriverBadge {
         if let task = liveTasks[taskId] {
-            return AgentDriverBadge.make(agentName: task.agentName, origin: task.origin)
+            return AgentDriverBadge.make(agentName: task.agentName)
         }
-        return AgentDriverBadge.make(agentName: "", origin: .cdp)
+        return AgentDriverBadge.make(agentName: "")
     }
 
     /// The driving agent's icon — a bundled brand imageset (template) when the
@@ -1222,92 +1217,15 @@ struct AgentTranscriptPanelView: View {
         }
     }
 
-    /// Markdown at block level, reusing the same parser as before the
-    /// text-view feed: headings, bullets, numbered lists, code, tables (as
-    /// monospace-aligned columns), and inline emphasis inside each.
     private func markdownRuns(_ text: String, color: NSColor) -> NSAttributedString {
-        let out = NSMutableAttributedString()
-        var first = true
-        for block in parseMarkdown(text) {
-            if !first { out.append(atr("\n", font: Palette.nsFont, color: color)) }
-            first = false
-            switch block {
-            case .blank:
-                break
-            case .heading(let level, let text):
-                out.append(inlineRuns(
-                    text,
-                    font: level <= 1 ? Palette.nsFontHeading : Palette.nsFontSubheading,
-                    color: Palette.textNS))
-            case .bullet(let text):
-                out.append(atr("• ", font: Palette.nsFont, color: Palette.dimNS))
-                out.append(inlineRuns(text, font: Palette.nsFont, color: color))
-            case .numbered(let marker, let text):
-                out.append(atr("\(marker) ", font: Palette.nsFont, color: Palette.dimNS))
-                out.append(inlineRuns(text, font: Palette.nsFont, color: color))
-            case .code(let line):
-                out.append(atr("    \(line)", font: Palette.nsFontSmall,
-                               color: Palette.dimNS))
-            case .paragraph(let text):
-                out.append(inlineRuns(text, font: Palette.nsFont, color: color))
-            case .table(let rows):
-                out.append(tableRuns(rows, color: color))
-            }
-        }
-        return out
-    }
-
-    /// Inline markdown (**bold**, *italic*, `code`) mapped onto attributed
-    /// runs; falls back to the literal string when parsing fails.
-    private func inlineRuns(_ text: String, font: NSFont, color: NSColor) -> NSAttributedString {
-        guard let parsed = try? AttributedString(
-            markdown: text,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
-        else { return atr(text, font: font, color: color) }
-        let out = NSMutableAttributedString()
-        for run in parsed.runs {
-            let piece = String(parsed[run.range].characters)
-            let intent = run.inlinePresentationIntent ?? []
-            var pieceFont = font
-            var pieceColor = color
-            if intent.contains(.stronglyEmphasized) {
-                pieceFont = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .bold)
-            }
-            if intent.contains(.code) { pieceColor = Palette.dimNS }
-            let attributed = NSMutableAttributedString(
-                attributedString: atr(piece, font: pieceFont, color: pieceColor,
-                                      oblique: intent.contains(.emphasized)))
-            if let link = run.link {
-                attributed.addAttribute(
-                    .link, value: link,
-                    range: NSRange(location: 0, length: attributed.length))
-            }
-            out.append(attributed)
-        }
-        return out
-    }
-
-    /// A GFM table as monospace-aligned columns: cells padded to their
-    /// column's width, header row bold.
-    private func tableRuns(_ rows: [[String]], color: NSColor) -> NSAttributedString {
-        var widths: [Int] = []
-        for row in rows {
-            for (index, cell) in row.enumerated() {
-                if index == widths.count { widths.append(0) }
-                widths[index] = max(widths[index], cell.count)
-            }
-        }
-        let out = NSMutableAttributedString()
-        for (index, row) in rows.enumerated() {
-            if index > 0 { out.append(atr("\n", font: Palette.nsFontSmall, color: color)) }
-            let padded = row.enumerated().map { column, cell in
-                cell.padding(toLength: widths[column], withPad: " ", startingAt: 0)
-            }.joined(separator: "  ")
-            out.append(atr(padded,
-                           font: index == 0 ? Palette.nsFontSmallBold : Palette.nsFontSmall,
-                           color: index == 0 ? Palette.textNS : color))
-        }
-        return out
+        MarkdownRenderer(
+            nsFont: Palette.nsFont,
+            nsFontHeading: Palette.nsFontHeading,
+            nsFontSubheading: Palette.nsFontSubheading,
+            nsFontSmall: Palette.nsFontSmall,
+            textNS: Palette.textNS,
+            dimNS: Palette.dimNS
+        ).markdownRuns(text, color: color)
     }
 
     private func glyphNS(for entry: AgentTranscriptEntry) -> (symbol: String, color: NSColor)? {
@@ -1543,89 +1461,6 @@ struct AgentTranscriptPanelView: View {
     }
 
     // MARK: - Markdown
-
-    private enum MDBlock {
-        case blank
-        case heading(Int, String)
-        case bullet(String)
-        case numbered(String, String)
-        case code(String)
-        case paragraph(String)
-        /// A GFM table; first row is the header (the separator row that
-        /// declared it a table is consumed by the parser, not stored).
-        case table([[String]])
-    }
-
-    private func parseMarkdown(_ text: String) -> [MDBlock] {
-        var out: [MDBlock] = []
-        var inCode = false
-        let lines = text.components(separatedBy: "\n")
-        var index = 0
-        while index < lines.count {
-            let raw = lines[index]
-            index += 1
-            let trimmed = raw.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") { inCode.toggle(); continue }  // drop fence lines
-            if inCode { out.append(.code(raw)); continue }
-            if trimmed.isEmpty { out.append(.blank); continue }
-            // GFM table: a pipe row whose NEXT line is the |---|---| separator
-            // starts one; body rows are the following pipe rows. Without the
-            // separator, pipe-bearing lines stay ordinary paragraphs.
-            if trimmed.contains("|"), index < lines.count,
-               Self.isTableSeparator(lines[index].trimmingCharacters(in: .whitespaces)) {
-                var rows = [Self.tableCells(trimmed)]
-                index += 1  // consume the separator line
-                while index < lines.count {
-                    let row = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard row.contains("|"), !row.isEmpty else { break }
-                    rows.append(Self.tableCells(row))
-                    index += 1
-                }
-                out.append(.table(rows))
-                continue
-            }
-            if trimmed.hasPrefix("#") {
-                let hashes = trimmed.prefix(while: { $0 == "#" })
-                if hashes.count <= 6,
-                   trimmed.dropFirst(hashes.count).first == " " {
-                    out.append(.heading(hashes.count,
-                        trimmed.dropFirst(hashes.count).trimmingCharacters(in: .whitespaces)))
-                    continue
-                }
-            }
-            if let r = trimmed.range(of: "^[-*+][ \t]+", options: .regularExpression) {
-                out.append(.bullet(String(trimmed[r.upperBound...])))
-                continue
-            }
-            if let r = trimmed.range(of: "^[0-9]+\\.[ \t]+", options: .regularExpression) {
-                out.append(.numbered(
-                    String(trimmed[trimmed.startIndex..<r.upperBound])
-                        .trimmingCharacters(in: .whitespaces),
-                    String(trimmed[r.upperBound...])))
-                continue
-            }
-            out.append(.paragraph(raw))
-        }
-        return out
-    }
-
-    /// `| --- | :---: |` and friends — dashes with optional alignment colons,
-    /// pipes and spaces, nothing else.
-    private static func isTableSeparator(_ s: String) -> Bool {
-        guard s.contains("-"), s.contains("|") else { return false }
-        return s.range(of: #"^\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?$"#,
-                       options: .regularExpression) != nil
-    }
-
-    /// Splits a pipe row into trimmed cells, dropping the empty edges a
-    /// leading/trailing pipe produces.
-    private static func tableCells(_ s: String) -> [String] {
-        var cells = s.components(separatedBy: "|")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-        if cells.first?.isEmpty == true { cells.removeFirst() }
-        if cells.last?.isEmpty == true { cells.removeLast() }
-        return cells
-    }
 
     private var promptRow: some View {
         VStack(alignment: .leading, spacing: 4) {

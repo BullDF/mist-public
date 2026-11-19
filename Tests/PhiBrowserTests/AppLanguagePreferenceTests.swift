@@ -12,13 +12,10 @@ final class AppLanguagePreferenceTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        let suiteName = "AppLanguagePreferenceTests.\(UUID().uuidString)"
-        defaultsSuiteName = suiteName
-        defaults = UserDefaults(suiteName: defaultsSuiteName)!
+        (defaults, defaultsSuiteName) = makeTestDefaults()
     }
 
     override func tearDown() {
-        defaults.removePersistentDomain(forName: defaultsSuiteName)
         defaultsSuiteName = nil
         defaults = nil
         super.tearDown()
@@ -71,9 +68,6 @@ final class AppLanguagePreferenceTests: XCTestCase {
             .japanese: "ja",
             .french: "fr",
             .german: "de",
-            .dutch: "nl",
-            .spanish: "es",
-            .korean: "ko",
         ]
 
         XCTAssertEqual(SupportedAppLanguage.allCases.count, expectedIdentifiers.count)
@@ -85,19 +79,16 @@ final class AppLanguagePreferenceTests: XCTestCase {
         }
     }
 
-    func testLanguagePickerUsesFixedAlphabeticalOrder() {
+    func testLanguagePickerUsesFixedOrderWithEastAsianLanguagesFirst() {
         XCTAssertEqual(
             SupportedAppLanguage.pickerOrder,
             [
                 .simplifiedChinese,
                 .traditionalChinese,
-                .dutch,
+                .japanese,
                 .english,
                 .french,
                 .german,
-                .japanese,
-                .korean,
-                .spanish,
             ]
         )
         XCTAssertEqual(
@@ -106,9 +97,8 @@ final class AppLanguagePreferenceTests: XCTestCase {
         )
     }
 
-    func testLanguagePickerTitleCasesFrenchAndSpanishAutonyms() {
+    func testLanguagePickerTitleCasesFrenchAutonym() {
         XCTAssertEqual(SupportedAppLanguage.french.displayName, "Français")
-        XCTAssertEqual(SupportedAppLanguage.spanish.displayName, "Español")
     }
 
     func testExplicitLanguagePreservesAndRestoresSystemPerAppLanguage() {
@@ -235,69 +225,6 @@ final class AppLanguagePreferenceTests: XCTestCase {
                 applicationDomainName: defaultsSuiteName
             )
         )
-    }
-
-    func testExplicitPreferenceResolvesToCanonicalLanguage() {
-        XCTAssertEqual(
-            PhiPreferences.GeneralSettings.resolvedAppLanguage(
-                for: .language(.simplifiedChinese),
-                from: defaults,
-                applicationDomainName: defaultsSuiteName,
-                systemPreferredLanguages: ["fr"]
-            ),
-            .simplifiedChinese
-        )
-    }
-
-    func testSystemPreferenceResolvesAppSpecificLanguage() {
-        defaults.set(["zh-Hans"], forKey: "AppleLanguages")
-
-        XCTAssertEqual(
-            PhiPreferences.GeneralSettings.resolvedAppLanguage(
-                for: .system,
-                from: defaults,
-                applicationDomainName: defaultsSuiteName,
-                systemPreferredLanguages: ["fr"]
-            ),
-            .simplifiedChinese
-        )
-    }
-
-    func testSystemPreferenceFallsBackToSupportedSystemLanguage() {
-        XCTAssertEqual(
-            PhiPreferences.GeneralSettings.resolvedAppLanguage(
-                for: .system,
-                from: defaults,
-                applicationDomainName: defaultsSuiteName,
-                systemPreferredLanguages: ["pt-BR", "es-MX"]
-            ),
-            .spanish
-        )
-    }
-
-    func testActiveProcessLanguageUsesBundleLocalizationIdentifiers() {
-        XCTAssertEqual(
-            PhiPreferences.GeneralSettings.activeProcessAppLanguage(
-                preferredLocalizations: ["zh_CN"]
-            ),
-            .simplifiedChinese
-        )
-        XCTAssertEqual(
-            PhiPreferences.GeneralSettings.activeProcessAppLanguage(
-                preferredLocalizations: ["es"]
-            ),
-            .spanish
-        )
-    }
-
-    func testLanguageChangePropertiesContainOnlyFromAndTo() {
-        let properties = AppLanguageAnalytics.changeProperties(
-            from: .system,
-            to: .language(.japanese)
-        )
-
-        XCTAssertEqual(properties, ["from": "system", "to": "ja"])
-        XCTAssertNil(properties["source"])
     }
 
     private var persistentAppleLanguages: [String]? {

@@ -12,32 +12,25 @@ class OmniBoxViewController: NSViewController {
     private var cancellables = Set<AnyCancellable>()
     
     weak var actionDelegate: OmniBoxActionDelegate?
+    // Embedded hosts own their chrome and can route keyboard submits through one seam.
+    private let isEmbeddedComposer: Bool
+    var onSubmit: ((Bool, Int?) -> Void)?
     
     // Published property for content size changes
     @Published var contentSize: NSSize = NSSize(width: boxWidth, height: 57)
     static let boxWidth = 680.0
     // MARK: - UI Components
     
+    /// The floating panel is the kit's input card, the New Tab composer's own, lifted over the page; the composer
+    /// embeds the box in its card, so it draws none.
+    private lazy var surface: MistCardView? = isEmbeddedComposer ? nil : MistCardView(style: .floatingInput)
+
     private lazy var backgroundContainer: NSView = {
         let view = NSView()
         view.wantsLayer = true
-        view.phiLayer?.setBackgroundColor(.contentOverlayBackground)
-        view.layer?.cornerRadius = 14
-        view.layer?.cornerCurve = .continuous
-        view.layer?.borderWidth = 1
-        view.phiLayer?.borderColor = NSColor.black.withAlphaComponent(0.2).cgColor <> NSColor.white.withAlphaComponent(0.2).cgColor
-        view.clipsToBounds = true
         return view
     }()
-    
-    private lazy var shadow: NSShadow = {
-        let shadow = NSShadow()
-        shadow.shadowColor = .omniboxShadow
-        shadow.shadowOffset = NSSize(width: 0, height: -20)
-        shadow.shadowBlurRadius = 50
-        return shadow
-    }()
-    
+
     private lazy var inputeAreaContainer: NSView = {
         let view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -50,7 +43,7 @@ class OmniBoxViewController: NSViewController {
         let view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
         view.wantsLayer = true
-        view.phiLayer?.setBackgroundColor(.separator)
+        view.phiLayer?.setBackgroundColor(.mistHairline)
         return view
     }()
     
@@ -59,7 +52,8 @@ class OmniBoxViewController: NSViewController {
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: NSLocalizedString("addressBar.searchIcon.initialAccessibilityLabel", value: "Search", comment: "Address bar - Initial accessibility description for the search icon"))
         imageView.imageScaling = .scaleProportionallyDown
-        imageView.contentTintColor = NSColor.secondaryLabelColor
+        // Tinted like Drifter's composer; only template images (symbols, app glyphs) take it.
+        imageView.phi.setContentTintColor(.textSecondary)
         return imageView
     }()
     
@@ -67,12 +61,14 @@ class OmniBoxViewController: NSViewController {
         let field = OmniBoxTextField()
         field.translatesAutoresizingMaskIntoConstraints = false
         field.omniBoxDelegate = self
+        if isEmbeddedComposer {
+            field.textFiled.font = .systemFont(ofSize: 16)
+        }
         return field
     }()
     
     private lazy var suggestionView: OmniBoxSuggestionView = {
         let view = OmniBoxSuggestionView()
-        view.showsSwitchToTabHint = showsSwitchToTabHint
         view.translatesAutoresizingMaskIntoConstraints = false
         view.delegate = self
         view.isHidden = true
@@ -80,27 +76,22 @@ class OmniBoxViewController: NSViewController {
         return view
     }()
 
-    private let searchEngineBadge = NSView()
-    private let searchEngineLabel = NSTextField(labelWithString: "")
-    private let keywordHintLabel = NSTextField(labelWithString: "")
-    
     private var suggestionViewHeightConstraint: NSLayoutConstraint?
     
-    private let baseHeight: CGFloat = 57
+    private var baseHeight: CGFloat { isEmbeddedComposer ? 64 : 57 }
     private let suggestionRowHeight: CGFloat = 44
     private let maxVisibleSuggestions: Int = 5
     private let maxSuggestionHeight: CGFloat = 226
     
     var openningFromCurrenTab: Bool { viewModel.opennedFromCurrentTab }
-    var showsSwitchToTabHintForTesting: Bool { showsSwitchToTabHint }
     
     private weak var browserState: BrowserState?
-    private let showsSwitchToTabHint: Bool
     // MARK: - Initialization
-    init(viewModel: OmniBoxViewModel, state: BrowserState?) {
+    init(viewModel: OmniBoxViewModel, state: BrowserState?, isEmbeddedComposer: Bool = false) {
         self.viewModel = viewModel
-        showsSwitchToTabHint = state?.isKioskWindow != true
+        self.isEmbeddedComposer = isEmbeddedComposer
         super.init(nibName: nil, bundle: nil)
+        contentSize = NSSize(width: Self.boxWidth, height: baseHeight)
     }
     
     required init?(coder: NSCoder) {
@@ -110,14 +101,14 @@ class OmniBoxViewController: NSViewController {
     // MARK: - Lifecycle
     
     override func loadView() {
-        view = NSView()
+        view = RootView()
     }
-    
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.clipsToBounds = true
+        // The floating card's shadows reach past the view; the card clips its own content.
+        view.clipsToBounds = isEmbeddedComposer
         view.wantsLayer = true
-        view.shadow = shadow
         setupViews()
         setupBindings()
         
@@ -147,29 +138,19 @@ class OmniBoxViewController: NSViewController {
     // MARK: - Setup
     
     private func setupViews() {
-        view.addSubview(backgroundContainer)
-        
+        if let surface {
+            view.addSubview(surface)
+            surface.snp.makeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+            surface.contentView.addSubview(backgroundContainer)
+        } else {
+            view.addSubview(backgroundContainer)
+        }
+
         backgroundContainer.addSubview(inputeAreaContainer)
         inputeAreaContainer.addSubview(iconImageView)
         inputeAreaContainer.addSubview(textField)
-        inputeAreaContainer.addSubview(searchEngineBadge)
-        searchEngineBadge.addSubview(searchEngineLabel)
-        inputeAreaContainer.addSubview(keywordHintLabel)
-        searchEngineBadge.wantsLayer = true
-        searchEngineBadge.clipsToBounds = false
-        searchEngineBadge.layer?.cornerRadius = 12
-        searchEngineBadge.layer?.shadowOffset = .zero
-        searchEngineBadge.layer?.shadowRadius = 7
-        searchEngineBadge.layer?.shadowOpacity = 0.2
-        searchEngineLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        searchEngineLabel.textColor = .white
-        searchEngineLabel.lineBreakMode = .byTruncatingTail
-        searchEngineLabel.maximumNumberOfLines = 1
-        keywordHintLabel.font = .systemFont(ofSize: 11)
-        keywordHintLabel.textColor = .secondaryLabelColor
-        keywordHintLabel.lineBreakMode = .byTruncatingTail
-        searchEngineBadge.isHidden = true
-        keywordHintLabel.isHidden = true
         backgroundContainer.addSubview(suggestionView)
         backgroundContainer.addSubview(separatorView)
         setupConstraints()
@@ -194,7 +175,7 @@ class OmniBoxViewController: NSViewController {
         }
         
         iconImageView.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(16)
+            make.leading.equalToSuperview().offset(isEmbeddedComposer ? 22 : 16)
             make.centerY.equalToSuperview()
             make.width.height.equalTo(16)
         }
@@ -205,22 +186,6 @@ class OmniBoxViewController: NSViewController {
             make.centerY.equalTo(iconImageView)
         }
 
-        searchEngineBadge.snp.makeConstraints { make in
-            make.leading.equalTo(iconImageView.snp.trailing).offset(8)
-            make.centerY.equalTo(iconImageView)
-            make.height.equalTo(24)
-            make.width.lessThanOrEqualTo(160)
-        }
-        searchEngineLabel.snp.makeConstraints { make in
-            make.leading.trailing.equalToSuperview().inset(10)
-            make.centerY.equalToSuperview()
-        }
-        keywordHintLabel.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().inset(12)
-            make.centerY.equalTo(iconImageView)
-            make.width.lessThanOrEqualTo(200)
-        }
-        
         suggestionView.snp.makeConstraints { make in
             make.top.equalTo(inputeAreaContainer.snp.bottom)
             make.leading.trailing.equalTo(inputeAreaContainer)
@@ -237,16 +202,6 @@ class OmniBoxViewController: NSViewController {
     }
     
     private func setupBindings() {
-        viewModel.$selectedSearchEngine.combineLatest(
-            viewModel.$keywordSearchHint,
-            viewModel.state.$selectedIndex.combineLatest(viewModel.state.$suggestions),
-            viewModel.$isSearchEngineSpaceShortcutEnabled
-        )
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] engine, hint, _, _ in
-                self?.updateKeywordSearchUI(engine: engine, hint: hint)
-            }
-            .store(in: &cancellables)
         viewModel.state.$inputText
             .sink { [weak self] text in
                 if self?.textField.stringValue != text {
@@ -300,25 +255,6 @@ class OmniBoxViewController: NSViewController {
     
     // MARK: - Public Methods
 
-    func prepareForPresentation() {
-        viewModel.refreshSearchEngineSpaceShortcut()
-    }
-
-    func handleKeywordSearchSpaceKeyDown(_ event: NSEvent) -> Bool {
-        guard event.keyCode == 49, event.characters == " ",
-              event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
-              let window = textField.window, event.window === window,
-              let editor = textField.textFiled.currentEditor() as? NSTextView,
-              window.firstResponder === editor,
-              !editor.hasMarkedText(),
-              editor.selectedRange.length == 0,
-              editor.selectedRange.location == (editor.string as NSString).length,
-              viewModel.acceptKeywordSearchWithSpace() else { return false }
-        textField.updateDisplayText(viewModel.state.inputText)
-        textField.selectToEnd()
-        return true
-    }
-    
     func setActionDelegate(_ delegate: OmniBoxActionDelegate) {
         self.actionDelegate = delegate
         viewModel.delegate = delegate
@@ -327,17 +263,9 @@ class OmniBoxViewController: NSViewController {
     func focusTextField() {
         view.window?.makeFirstResponder(textField)
     }
-    
+
     func reset() {
         viewModel.reset()
-    }
-
-    func updateStatus(with tab: Tab) {
-        viewModel.updateStatus(with: tab)
-    }
-
-    func updateStatusForGroupOverview() {
-        viewModel.updateStatusForGroupOverview()
     }
 
     func setCurrentTabForNavigation(_ tab: Tab?) {
@@ -356,59 +284,35 @@ class OmniBoxViewController: NSViewController {
         viewModel.updateStatus(with: tab, suppressAutomaticSearch: suppressAutomaticSearch)
     }
 
-    func confirmSelection(commandKeyPressed: Bool = false) {
-        viewModel.handleEnterPressed(commandKeyPressed: commandKeyPressed)
+    func confirmSelection(commandKeyPressed: Bool = false, suggestionIndex: Int? = nil) {
+        if let suggestionIndex {
+            viewModel.clickSuggestionAtIndex(suggestionIndex)
+        } else {
+            viewModel.handleEnterPressed(commandKeyPressed: commandKeyPressed)
+        }
     }
     
     // MARK: - Private Methods
 
-    private func updateKeywordSearchUI(engine: OmniBoxKeywordSearchEngine?, hint: OmniBoxKeywordSearchEngine?) {
-        textField.updateSearchPlaceholder(engineName: engine?.name)
-        if engine != nil {
-            iconImageView.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-        }
-        searchEngineLabel.stringValue = engine?.name ?? ""
-        let accent = engine?.accentColor ?? .themeColor
-        searchEngineBadge.phiLayer?.setBackgroundColor(accent)
-        searchEngineBadge.phiLayer?.shadowColor = accent.cgColorMapperOptional
-        searchEngineBadge.isHidden = engine == nil
-        keywordHintLabel.stringValue = hint.map {
-            if viewModel.canAcceptKeywordSearchWithSpace {
-                return String(format: NSLocalizedString("addressBar.keywordSearch.tabOrSpaceHint", value: "Tab or Space to search %@", comment: "Address bar - Hint shown when Tab or Space can select the highlighted search engine; %@ is the engine name"), $0.name)
-            }
-            return String(format: NSLocalizedString("addressBar.keywordSearch.tabHint", value: "Tab to search %@", comment: "Address bar - Hint to press Tab to search with the named search engine"), $0.name)
-        } ?? ""
-        keywordHintLabel.isHidden = hint == nil || engine != nil
-        textField.snp.remakeConstraints { make in
-            make.leading.equalTo(engine == nil ? iconImageView.snp.trailing : searchEngineBadge.snp.trailing).offset(8)
-            if !keywordHintLabel.isHidden {
-                make.trailing.equalTo(keywordHintLabel.snp.leading).offset(-8)
-            } else {
-                make.trailing.equalToSuperview().inset(12)
-            }
-            make.centerY.equalTo(iconImageView)
-        }
-    }
-    
     private func updateSuggestions(_ suggestions: [OmniBoxSuggestion]) {
+        suggestionView.switchesToOpenTabByDefault = viewModel.switchesToOpenTabByDefault
         suggestionView.updateSuggestions(suggestions, selectedIndex: viewModel.state.selectedIndex, dataSourceChanged: true)
     }
     
     private func updateSelectIndex(_ selectedIndex: Int, canUseTempString: Bool = false) {
-        guard viewModel.selectedSearchEngine == nil else { return }
         let suggestions = viewModel.state.suggestions
         suggestionView.updateSuggestions(suggestions, selectedIndex: selectedIndex, dataSourceChanged: false)
         if selectedIndex >= 0, selectedIndex < suggestions.count {
             let suggestion = suggestions[selectedIndex]
             AppLogDebug("Auto-completed: \(suggestion)")
             var canUseTempString = canUseTempString
-            if selectedIndex == 0, suggestion.allowedToBeDefault {
+            if selectedIndex == OmniBoxHistoryMerger.selectedIndex(in: suggestions, preserving: nil), suggestion.allowedToBeDefault {
                 canUseTempString = false
             }
             textField.updateSelection(inlineCompletString: suggestion.inlineCompletionString,
                                       fillString: suggestion.fillIntoEdit,
                                       canUseTempString: canUseTempString,
-                                      inlineCompletionEnabled: !viewModel.preventInlineCompletion && viewModel.keywordSearchHint == nil)
+                                      inlineCompletionEnabled: !viewModel.preventInlineCompletion)
             
             OmniSuggestionIconProvier.updateImage(for: iconImageView,
                                                   with: suggestion,
@@ -450,28 +354,25 @@ class OmniBoxViewController: NSViewController {
             contentSize = newContentSize
         }
     }
-    
-    func getContentSize() -> NSSize {
-        let totalHeight = baseHeight + (suggestionViewHeightConstraint?.constant ?? 0) + 1
-        return NSSize(width: Self.boxWidth, height: totalHeight)
+
+    /// Gives the box's field the kit's caret and selection while it edits, inline completions included, instead of the
+    /// macOS accent color's: in the floating panel and in the New Tab composer alike.
+    private final class RootView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            MistFieldEditors.claim(self, owns: { [weak self] editor in
+                guard let self, let field = editor.delegate as? NSView else { return false }
+                return field.isDescendant(of: self)
+            })
+        }
     }
 }
 
 // MARK: - OmniBoxTextFieldDelegate
 
 extension OmniBoxViewController: OmniBoxTextFieldDelegate {
-    func omniBoxTextFieldDidReceiveTabEvent(_ textField: OmniBoxTextField) -> Bool {
-        guard viewModel.acceptKeywordSearch() else { return false }
-        textField.updateDisplayText(viewModel.state.inputText)
-        textField.selectToEnd()
-        return true
-    }
-
-    func omniBoxTextFieldDidReceiveEmptyBackspaceEvent(_ textField: OmniBoxTextField) -> Bool {
-        guard viewModel.exitKeywordSearchIfEmpty() else { return false }
-        textField.updateDisplayText(viewModel.state.inputText)
-        textField.selectToEnd()
-        return true
+    func omniBoxTextFieldDidReceiveTabEvent(_ textField: OmniBoxTextField, backward: Bool) -> Bool {
+        return !backward
     }
 
     func omniBoxTextFieldDidReceiveMoveDownEvent(_ textField: OmniBoxTextField) -> Bool {
@@ -485,7 +386,11 @@ extension OmniBoxViewController: OmniBoxTextFieldDelegate {
     }
     
     func omniBoxTextFieldDidReceiveEnterEvent(_ textField: OmniBoxTextField, commandKeyPressed: Bool) -> Bool {
-        viewModel.handleEnterPressed(commandKeyPressed: commandKeyPressed)
+        if let onSubmit {
+            onSubmit(commandKeyPressed, nil)
+        } else {
+            confirmSelection(commandKeyPressed: commandKeyPressed)
+        }
         return true
     }
     
@@ -507,7 +412,11 @@ extension OmniBoxViewController: OmniBoxTextFieldDelegate {
 
 extension OmniBoxViewController: OmniBoxSuggestionViewDelegate {
     func suggestionView(_ suggestionView: OmniBoxSuggestionView, didClickSuggestion suggestion: OmniBoxSuggestion, at index: Int) {
-        viewModel.clickSuggestionAtIndex(index)
+        if let onSubmit {
+            onSubmit(NSEvent.modifierFlags.contains(.command), index)
+        } else {
+            viewModel.clickSuggestionAtIndex(index)
+        }
     }
     
     func suggestionView(_ suggestionView: OmniBoxSuggestionView, didDeleteSuggestion suggestion: OmniBoxSuggestion, at index: Int) {

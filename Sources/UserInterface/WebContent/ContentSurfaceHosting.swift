@@ -103,8 +103,9 @@ final class ContentSurfaceHosting {
 
     /// The stacking order is the web views' back-to-front order below the
     /// container, so docked DevTools, mounted below its page, stays below it.
-    /// Only the current tab's views are mounted there, so the web views of
-    /// two tabs never overlap. A page lifted into content fullscreen takes
+    /// Background agent pages live in a zero-sized clipping holder at the
+    /// bottom of the container, so they paint with an empty surface clip.
+    /// A page lifted into content fullscreen takes
     /// the surface's view with it into an overlay over the window
     /// (`WebContentViewController.applyContentFullscreenState`): its web
     /// views are enumerated below that overlay, above every web view left in
@@ -124,11 +125,12 @@ final class ContentSurfaceHosting {
                 _:frameInWindow:clipInWindow:topLeftRadius:topRightRadius:bottomRightRadius:bottomLeftRadius:zOrder:)))
         }
         let sendsPlacement = takesPlacement == true
+        browserState.browserAgentPreview?.reconcile()
         if surfaceView?.superview !== sentUnder {
             sent.removeAll()
             sentUnder = surfaceView?.superview
         }
-        let tabs = browserState.tabs + browserState.aiChatTabs.values
+        let tabs = browserState.tabs
         var wrappers = tabs.compactMap(\.webContentWrapper)
         if let placeholder = browserState.placeholderWrapper {
             wrappers.append(placeholder)
@@ -233,7 +235,7 @@ final class ContentSurfaceHosting {
     /// its clip rect), so a page overrunning its host keeps the host's
     /// corners. A corner that reaches none stays square: one next to docked
     /// DevTools, the top of a page under the address bar.
-    private static func hosting(of webView: NSView, zOrder: Int, below container: NSView,
+    static func hosting(of webView: NSView, zOrder: Int, below container: NSView,
                                 windowHeight: CGFloat) -> Hosting {
         var hosting = Hosting(zOrder: zOrder)
         let frame = webView.convert(webView.bounds, to: nil)
@@ -287,18 +289,23 @@ final class ContentSurfaceHosting {
     /// The rect in the window that `view` clips a page to. The extension
     /// side panel slides by Core Animation: the views around the page take
     /// their end frame at once and only their layers move, while the page's
-    /// card follows the page / AI Chat split frame by frame, laid out for
-    /// the next display (a frame ahead of the layers' presented state). On
-    /// screen the card stays inside them, so mid-slide such a view clips to
-    /// the wider of its frame and its layer's presented width, leaving the
-    /// card to bound the page. The slide moves no left edge and changes no
-    /// height.
+    /// card follows the page / AI Chat split frame by frame. The card is
+    /// meant to stay inside them, but it moves on the main thread's clock:
+    /// laid out for the next display, a frame ahead of the layers' presented
+    /// state, it falls behind that state while the main thread misses a
+    /// frame. So mid-slide such a view clips to the widest it is in its
+    /// slide (its frame, its layer's width at the slide's start or as
+    /// presented), leaving the card to bound the page. The slide moves no
+    /// left edge and changes no height.
     private static func clippingRect(of view: NSView) -> CGRect {
         var rect = view.convert(view.bounds, to: nil)
-        if let layer = view.layer, layer.animationKeys() != nil,
-           let presented = layer.presentation() {
-            rect.size.width += max(0, presented.bounds.width - layer.bounds.width)
+        guard let layer = view.layer, layer.animationKeys() != nil else { return rect }
+        var widest = layer.presentation()?.bounds.width ?? 0
+        if let slide = layer.animation(forKey: "bounds") as? CABasicAnimation,
+           let start = slide.fromValue as? NSValue {
+            widest = max(widest, start.rectValue.width)
         }
+        rect.size.width += max(0, widest - layer.bounds.width)
         return rect
     }
 }

@@ -29,6 +29,7 @@ enum TabMultiSelectionMenu {
                 comment: "Tab multi-selection context menu - copy links of all selected tabs"),
             action: #selector(TabMultiSelectionMenuController.copyLinks),
             keyEquivalent: "")
+        applyShortcut(.PHI_COPY_URL, to: copyLinksItem)
         items.append(copyLinksItem)
 
         if context.canOpenAsSplit {
@@ -41,49 +42,6 @@ enum TabMultiSelectionMenu {
         }
 
         items.append(.separator())
-
-        // Bookmark writes are unavailable off-the-record, so incognito
-        // windows drop the whole bookmark block instead of disabling it.
-        if !browserState.isIncognito {
-            let addToBookmarkItem = NSMenuItem(
-                title: NSLocalizedString("common.tabMultiSelectionContextMenu.addToBookmarksAction", value: "Add to Bookmark",
-                    comment: "Tab multi-selection context menu - add selected tabs to the root bookmark location"),
-                action: #selector(TabMultiSelectionMenuController.addToBookmarkBar),
-                keyEquivalent: "")
-            addToBookmarkItem.target = controller
-            items.append(addToBookmarkItem)
-
-            let addToFolderItem = NSMenuItem(
-                title: NSLocalizedString("common.tabMultiSelectionContextMenu.addToFolderSubmenu", value: "Add to Folder",
-                    comment: "Tab multi-selection context menu - submenu to add selected tabs to a bookmark folder"),
-                action: nil,
-                keyEquivalent: "")
-            let bookmarkSubmenu = NSMenu()
-
-            let folders = browserState.bookmarkManager.getAllFolderWithHierarchy()
-            let folderCount = buildFolderMenuItems(from: folders,
-                                                   into: bookmarkSubmenu,
-                                                   controller: controller,
-                                                   browserState: browserState)
-            if folderCount > 0 {
-                bookmarkSubmenu.addItem(.separator())
-            }
-
-            let newFolderItem = NSMenuItem(
-                title: NSLocalizedString("common.tabMultiSelectionContextMenu.newFolderAction", value: "New Folder",
-                    comment: "Tab multi-selection context menu - bookmark selected tabs into a newly created folder"),
-                action: #selector(TabMultiSelectionMenuController.createNewFolder),
-                keyEquivalent: "")
-            newFolderItem.target = controller
-            bookmarkSubmenu.addItem(newFolderItem)
-
-            addToFolderItem.submenu = bookmarkSubmenu
-            items.append(addToFolderItem)
-
-            if !context.containsBookmarkFolder {
-                items.append(.separator())
-            }
-        }
 
         if !context.containsBookmarkFolder {
             let createGroupItem = NSMenuItem(
@@ -102,10 +60,8 @@ enum TabMultiSelectionMenu {
                     keyEquivalent: "")
                 let groupSubmenu = NSMenu()
                 for group in orderedGroups {
-                    let memberCount = browserState.normalTabs
-                        .lazy.filter { $0.groupToken == group.token }.count
                     let entry = NSMenuItem(
-                        title: group.displayTitle(memberCount: memberCount),
+                        title: group.displayTitle,
                         action: #selector(TabMultiSelectionMenuController.addToExistingGroup(_:)),
                         keyEquivalent: "")
                     entry.target = controller
@@ -116,6 +72,17 @@ enum TabMultiSelectionMenu {
                 addToGroup.submenu = groupSubmenu
                 items.append(addToGroup)
             }
+        }
+
+        // New window only: unlike the single-tab menu, there is no "Move
+        // Tabs to Another Window" submenu.
+        if context.showsCloseItems {
+            let moveToNewWindowItem = NSMenuItem(
+                title: NSLocalizedString("common.tabMultiSelectionContextMenu.moveToNewWindowAction", value: "Move Tabs to New Window",
+                    comment: "Tab multi-selection context menu - Move all selected tabs into one newly created window"),
+                action: #selector(TabMultiSelectionMenuController.moveSelectedToNewWindow),
+                keyEquivalent: "")
+            items.append(moveToNewWindowItem)
         }
 
         appendSpaceTransferMenuItems(into: &items,
@@ -129,8 +96,8 @@ enum TabMultiSelectionMenu {
                 title: NSLocalizedString("common.tabMultiSelectionContextMenu.closeTabsAction", value: "Close Tabs",
                     comment: "Tab multi-selection context menu - close all selected tabs"),
                 action: #selector(TabMultiSelectionMenuController.closeSelected),
-                keyEquivalent: "w")
-            closeItem.keyEquivalentModifierMask = [.command]
+                keyEquivalent: "")
+            applyShortcut(.IDC_CLOSE_TAB, to: closeItem)
             items.append(closeItem)
 
             let closeOtherItem = NSMenuItem(
@@ -138,6 +105,7 @@ enum TabMultiSelectionMenu {
                     comment: "Tab multi-selection context menu - close all tabs except the selected ones"),
                 action: #selector(TabMultiSelectionMenuController.closeOtherSelected),
                 keyEquivalent: "")
+            applyShortcut(.IDC_WINDOW_CLOSE_OTHER_TABS, to: closeOtherItem)
             items.append(closeOtherItem)
         }
 
@@ -149,8 +117,7 @@ enum TabMultiSelectionMenu {
             let deleteItem = NSMenuItem(
                 title: deleteBookmarksTitle(for: bookmarkDeletion),
                 action: #selector(TabMultiSelectionMenuController.deleteSelectedBookmarks),
-                keyEquivalent: "d")
-            deleteItem.keyEquivalentModifierMask = [.command]
+                keyEquivalent: "")
             items.append(deleteItem)
         }
 
@@ -162,6 +129,13 @@ enum TabMultiSelectionMenu {
             menu.addItem(item)
         }
         return true
+    }
+
+    /// Shows the shortcut currently set for `command`; each command acts on
+    /// the whole selection, as the item does.
+    private static func applyShortcut(_ command: CommandWrapper, to item: NSMenuItem) {
+        item.tag = command.rawValue
+        Shortcuts.updateShortcut(for: item)
     }
 
     private static func deleteBookmarksTitle(
@@ -185,40 +159,6 @@ enum TabMultiSelectionMenu {
             ? NSLocalizedString("common.tabMultiSelectionContextMenu.deleteSingleItemAction", value: "Delete %d Item", comment: "Tab multi-selection context menu - delete selected bookmark item")
             : NSLocalizedString("common.tabMultiSelectionContextMenu.deleteMultipleItemsAction", value: "Delete %d Items", comment: "Tab multi-selection context menu - delete selected bookmark items")
         return String(format: format, context.totalCount)
-    }
-
-    @MainActor
-    private static func buildFolderMenuItems(from folders: [Bookmark],
-                                             into menu: NSMenu,
-                                             controller: TabMultiSelectionMenuController,
-                                             browserState: BrowserState) -> Int {
-        var addedCount = 0
-        for folder in folders {
-            guard browserState.canBookmarkMultiSelection(into: folder) else {
-                continue
-            }
-            let folderItem = NSMenuItem(
-                title: folder.title,
-                action: #selector(TabMultiSelectionMenuController.addToFolder(_:)),
-                keyEquivalent: "")
-            folderItem.target = controller
-            folderItem.representedObject = folder
-
-            if folder.hasChildren {
-                let submenu = NSMenu()
-                let childCount = buildFolderMenuItems(from: folder.children,
-                                                      into: submenu,
-                                                      controller: controller,
-                                                      browserState: browserState)
-                if childCount > 0 {
-                    folderItem.submenu = submenu
-                }
-            }
-
-            menu.addItem(folderItem)
-            addedCount += 1
-        }
-        return addedCount
     }
 
     @MainActor
@@ -311,30 +251,12 @@ final class TabMultiSelectionMenuController: NSObject {
     @objc func openSelectedAsSplit() { browserState?.openMultiSelectedTabsAsSplit() }
     @objc func closeSelected() { browserState?.closeMultiSelectedTabs() }
     @objc func closeOtherSelected() { browserState?.closeTabsOutsideMultiSelection() }
-    @objc func addToBookmarkBar() { browserState?.bookmarkMultiSelectedTabs(into: nil) }
-    @objc func addToFolder(_ sender: NSMenuItem) {
-        guard let folder = sender.representedObject as? Bookmark else { return }
-        browserState?.bookmarkMultiSelectedTabs(into: folder)
-    }
-    @objc func createNewFolder() {
-        guard let browserState,
-              let window = SpaceSessionControllersManager.shared.activeWindowController?.window else { return }
-        // Snapshot the selection now; the modal dialog clears it before the
-        // completion handler runs.
-        let tabs = browserState.orderedMultiSelectedTabsIncludingSplitPartners
-        let bookmarkGuids = browserState.orderedMultiSelectedBookmarkMoveGuids
-        EditPinnedTabPresenter.presentModal(mode: .newFolder, from: window) { result in
-            guard let name = result.title, !name.isEmpty else { return }
-            browserState.bookmarkSelectionSnapshot(tabs: tabs,
-                                                   bookmarkGuids: bookmarkGuids,
-                                                   intoNewFolderNamed: name)
-        }
-    }
     @objc func createTabGroup() { browserState?.groupMultiSelectedTabs() }
     @objc func addToExistingGroup(_ sender: NSMenuItem) {
         guard let token = sender.representedObject as? String else { return }
         browserState?.addMultiSelectedTabs(toGroup: token)
     }
+    @objc func moveSelectedToNewWindow() { browserState?.moveMultiSelectedTabsToNewWindow() }
     @objc func moveSelectedToSpace(_ sender: NSMenuItem) {
         guard let targetSpaceId = sender.representedObject as? String else { return }
         browserState?.moveMultiSelection(toSpaceId: targetSpaceId)
@@ -361,13 +283,6 @@ final class TabMultiSelectionMenuController: NSObject {
                 return false
             }
             return !browserState.multiSelectionTargets(forAddingToGroup: token).isEmpty
-        }
-
-        if menuItem.action == #selector(addToFolder(_:)) {
-            guard let folder = menuItem.representedObject as? Bookmark else {
-                return false
-            }
-            return browserState.canBookmarkMultiSelection(into: folder)
         }
 
         if menuItem.action == #selector(openSelectedAsSplit) {

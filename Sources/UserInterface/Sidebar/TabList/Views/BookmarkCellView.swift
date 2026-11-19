@@ -50,7 +50,8 @@ private final class BookmarkCellViewState {
     var showsTabPreview = false
 }
 
-private final class VerticallyCenteredBookmarkTextFieldCell: NSTextFieldCell {
+/// Keeps a borderless rename field's text, and its live editor, vertically centered.
+final class VerticallyCenteredTextFieldCell: NSTextFieldCell {
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
         adjustedRect(forBounds: super.drawingRect(forBounds: rect))
     }
@@ -295,7 +296,7 @@ class BookmarkCellView: SidebarCellView, TabPreviewInteractionCancelling {
     private func setupEditField() {
         // Borderless NSTextField still draws text a little high by default, so
         // use a custom cell to keep the visible text and live editor centered.
-        editField.cell = VerticallyCenteredBookmarkTextFieldCell()
+        editField.cell = VerticallyCenteredTextFieldCell()
         editField.font = NSFont.systemFont(ofSize: 13)
         editField.textColor = .labelColor
         editField.isEditable = true

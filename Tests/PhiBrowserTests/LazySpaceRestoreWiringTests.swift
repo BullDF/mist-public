@@ -9,7 +9,6 @@ import XCTest
 /// The lazy-restore wiring hangs its decisions off pure rules, pinned here
 /// the way the classifier and the snapshot writer already are:
 ///
-///   * whether a reopen arms the eager filter at all (`armedEagerWindowIds`)
 ///     — the switch, the framework probe, and the two empty-record refusals;
 ///   * which live slots a landed snapshot write adopts into the saved-entry
 ///     system (`slotAdoptionPlan`) — a minted group without an entry used to
@@ -70,80 +69,6 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
         SpaceManager.RestoreWindowClassification(
             eagerWindowIds: eager, ghostSpaceIdsByWindowId: ghosts,
             closedGroupWindowIds: closedGroups)
-    }
-
-    func testArmingRequiresTheSwitch() {
-        XCTAssertNil(SpaceManager.armedEagerWindowIds(
-            featureEnabled: false,
-            bridgeSupportsLazyRestore: true,
-            hasSnapshotEntries: true,
-            classification: Self.classification(eager: [1], ghosts: [2: "space-b"])
-        ))
-    }
-
-    func testArmingRequiresTheSelectorFamily() {
-        // An older framework cannot materialize or drop what this reopen
-        // would park — so nothing may park.
-        XCTAssertNil(SpaceManager.armedEagerWindowIds(
-            featureEnabled: true,
-            bridgeSupportsLazyRestore: false,
-            hasSnapshotEntries: true,
-            classification: Self.classification(eager: [1], ghosts: [2: "space-b"])
-        ))
-    }
-
-    func testArmingRequiresASnapshotEntry() {
-        // No record means nothing to gate a replay with — the one shape
-        // where the legacy full restore is the only possible answer.
-        XCTAssertNil(SpaceManager.armedEagerWindowIds(
-            featureEnabled: true,
-            bridgeSupportsLazyRestore: true,
-            hasSnapshotEntries: false,
-            classification: Self.classification(eager: [], ghosts: [:])
-        ))
-    }
-
-    func testArmingWithARecordNamingNoWindowStaysUnarmed() {
-        // Entries exist but every window fell in the neither set (Incognito
-        // or agent Spaces): this side cannot speak for the session file, and
-        // an empty ARMED set would park the whole session instead.
-        XCTAssertNil(SpaceManager.armedEagerWindowIds(
-            featureEnabled: true,
-            bridgeSupportsLazyRestore: true,
-            hasSnapshotEntries: true,
-            classification: Self.classification(eager: [], ghosts: [:])
-        ))
-    }
-
-    func testArmingThatParksNothingStillArmsWithItsEagerSet() {
-        // The gate's reason to exist: the session file can hold records the
-        // snapshot has lost, and only an armed replay parks them. A
-        // classification that parked nothing must still arm, or those records
-        // replay in full and mint a window apiece (tickets 21/25). This is
-        // the deliberate reversal of the earlier "parks nothing stays
-        // unarmed" pin.
-        XCTAssertEqual(
-            SpaceManager.armedEagerWindowIds(
-                featureEnabled: true,
-                bridgeSupportsLazyRestore: true,
-                hasSnapshotEntries: true,
-                classification: Self.classification(eager: [1, 2], ghosts: [:])
-            ),
-            [1, 2].map { NSNumber(value: $0) }
-        )
-    }
-
-    func testArmedEagerSetIsSortedAscending() {
-        XCTAssertEqual(
-            SpaceManager.armedEagerWindowIds(
-                featureEnabled: true,
-                bridgeSupportsLazyRestore: true,
-                hasSnapshotEntries: true,
-                classification: Self.classification(
-                    eager: [55, 7, 102], ghosts: [9: "space-b"])
-            ),
-            [7, 55, 102].map { NSNumber(value: $0) }
-        )
     }
 
     func testArmedPlanCarriesTheClosedGroupSetSorted() {
@@ -682,6 +607,7 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             SpaceManager.steeredFallbackMintSpaceId(
                 resolved: "clear",
                 ghostSpaceIds: ["ghosted"],
+                liveSpaceIds: [],
                 candidates: Self.candidates,
                 profileId: "p1"),
             "clear"
@@ -695,9 +621,37 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             SpaceManager.steeredFallbackMintSpaceId(
                 resolved: "ghosted",
                 ghostSpaceIds: ["ghosted"],
+                liveSpaceIds: [],
                 candidates: Self.candidates,
                 profileId: "p1"),
             "clear"
+        )
+    }
+
+    func testMintOnAGhostSpaceWithALiveWindowStandsUnchanged() {
+        // The Space's window in another slot is live, so the parked sibling
+        // is doubled already: steering off it would only move every new
+        // window of the run to an unrelated Space.
+        XCTAssertEqual(
+            SpaceManager.steeredFallbackMintSpaceId(
+                resolved: "ghosted",
+                ghostSpaceIds: ["ghosted"],
+                liveSpaceIds: ["ghosted", "clear"],
+                candidates: Self.candidates,
+                profileId: "p1"),
+            "ghosted"
+        )
+    }
+
+    func testAGhostSpaceWithALiveWindowIsAClearAlternative() {
+        XCTAssertEqual(
+            SpaceManager.steeredFallbackMintSpaceId(
+                resolved: "clear",
+                ghostSpaceIds: ["ghosted", "clear"],
+                liveSpaceIds: ["ghosted"],
+                candidates: Self.candidates,
+                profileId: "p1"),
+            "ghosted"
         )
     }
 
@@ -708,6 +662,7 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             SpaceManager.steeredFallbackMintSpaceId(
                 resolved: "ghosted",
                 ghostSpaceIds: ["ghosted", "clear"],
+                liveSpaceIds: [],
                 candidates: Self.candidates,
                 profileId: ""),
             "other-profile"
@@ -722,6 +677,7 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             SpaceManager.steeredFallbackMintSpaceId(
                 resolved: "ghosted",
                 ghostSpaceIds: ["ghosted", "clear"],
+                liveSpaceIds: [],
                 candidates: Self.candidates,
                 profileId: "p1"),
             "ghosted"
@@ -736,6 +692,7 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             SpaceManager.steeredFallbackMintSpaceId(
                 resolved: "ghosted",
                 ghostSpaceIds: ["ghosted"],
+                liveSpaceIds: [],
                 candidates: [],
                 profileId: "p1"),
             "ghosted"
@@ -749,6 +706,7 @@ final class LazySpaceRestoreWiringTests: XCTestCase {
             SpaceManager.steeredFallbackMintSpaceId(
                 resolved: "ghosted",
                 ghostSpaceIds: ["ghosted"],
+                liveSpaceIds: [],
                 candidates: [
                     (spaceId: "ghosted", profileId: "p1", isSwitchTarget: true),
                 ],

@@ -155,10 +155,34 @@ extension Shortcuts {
     /// These commands always use product defaults, including with legacy overrides.
     static let fixedShortcutCommands: Set<CommandWrapper> = [.IDC_EXIT]
 
+    /// Mist's default differs from Chromium's built-in, so it is always exported.
+    static let productDefaultCommands: Set<CommandWrapper> = [.IDC_ZOOM_PLUS, .IDC_DUPLICATE_TAB]
+
     /// Product policy: add commands here to release all their keyboard bindings.
     /// This takes precedence over defaults and saved overrides. It does not
     /// disable the key combinations themselves or non-keyboard command entry points.
     static let disabledShortcutCommands: Set<CommandWrapper> = [
+        // Johnny dropped these defaults (#66); their commands stay available without a key.
+        .IDC_SELECT_TAB_0, .IDC_SELECT_TAB_1, .IDC_SELECT_TAB_2, .IDC_SELECT_TAB_3,
+        .IDC_SELECT_TAB_4, .IDC_SELECT_TAB_5, .IDC_SELECT_TAB_6, .IDC_SELECT_TAB_7,
+        .IDC_SELECT_LAST_TAB, .IDC_SELECT_NEXT_TAB, .IDC_SELECT_PREVIOUS_TAB,
+        .IDC_MOVE_TAB_NEXT, .IDC_MOVE_TAB_PREVIOUS,
+        .IDC_MINIMIZE_WINDOW, .IDC_HIDE_APP, .IDS_HIDE_OTHERS_MAC,
+        .IDC_SHOW_DOWNLOADS, .IDC_CLEAR_BROWSING_DATA,
+        .IDC_BACK, .IDC_FORWARD, .IDC_HOME, .IDC_STOP, .IDC_FOCUS_SEARCH,
+        .IDC_SHOW_HISTORY, .IDC_BOOKMARK_ALL_TABS,
+        .PHI_SELECT_NEXT_SPACE, .PHI_SELECT_PREVIOUS_SPACE,
+        .PHI_SELECT_SPACE_0, .PHI_SELECT_SPACE_1, .PHI_SELECT_SPACE_2,
+        .PHI_SELECT_SPACE_3, .PHI_SELECT_SPACE_4, .PHI_SELECT_SPACE_5,
+        .PHI_SELECT_SPACE_6, .PHI_SELECT_SPACE_7, .PHI_SELECT_SPACE_8,
+        .PHI_NEW_INCOGNITO_SPACE, .PHI_NEW_CONVERSATION,
+        .IDS_EDIT_USE_SELECTION_MAC, .IDS_EDIT_SHOW_SPELLING_GRAMMAR_MAC,
+        .IDS_EDIT_CHECK_DOCUMENT_MAC, .IDC_FULLSCREEN, .PHI_TOGGLE_READER,
+        .IDC_VIEW_SOURCE, .IDC_DEV_TOOLS_INSPECT, .IDC_DEV_TOOLS_CONSOLE,
+        .PHI_SHARE_PAGE, .IDC_BASIC_PRINT,
+        // Chromium's ⌃⌘C, ⌃⌘W, ⌃⌘P, ⌃⌘Z and ⌃⌘X tab group accelerators.
+        .IDC_ADD_NEW_TAB_TO_GROUP, .IDC_CLOSE_TAB_GROUP, .IDC_CREATE_NEW_TAB_GROUP,
+        .IDC_FOCUS_PREV_TAB_GROUP, .IDC_FOCUS_NEXT_TAB_GROUP,
         // These actions remain available from menus without keyboard bindings.
         .IDC_IMPORT_SETTINGS,
         .IDC_NEW_TAB_TO_RIGHT,
@@ -175,25 +199,45 @@ extension Shortcuts {
         .IDC_CYCLE_TO_PREV_TAB,
     ]
 
+    /// Native main-menu actions whose keys Mist releases, including AppKit-inserted rows.
+    private static let releasedNativeShortcutActions: Set<String> = [
+        "hide:", "hideOtherApplications:", "performMiniaturize:", "miniaturizeAll:",
+        "showGuessPanel:", "checkSpelling:", "toggleFullScreen:",
+    ]
+
+    static func releasesNativeShortcut(on item: NSMenuItem) -> Bool {
+        if isShortcutDisabled(for: item.tag) { return true }
+        guard let action = item.action.map(NSStringFromSelector) else { return false }
+        return releasedNativeShortcutActions.contains(action)
+            || (action == "terminate:" && item.keyEquivalentModifierMask.contains(.option))
+    }
+
+    static func suppressReleasedNativeShortcut(on item: NSMenuItem) {
+        guard releasesNativeShortcut(on: item) else { return }
+        // A detached copy recovers a declared key AppKit hid because of a collision.
+        let declared = item.keyEquivalent.isEmpty && item.view == nil
+            ? (item.copy() as? NSMenuItem ?? item) : item
+        guard !declared.keyEquivalent.isEmpty else { return }
+        // Preserve modifiers so empty primary/Option-alternate rows remain paired.
+        item.keyEquivalent = ""
+    }
+
     static func isShortcutDisabled(for commandID: Int) -> Bool {
         CommandWrapper(rawValue: commandID).map(disabledShortcutCommands.contains) ?? false
     }
 
     /// Shortcut groups shown in the settings view.
-    /// Actual visibility is filtered by `ShortcutsViewModel.hiddenGroups`.
     enum Group: String, CaseIterable {
         case app = "App"
         case file = "File"
         case edit = "Edit"
         case view = "View"
-        case history = "History"
+        case apps = "Apps"
         case bookmarks = "Bookmarks"
         case window = "Window"
         case tab = "Tab"
-        case spaces = "Spaces"
-        case kiosk = "Kiosk"
-        case help = "Help"
-        
+        case peek = "Peek"
+
         var title: String {
             switch self {
             case .app:
@@ -204,26 +248,22 @@ extension Shortcuts {
                 return NSLocalizedString("settings.shortcuts.group.edit", value: "Edit", comment: "Shortcuts settings - Section title for editing commands")
             case .view:
                 return NSLocalizedString("settings.shortcuts.group.view", value: "View", comment: "Shortcuts settings - Section title for view commands")
-            case .history:
-                return NSLocalizedString("settings.shortcuts.group.history", value: "History", comment: "Shortcuts settings - Section title for browsing history commands")
+            case .apps:
+                return NSLocalizedString("settings.shortcuts.group.apps", value: "Apps", comment: "Shortcuts settings - Section title for the Apps menu's commands, which open Mist's apps")
             case .bookmarks:
                 return NSLocalizedString("settings.shortcuts.group.bookmarks", value: "Bookmarks", comment: "Shortcuts settings - Section title for bookmark commands")
             case .window:
                 return NSLocalizedString("settings.shortcuts.group.window", value: "Window", comment: "Shortcuts settings - Section title for window commands")
             case .tab:
                 return NSLocalizedString("settings.shortcuts.group.tab", value: "Tab", comment: "Shortcuts settings - Section title for tab commands")
-            case .spaces:
-                return NSLocalizedString("settings.shortcuts.group.spaces", value: "Spaces", comment: "Shortcuts settings - Section title for Space commands")
-            case .kiosk:
-                return NSLocalizedString("settings.shortcuts.group.kiosk", value: "Kiosk & Peek", comment: "Shortcuts settings - Section title for Kiosk and Peek commands")
-            case .help:
-                return NSLocalizedString("settings.shortcuts.group.help", value: "Help", comment: "Shortcuts settings - Section title for help commands")
+            case .peek:
+                return NSLocalizedString("settings.shortcuts.group.peek", value: "Peek", comment: "Shortcuts settings - Section title for Peek commands")
             }
         }
-        
+
         var subtitle: String? {
-            guard self == .kiosk else { return nil }
-            return NSLocalizedString("settings.shortcuts.group.kiosk.subtitle", value: "Only work in Peek or Kiosk windows.", comment: "Shortcuts settings - Subtitle explaining that this group's shortcuts apply to Peek or Kiosk windows")
+            guard self == .peek else { return nil }
+            return NSLocalizedString("settings.shortcuts.group.peek.subtitle", value: "Only work in Peek.", comment: "Shortcuts settings - Subtitle explaining that this group's shortcuts apply to Peek")
         }
 
         var commands: [CommandWrapper] {
@@ -231,11 +271,10 @@ extension Shortcuts {
             case .app:
                 return [.IDC_OPTIONS]
             case .file:
-                var commands: [CommandWrapper] = [.IDC_NEW_TAB,
+                return [.IDC_NEW_TAB,
+                        .PHI_ALTERNATE_NEW_TAB,
                         .IDC_NEW_WINDOW,
                         .IDC_NEW_INCOGNITO_WINDOW,
-                        .PHI_NEW_KIOSK_WINDOW,
-                        .PHI_NEW_INCOGNITO_SPACE,
                         .IDC_RESTORE_TAB,
                         .IDC_OPEN_FILE,
                         .IDC_FOCUS_LOCATION,
@@ -243,76 +282,42 @@ extension Shortcuts {
                         .IDC_CLOSE_TAB,
                         .PHI_CAPTURE_FULL_PAGE,
                         .PHI_CAPTURE_AREA,
-                        .PHI_SHARE_PAGE,
-                        .PHI_SAVE_FOR_LATER,
                         .IDC_PRINT]
-                if !SaveForLaterService.featureEnabled {
-                    commands.removeAll { $0 == .PHI_SAVE_FOR_LATER }
-                }
-                return commands
             case .edit:
                 return [.PHI_COPY_URL,
                         .IDC_FIND,
                         .IDC_FIND_NEXT,
                         .IDC_FIND_PREVIOUS,
-                        .IDS_EDIT_USE_SELECTION_MAC,
-                        .IDS_EDIT_JUMP_TO_SELECTION_MAC,
-                        .IDC_FOCUS_SEARCH]
+                        .IDS_EDIT_JUMP_TO_SELECTION_MAC]
             case .view:
-                return [.IDC_STOP,
-                        .IDC_RELOAD,
+                return [.IDC_RELOAD,
                         .IDC_RELOAD_BYPASSING_CACHE,
                         .IDC_ZOOM_NORMAL,
                         .IDC_ZOOM_PLUS,
                         .IDC_ZOOM_MINUS,
-                        .IDC_VIEW_SOURCE,
                         .IDC_DEV_TOOLS,
-                        .IDC_DEV_TOOLS_INSPECT,
-                        .IDC_DEV_TOOLS_CONSOLE,
                         .PHI_TOGGLE_SIDEBAR,
                         .PHI_TOGGLE_CHATBAR,
-                        .PHI_TOGGLE_READER,
-                        .PHI_NEW_CONVERSATION]
-            case .history:
-                return [.IDC_HOME,
-                        .IDC_BACK,
-                        .IDC_FORWARD,
-                        .IDC_SHOW_HISTORY]
+                        .PHI_SWITCH_CHAT_PANEL_AND_TAB,
+                        .PHI_DRIFTER_MODEL_MENU,
+                        .PHI_DRIFTER_EFFORT_MENU,
+                        .PHI_DRIFTER_PREVIOUS_MARKER,
+                        .PHI_DRIFTER_NEXT_MARKER]
+            case .apps:
+                // App homes in `MistApps.all` order, then the new-chat action.
+                return [.PHI_OPEN_CLIPBOARD, .PHI_OPEN_DRIFTER, .PHI_OPEN_MAIL, .PHI_NEW_DRIFTER_CHAT]
             case .bookmarks:
                 return [.IDC_SHOW_BOOKMARK_BAR]
             case .window:
-                return [.IDC_MANAGE_EXTENSIONS,
-                        .IDC_SHOW_DOWNLOADS]
+                return [.IDC_MANAGE_EXTENSIONS, .PHI_MAKE_PRIMARY_WINDOW]
             case .tab:
                 return [.PHI_TAB_SWITCHER_FORWARD,
                         .PHI_TAB_SWITCHER_BACKWARD,
-                        .IDC_NEW_TAB_TO_RIGHT,
-                        .IDC_SELECT_NEXT_TAB,
-                        .IDC_SELECT_PREVIOUS_TAB,
-                        .IDC_MOVE_TAB_PREVIOUS,
-                        .IDC_MOVE_TAB_NEXT,
-                        .IDC_SELECT_TAB_0,
-                        .IDC_SELECT_TAB_1,
-                        .IDC_SELECT_TAB_2,
-                        .IDC_SELECT_TAB_3,
-                        .IDC_SELECT_TAB_4,
-                        .IDC_SELECT_TAB_5,
-                        .IDC_SELECT_TAB_6,
-                        .IDC_SELECT_TAB_7,
-                        .IDC_SELECT_LAST_TAB,
                         .IDC_DUPLICATE_TAB,
                         .IDC_WINDOW_MUTE_SITE,
-                        .PHI_FARRINGDON_TOGGLE,
                         .IDC_TAB_SEARCH]
-            case .spaces:
-                return [.PHI_SELECT_NEXT_SPACE,
-                        .PHI_SELECT_PREVIOUS_SPACE] + CommandWrapper.spaceSelectionCommands
-            case .kiosk:
-                return [.PHI_KIOSK_OPEN_IN_SPACE, .PHI_KIOSK_CHOOSE_SPACE]
-//            case .help:
-//                return [.IDC_FEEDBACK,
-//                        .IDC_HELP_PAGE_VIA_MENU]
-            default: return []
+            case .peek:
+                return [.PHI_PEEK_OPEN_IN_SPACE]
             }
         }
 
@@ -320,36 +325,24 @@ extension Shortcuts {
         /// in available menus, live bindings, or saved overrides. These do not register defaults.
         var discoveredCommands: [CommandWrapper] {
             switch self {
-            case .app:
-                return [.IDC_IMPORT_SETTINGS]
             case .file:
-                return [.IDC_SAVE_PAGE, .IDC_BASIC_PRINT]
-            case .view:
-                return [.IDC_FULLSCREEN]
-            case .history:
-                return [.IDC_CLEAR_BROWSING_DATA]
+                return [.IDC_SAVE_PAGE]
             case .bookmarks:
-                return [.IDC_BOOKMARK_THIS_TAB, .IDC_BOOKMARK_ALL_TABS, .IDC_SHOW_BOOKMARK_MANAGER]
+                return [.IDC_BOOKMARK_THIS_TAB, .IDC_SHOW_BOOKMARK_MANAGER]
             case .window:
                 return [.IDC_TASK_MANAGER]
             case .tab:
-                return [.IDC_NEW_SPLIT_TAB,
-                        .IDC_WINDOW_PIN_TAB,
+                return [.IDC_WINDOW_PIN_TAB,
                         .IDC_WINDOW_CLOSE_OTHER_TABS,
                         .IDC_WINDOW_CLOSE_TABS_TO_RIGHT,
                         .IDC_MOVE_TAB_TO_NEW_WINDOW,
-                        .IDC_CREATE_NEW_TAB_GROUP,
-                        .IDC_ADD_NEW_TAB_TO_GROUP,
-                        .IDC_WINDOW_GROUP_TAB,
-                        .IDC_FOCUS_PREV_TAB_GROUP,
-                        .IDC_FOCUS_NEXT_TAB_GROUP,
-                        .IDC_CLOSE_TAB_GROUP]
+                        .IDC_WINDOW_GROUP_TAB]
             default:
                 return []
             }
         }
     }
-    
+
     static var configuration: ShortcutConfiguration = {
         var configuration = ShortcutConfiguration()
         do {
@@ -359,7 +352,7 @@ extension Shortcuts {
         }
         return configuration
     }()
-    
+
     static func key(for command: CommandWrapper) -> ShortcutsKey? {
         guard !disabledShortcutCommands.contains(command) else { return nil }
         if let override = overrideState(for: command.rawValue) {
@@ -368,7 +361,7 @@ extension Shortcuts {
         }
         return DefaultShortcuts[command]
     }
-    
+
     static func overrideState(for commandId: Int) -> ShortcutOverride? {
         if let command = CommandWrapper(rawValue: commandId), fixedShortcutCommands.contains(command) {
             return nil
@@ -383,9 +376,16 @@ extension Shortcuts {
         if isShortcutDisabled(for: commandID) {
             return .disabled
         }
+        if let command = CommandWrapper(rawValue: commandID), productDefaultCommands.contains(command),
+           let key = DefaultShortcuts[command] {
+            guard let override = overrideState(for: commandID) else { return .custom(key) }
+            // An exclusion record inherits Mist's default, not Chromium's built-in key.
+            if override.inheritsDefaults { return override.excludes(key) ? .disabled : .custom(key) }
+            return override
+        }
         return overrideState(for: commandID)
     }
-    
+
     /// A missing override restores the default; `.disabled` explicitly clears it.
     @discardableResult
     static func setOverride(
@@ -401,14 +401,14 @@ extension Shortcuts {
             try $0.set(override, for: command.rawValue, updating: conflicts, at: customShortcutsFileURL)
         }
     }
-    
+
     @discardableResult
     static func reloadOverrides() -> Result<Void, Error> {
         changeConfiguration {
             try $0.reload(from: customShortcutsFileURL)
         }
     }
-    
+
     @discardableResult
     static func restoreOverrides() -> Result<Void, Error> {
         changeConfiguration {
@@ -435,7 +435,7 @@ extension Shortcuts {
         NotificationCenter.default.post(name: .shortcutsDidChange, object: nil)
         return result
     }
-    
+
     static func isOverridden(_ command: CommandWrapper) -> Bool {
         overrideState(for: command.rawValue) != nil
     }
@@ -569,20 +569,13 @@ extension Shortcuts {
                                    source: source == "hidden" ? .hidden : .webContents)
         }
     }
-    
+
     // MARK: - Persistence
     private static var customShortcutsFileURL: URL {
-        if let account = AccountController.shared.account {
-            let path = account.userDataStorage.path
-            let url = URL(fileURLWithPath: path)
-            return url.appendingPathComponent("CustomShortcuts.json")
-        } else {
-            let path = FileSystemUtils.phiBrowserDataDirectory()
-            let url = URL(fileURLWithPath: path)
-            return url.appendingPathComponent("CustomShortcuts.json")
-        }
+        let path = FileSystemUtils.phiBrowserDataDirectory()
+        return URL(fileURLWithPath: path).appendingPathComponent("CustomShortcuts.json")
     }
-    
+
 }
 extension ShortcutsKey {
     private var displayModifiers: NSEvent.ModifierFlags {
@@ -668,21 +661,17 @@ extension CommandWrapper {
     }
 
     var shortcutScope: ShortcutBinding.Scope {
-        if Shortcuts.Group.kiosk.commands.contains(self) { return .kiosk }
-        if self == .IDC_CLOSE_TAB { return [.browser, .kiosk] }
-        return isUnavailableInKiosk ? .browser : .all
-    }
-
-    /// Commands without an action in a Kiosk window. Shared by dispatch and
-    /// shortcut conflict detection so inactive commands do not reserve keys.
-    var isUnavailableInKiosk: Bool {
-        if spaceSelectionIndex != nil { return true }
+        if Shortcuts.Group.peek.commands.contains(self) { return .peek }
+        if self == .IDC_CLOSE_TAB { return [.browser, .peek] }
+        if spaceSelectionIndex != nil { return .browser }
         switch self {
         case .IDC_OPEN_FILE, .IDC_SHOW_BOOKMARK_BAR, .PHI_TOGGLE_SIDEBAR,
-             .PHI_FARRINGDON_TOGGLE,
+             .PHI_MAKE_PRIMARY_WINDOW, .PHI_NEW_DRIFTER_CHAT,
              .IDC_TAB_SEARCH, .IDC_DUPLICATE_TAB, .IDC_WINDOW_PIN_TAB,
              .IDC_DEV_TOOLS, .IDC_DEV_TOOLS_INSPECT, .IDC_DEV_TOOLS_CONSOLE,
-             .PHI_TOGGLE_CHATBAR, .PHI_NEW_CONVERSATION,
+             .PHI_TOGGLE_CHATBAR, .PHI_SWITCH_CHAT_PANEL_AND_TAB, .PHI_NEW_CONVERSATION, .PHI_OPEN_CLIPBOARD, .PHI_OPEN_DRIFTER, .PHI_OPEN_MAIL,
+             .PHI_DRIFTER_MODEL_MENU, .PHI_DRIFTER_EFFORT_MENU,
+             .PHI_DRIFTER_PREVIOUS_MARKER, .PHI_DRIFTER_NEXT_MARKER,
              .IDC_SELECT_PREVIOUS_TAB, .IDC_SELECT_NEXT_TAB,
              .IDC_CYCLE_TO_NEXT_TAB, .IDC_CYCLE_TO_PREV_TAB,
              .IDC_SELECT_LAST_TAB, .PHI_TAB_SWITCHER_FORWARD,
@@ -691,9 +680,9 @@ extension CommandWrapper {
              .IDC_SELECT_TAB_0, .IDC_SELECT_TAB_1, .IDC_SELECT_TAB_2,
              .IDC_SELECT_TAB_3, .IDC_SELECT_TAB_4, .IDC_SELECT_TAB_5,
              .IDC_SELECT_TAB_6, .IDC_SELECT_TAB_7:
-            return true
+            return .browser
         default:
-            return false
+            return .all
         }
     }
 
@@ -701,11 +690,11 @@ extension CommandWrapper {
         let title: String
         let keywords: [String]
     }
-    
+
     private static let presentationOverrides: [CommandWrapper: Presentation] = [
         .IDC_OPTIONS: .init(title: "Settings", keywords: ["preferences", "options", "config"]),
-        .IDC_HIDE_APP: .init(title: "Hide Phi", keywords: ["hide", "application"]),
-        .IDC_EXIT: .init(title: "Quit Phi", keywords: ["quit", "exit"]),
+        .IDC_HIDE_APP: .init(title: "Hide Mist", keywords: ["hide", "application"]),
+        .IDC_EXIT: .init(title: "Quit Mist", keywords: ["quit", "exit"]),
         .IDC_CLEAR_BROWSING_DATA: .init(title: "Clear Browsing Data", keywords: ["clear data", "privacy"]),
         .IDC_NEW_TAB: .init(title: "New Tab", keywords: ["tab", "open tab"]),
         .IDC_NEW_WINDOW: .init(title: "New Window", keywords: ["window"]),
@@ -731,8 +720,7 @@ extension CommandWrapper {
         .IDC_BOOKMARK_ALL_TABS: .init(title: "Bookmark All Tabs", keywords: ["bookmark all"]),
         .IDC_SHOW_DOWNLOADS: .init(title: "Downloads", keywords: ["downloads"]),
         .IDC_TAB_SEARCH: .init(title: "Tab Search", keywords: ["search tabs"]),
-        .IDC_FEEDBACK: .init(title: "Send Feedback", keywords: ["feedback", "support"]),
-        .IDC_HELP_PAGE_VIA_MENU: .init(title: "Phi Help", keywords: ["help", "docs"]),
+        .IDC_HELP_PAGE_VIA_MENU: .init(title: "Mist Help", keywords: ["help", "docs"]),
         .IDC_MANAGE_EXTENSIONS: .init(title: "Extensions", keywords: ["extensions"]),
         .IDC_WINDOW_PIN_TAB: .init(title: "Pin Tab", keywords: ["pintab"]),
         .IDC_WINDOW_GROUP_TAB: .init(title: "Group Tab", keywords: ["grouptab"]),
@@ -741,21 +729,28 @@ extension CommandWrapper {
         .IDC_WINDOW_CLOSE_TABS_TO_RIGHT: .init(title: "Close Tabs to the Right", keywords: ["closetabstotheright"]),
         .IDC_MOVE_TAB_TO_NEW_WINDOW: .init(title: "Move Tab to New Window", keywords: ["movetabtonewwindow"]),
         .PHI_TOGGLE_SIDEBAR: .init(title: "Toggle Sidebar", keywords: ["togglesidebar"]),
-        .PHI_TOGGLE_CHATBAR: .init(title: "Toggle Chatbar", keywords: ["togglechatbar","ai"]),
+        .PHI_TOGGLE_CHATBAR: .init(title: "Toggle Chat Panel", keywords: ["togglechatbar", "chat panel", "ai"]),
+        .PHI_SWITCH_CHAT_PANEL_AND_TAB: .init(title: "Switch Between Chat Panel and Tab", keywords: ["chat panel", "chat tab", "open as tab", "show in chat panel", "drifter", "switch", "chat"]),
         .PHI_TAB_SWITCHER_FORWARD: .init(title: "Show Tab Switcher", keywords: ["tab switcher", "forward"]),
         .PHI_TAB_SWITCHER_BACKWARD: .init(title: "Show Tab Switcher(Reverse)", keywords: ["tab switcher", "backward"]),
-        .PHI_NEW_CONVERSATION: .init(title: "New Conversation", keywords: ["new conversation", "new chat", "ai", "chat"]),
-        .PHI_FARRINGDON_TOGGLE: .init(title: "Organize Tabs with AI", keywords: ["organize tabs", "tidy tabs", "group tabs", "clean", "farringdon", "ai"]),
+        .PHI_NEW_CONVERSATION: .init(title: "New Chat", keywords: ["new conversation", "new chat", "chat panel", "ai", "chat"]),
         .PHI_COPY_URL: .init(title: "Copy URL", keywords: ["copy url", "copy link", "url"]),
         .PHI_TOGGLE_READER: .init(title: "Toggle Reader View", keywords: ["reader", "reader view", "reading", "article", "distraction free"]),
-        .PHI_NEW_KIOSK_WINDOW: .init(title: "New Kiosk Window", keywords: ["new kiosk window", "kiosk", "window"]),
         .PHI_NEW_INCOGNITO_SPACE: .init(title: "New Incognito Space", keywords: ["new incognito space", "incognito", "private", "space"]),
         .PHI_SHARE_PAGE: .init(title: "Share Page", keywords: ["share", "share page", "share link", "airdrop", "send"]),
+        .PHI_ALTERNATE_NEW_TAB: .init(title: "Alternate New Tab", keywords: ["new tab", "alternate", "omnibox", "new tab page"]),
         .PHI_CAPTURE_FULL_PAGE: .init(title: "Capture Full Page", keywords: ["screenshot", "capture", "full page", "image"]),
         .PHI_CAPTURE_AREA: .init(title: "Capture Area", keywords: ["screenshot", "capture", "area", "region", "image"]),
-        .PHI_KIOSK_OPEN_IN_SPACE: .init(title: "Open Kiosk or Peek in current Space", keywords: ["kiosk", "peek", "open as tab", "open in space", "current space", "move"]),
-        .PHI_KIOSK_CHOOSE_SPACE: .init(title: "Show Kiosk \"Open in\" Menu", keywords: ["kiosk", "choose space", "open in", "menu"]),
-        .PHI_SAVE_FOR_LATER: .init(title: "Save to Folio", keywords: ["save", "save to folio", "folio", "read later", "markdown", "archive"]),
+        .PHI_OPEN_CLIPBOARD: .init(title: MistAppID.clipboard.name, keywords: ["clipboard", "paste"]),
+        .PHI_MAKE_PRIMARY_WINDOW: .init(title: "Make Primary Window", keywords: ["primary", "window", "links", "default"]),
+        .PHI_OPEN_DRIFTER: .init(title: MistAppID.drifter.name, keywords: ["drifter", "agent", "chat"]),
+        .PHI_NEW_DRIFTER_CHAT: .init(title: "New Drifter Chat", keywords: ["drifter", "new chat", "agent", "chat"]),
+        .PHI_OPEN_MAIL: .init(title: MistAppID.mail.name, keywords: ["mail", "email", "inbox"]),
+        .PHI_DRIFTER_MODEL_MENU: .init(title: "Choose Model", keywords: ["drifter", "model", "composer", "chat", "ai"]),
+        .PHI_DRIFTER_EFFORT_MENU: .init(title: "Choose Effort", keywords: ["drifter", "effort", "reasoning", "composer", "chat", "ai"]),
+        .PHI_DRIFTER_PREVIOUS_MARKER: .init(title: "Previous Marker", keywords: ["drifter", "marker", "bookmark", "chat", "jump"]),
+        .PHI_DRIFTER_NEXT_MARKER: .init(title: "Next Marker", keywords: ["drifter", "marker", "bookmark", "chat", "jump"]),
+        .PHI_PEEK_OPEN_IN_SPACE: .init(title: "Open Peek in current Space", keywords: ["peek", "open as tab", "open in space", "current space", "move"]),
         .PHI_SELECT_NEXT_SPACE: .init(title: "Next Space", keywords: ["space", "next space", "forward"]),
         .PHI_SELECT_PREVIOUS_SPACE: .init(title: "Previous Space", keywords: ["space", "previous space", "backward"]),
         .PHI_SELECT_SPACE_0: .init(title: "Go to Space 1", keywords: ["space", "space1"]),
@@ -767,7 +762,7 @@ extension CommandWrapper {
         .PHI_SELECT_SPACE_6: .init(title: "Go to Space 7", keywords: ["space", "space7"]),
         .PHI_SELECT_SPACE_7: .init(title: "Go to Space 8", keywords: ["space", "space8"]),
         .PHI_SELECT_SPACE_8: .init(title: "Go to Space 9", keywords: ["space", "space9"]),
-        
+
         .IDS_HIDE_OTHERS_MAC: .init(title: "Hide Others", keywords: []),
         .IDS_CLOSE_ALL_WINDOWS_MAC: .init(title: "Close All", keywords: []),
         .IDS_PASTE_MATCH_STYLE_MAC: .init(title: "Paste and Match Style", keywords: []),
@@ -776,8 +771,7 @@ extension CommandWrapper {
         .IDS_EDIT_JUMP_TO_SELECTION_MAC: .init(title: "Jump to Selection", keywords: []),
         .IDS_EDIT_SHOW_SPELLING_GRAMMAR_MAC: .init(title: "Show Spelling and Grammar", keywords: []),
         .IDS_EDIT_CHECK_DOCUMENT_MAC: .init(title: "Check Document Now", keywords: []),
-        
-        
+
         .IDC_SELECT_TAB_0: .init(title: "Select Tab 1", keywords: ["select", "tab1", "first tab"]),
         .IDC_SELECT_TAB_1: .init(title: "Select Tab 2", keywords: ["select", "tab2"]),
         .IDC_SELECT_TAB_2: .init(title: "Select Tab 3", keywords: ["select", "tab3"]),
@@ -786,7 +780,7 @@ extension CommandWrapper {
         .IDC_SELECT_TAB_5: .init(title: "Select Tab 6", keywords: ["select", "tab6"]),
         .IDC_SELECT_TAB_6: .init(title: "Select Tab 7", keywords: ["select", "tab7"]),
         .IDC_SELECT_TAB_7: .init(title: "Select Tab 8", keywords: ["select", "tab8"]),
-        
+
         .IDC_CONTENT_CONTEXT_UNDO: .init(title: "Undo", keywords: ["undo"]),
         .IDC_CONTENT_CONTEXT_REDO: .init(title: "Redo", keywords: ["redo"]),
         .IDC_CONTENT_CONTEXT_CUT: .init(title: "Cut", keywords: ["cut"]),
@@ -795,32 +789,32 @@ extension CommandWrapper {
         .IDC_CONTENT_CONTEXT_PASTE_AND_MATCH_STYLE: .init(title: "Paste and Match Style", keywords: ["paste", "match style"]),
         .IDC_CONTENT_CONTEXT_SELECTALL: .init(title: "Select All", keywords: ["select all"]),
     ]
-    
+
     var displayName: String {
         if let override = CommandWrapper.presentationOverrides[self]?.title {
             return override
         }
         return CommandWrapper.buildTitle(from: caseName)
     }
-    
+
     var searchKeywords: [String] {
         var keywords = CommandWrapper.presentationOverrides[self]?.keywords ?? []
         keywords.append(displayName.lowercased())
         keywords.append(contentsOf: caseKeywords)
         return Array(Set(keywords.map { $0.lowercased() }))
     }
-    
+
     private var caseName: String {
         String(describing: self)
     }
-    
+
     private var caseKeywords: [String] {
         caseName
             .replacingOccurrences(of: "IDC_", with: "")
             .split(separator: "_")
             .map { String($0).lowercased() }
     }
-    
+
     private static func buildTitle(from raw: String) -> String {
         raw.replacingOccurrences(of: "IDC_", with: "")
             .split(separator: "_")

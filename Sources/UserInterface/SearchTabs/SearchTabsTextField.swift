@@ -5,6 +5,7 @@
 
 import Cocoa
 
+@MainActor
 protocol SearchTabsTextFieldKeyDelegate: AnyObject {
     func searchTabsTextFieldDidMoveDown(_ textField: SearchTabsTextField) -> Bool
     func searchTabsTextFieldDidMoveUp(_ textField: SearchTabsTextField) -> Bool

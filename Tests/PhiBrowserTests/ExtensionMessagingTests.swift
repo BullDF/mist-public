@@ -46,47 +46,46 @@ final class ExtensionMessagingTests: XCTestCase {
 
     func testCDPTaskAllowsItsOwningPrincipal() {
         XCTAssertTrue(AgentTaskAccessPolicy.allows(
-            taskOrigin: .cdp,
             taskPrincipalId: "agent-a",
-            callerOrigin: .cdp,
             callerPrincipalId: "agent-a"))
     }
 
     func testCDPTaskRejectsAnotherApprovedPrincipal() {
         XCTAssertFalse(AgentTaskAccessPolicy.allows(
-            taskOrigin: .cdp,
             taskPrincipalId: "agent-a",
-            callerOrigin: .cdp,
             callerPrincipalId: "agent-b"))
     }
 
     func testCDPTaskRejectsUnprincipalledLegacyTunnel() {
         XCTAssertFalse(AgentTaskAccessPolicy.allows(
-            taskOrigin: .cdp,
             taskPrincipalId: "agent-a",
-            callerOrigin: .cdp,
             callerPrincipalId: nil))
     }
 
-    func testOriginsRemainIsolated() {
-        XCTAssertFalse(AgentTaskAccessPolicy.allows(
-            taskOrigin: .phiAgent,
-            taskPrincipalId: nil,
-            callerOrigin: .cdp,
-            callerPrincipalId: "agent-a"))
-        XCTAssertFalse(AgentTaskAccessPolicy.allows(
-            taskOrigin: .cdp,
-            taskPrincipalId: "agent-a",
-            callerOrigin: .phiAgent,
-            callerPrincipalId: nil))
+    func testAgentSpaceMessagesRejectExtensionSendersBeforeDispatch() {
+        let router = ExtensionMessageRouter()
+        for sender in ["", "extension-456"] {
+            XCTAssertEqual(router.handle(
+                type: "agentSpace.app.info", payload: "{}",
+                requestId: "rejected", senderId: sender), #"{"error":"forbidden"}"#)
+        }
     }
 
-    func testPhiAgentTaskStillUsesBackendOriginBoundary() {
-        XCTAssertTrue(AgentTaskAccessPolicy.allows(
-            taskOrigin: .phiAgent,
-            taskPrincipalId: nil,
-            callerOrigin: .phiAgent,
-            callerPrincipalId: nil))
+    func testAgentSpaceListRejectsNonCDPSendersBeforeDispatch() {
+        let router = ExtensionMessageRouter()
+        var dispatched = false
+        router.register(type: "agentSpace.list") { _ in
+            dispatched = true
+            return #"{"tasks":[]}"#
+        }
+
+        for sender in ["", "extension-456", "debug-extension"] {
+            XCTAssertEqual(router.handle(
+                type: "agentSpace.list", payload: "{}",
+                requestId: "rejected-list", senderId: sender,
+                driverPrincipalId: "agent-a"), #"{"error":"forbidden"}"#)
+        }
+        XCTAssertFalse(dispatched)
     }
 
     // MARK: - Capability header parsing
@@ -315,18 +314,4 @@ final class ExtensionMessagingTests: XCTestCase {
         XCTAssertEqual(handledTypes, ["test.first", "test.second"])
     }
 
-    @MainActor
-    func testAIOutputStateMessageIsAcknowledgedSynchronously() {
-        let router = ExtensionMessageRouter()
-
-        let response = router.handle(
-            type: "sidecar.aiOutputState",
-            payload: #"{"tabId":42,"windowId":7,"active":true,"phase":"submitted","seq":1}"#,
-            requestId: "ai-output-state",
-            senderId: SidecarAIOutputStateStore.extensionId
-        )
-
-        XCTAssertEqual(response, "{}")
-        SidecarAIOutputStateStore.shared.removeAll()
-    }
 }

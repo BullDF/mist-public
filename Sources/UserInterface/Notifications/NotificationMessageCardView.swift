@@ -5,23 +5,6 @@
 
 import SwiftUI
 import AppKit
-import PostHog
-
-@MainActor
-private enum NotificationCardAnalytics {
-    static func capture(_ action: String) {
-        PostHogSDK.shared.capture("notification_card_action", properties: ["action": action])
-    }
-}
-
-/// Tracks presentation while AppKit keeps the SwiftUI card mounted.
-final class NotificationCardPresentation: ObservableObject {
-    @Published var isPresented: Bool
-
-    init(isPresented: Bool = true) {
-        self.isPresented = isPresented
-    }
-}
 
 // MARK: - Layout Mode
 
@@ -37,16 +20,13 @@ enum NotificationCardLayoutMode {
 struct NotificationMessageCardView: View {
     @ObservedObject var manager: NotificationCardManager
     @State private var isHovered: Bool = false
-    
+
     /// Layout mode determines stacking direction
     let layoutMode: NotificationCardLayoutMode
 
-    @ObservedObject var presentation: NotificationCardPresentation
 
-    var onChat: ((NotificationCardManager.Card) -> Void)?
     var onRun: ((NotificationCardManager.Card) -> Void)?
     var onDismiss: ((NotificationCardManager.Card) -> Void)?
-    var onMute: ((NotificationCardManager.Card) -> Void)?
     var onDelete: ((NotificationCardManager.Card) -> Void)?
 
     /// Horizontal offset for stacked cards (negative = left)
@@ -71,7 +51,6 @@ struct NotificationMessageCardView: View {
     init(
         manager: NotificationCardManager = .shared,
         layoutMode: NotificationCardLayoutMode = .sidebar,
-        presentation: NotificationCardPresentation = NotificationCardPresentation(),
         onChat: ((NotificationCardManager.Card) -> Void)? = nil,
         onRun: ((NotificationCardManager.Card) -> Void)? = nil,
         onDismiss: ((NotificationCardManager.Card) -> Void)? = nil,
@@ -80,11 +59,8 @@ struct NotificationMessageCardView: View {
     ) {
         self.manager = manager
         self.layoutMode = layoutMode
-        self.presentation = presentation
-        self.onChat = onChat
         self.onRun = onRun
         self.onDismiss = onDismiss
-        self.onMute = onMute
         self.onDelete = onDelete
     }
 
@@ -94,20 +70,14 @@ struct NotificationMessageCardView: View {
                 NotificationMessageCardContent(
                     card: currentCard,
                     totalCards: manager.allCards.count,
-                    currentIndex: manager.currentIndex,
                     isHovered: isHovered,
-                    onChat: onChat,
                     onRun: { card in
-                        NotificationCardAnalytics.capture("run")
                         onRun?(card)
                     },
                     onDismiss: { card in
-                        NotificationCardAnalytics.capture("dismiss")
                         onDismiss?(card)
                     },
-                    onMute: onMute,
                     onDelete: { card in
-                        NotificationCardAnalytics.capture("delete")
                         onDelete?(card)
                     },
                     onPrevious: { manager.showPrevious() },
@@ -137,13 +107,8 @@ struct NotificationMessageCardView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
-        .onChange(of: presentation.isPresented ? manager.currentCard?.id : nil, initial: true) { _, cardID in
-            if cardID != nil {
-                NotificationCardAnalytics.capture("show")
-            }
-        }
     }
-    
+
     /// Stacked card background to show there are more cards
     private var stackedCardBackground: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
@@ -161,19 +126,16 @@ struct NotificationMessageCardView: View {
 struct NotificationMessageCardContent: View {
     let card: NotificationCardManager.Card
     let totalCards: Int
-    let currentIndex: Int
     let isHovered: Bool
 
-    var onChat: ((NotificationCardManager.Card) -> Void)?
     var onRun: ((NotificationCardManager.Card) -> Void)?
     var onDismiss: ((NotificationCardManager.Card) -> Void)?
-    var onMute: ((NotificationCardManager.Card) -> Void)?
     var onDelete: ((NotificationCardManager.Card) -> Void)?
     var onPrevious: (() -> Void)?
     var onNext: (() -> Void)?
 
     private let cornerRadius: CGFloat = 8
-    
+
     /// Whether to show pagination buttons
     private var showPagination: Bool {
         totalCards > 1
@@ -207,7 +169,7 @@ struct NotificationMessageCardContent: View {
 
     private var headerRow: some View {
         HStack {
-            NotificationCardAgentAvatarView(refreshID: card.id)
+            NotificationCardAgentAvatarView()
 
             Spacer()
 
@@ -225,7 +187,7 @@ struct NotificationMessageCardContent: View {
 
     /// Maximum lines for message text
     private let messageMaxLines: Int = 8
-    
+
     private var messageBlock: some View {
         VStack(alignment: .leading, spacing: 2) {
             if !card.title.isEmpty {
@@ -263,7 +225,7 @@ struct NotificationMessageCardContent: View {
             ) {
                 onRun?(card)
             }
-            
+
             if showPagination {
                 NotificationCardPaginationButton(
                     direction: .next,
@@ -298,13 +260,13 @@ struct NotificationMessageCardContent: View {
             }
         }
     }
-    
+
     /// Menu button for notification popup settings (Pop up / Mute)
     /// Uses NSMenu instead of SwiftUI Menu for better compatibility in overlay environments
     private struct NotificationCardMenuButton: View {
         @State private var isHovered: Bool = false
         @State private var currentMode: AccountUserDefaults.NotificationPopupMode = .popup
-        
+
         var body: some View {
             Button {
                 showNSMenu()
@@ -326,12 +288,12 @@ struct NotificationMessageCardContent: View {
                 loadCurrentMode()
             }
         }
-        
+
         private func showNSMenu() {
             loadCurrentMode()
-            
+
             let menu = NSMenu()
-            
+
             let popupItem = NSMenuItem(
                 title: NSLocalizedString("notifications.contextMenu.enablePopupAction", value: "Pop up", comment: "Notification menu option - Enable auto popup for notification cards"),
                 action: #selector(NotificationCardMenuHelper.setPopupMode),
@@ -340,7 +302,7 @@ struct NotificationMessageCardContent: View {
             popupItem.target = NotificationCardMenuHelper.shared
             popupItem.state = currentMode == .popup ? .on : .off
             menu.addItem(popupItem)
-            
+
             let muteItem = NSMenuItem(
                 title: NSLocalizedString("notifications.contextMenu.disablePopupAction", value: "Mute", comment: "Notification menu option - Disable auto popup for notification cards"),
                 action: #selector(NotificationCardMenuHelper.setMuteMode),
@@ -349,7 +311,7 @@ struct NotificationMessageCardContent: View {
             muteItem.target = NotificationCardMenuHelper.shared
             muteItem.state = currentMode == .mute ? .on : .off
             menu.addItem(muteItem)
-            
+
             if let event = NSApp.currentEvent {
                 NSMenu.popUpContextMenu(menu, with: event, for: NSApp.keyWindow?.contentView ?? NSView())
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
@@ -357,31 +319,29 @@ struct NotificationMessageCardContent: View {
                 }
             }
         }
-        
+
         private func loadCurrentMode() {
-            if let account = AccountController.shared.account {
-                currentMode = account.userDefaults.notificationPopupMode
-            }
+            let account = AccountController.shared.localDataAccount
+            currentMode = account.userDefaults.notificationPopupMode
+
         }
     }
-    
+
     /// Helper class to handle NSMenu actions (NSMenu requires @objc selectors)
     @MainActor
     private class NotificationCardMenuHelper: NSObject {
         static let shared = NotificationCardMenuHelper()
-        
+
         @objc func setPopupMode() {
-            NotificationCardAnalytics.capture("popup")
-            if let account = AccountController.shared.account {
-                account.userDefaults.setNotificationPopupMode(.popup)
-            }
+            let account = AccountController.shared.localDataAccount
+            account.userDefaults.setNotificationPopupMode(.popup)
+
         }
-        
+
         @objc func setMuteMode() {
-            NotificationCardAnalytics.capture("mute")
-            if let account = AccountController.shared.account {
-                account.userDefaults.setNotificationPopupMode(.mute)
-            }
+            let account = AccountController.shared.localDataAccount
+            account.userDefaults.setNotificationPopupMode(.mute)
+
         }
     }
 
@@ -398,7 +358,7 @@ struct NotificationMessageCardContent: View {
         @State private var isHovered: Bool = false
 
         private let buttonHeight: CGFloat = 20
-        
+
         var body: some View {
             Button(action: action) {
                 Text(title)
@@ -448,13 +408,13 @@ struct NotificationMessageCardContent: View {
             }
         }
     }
-    
+
     /// Pagination button for navigating between cards
     private struct NotificationCardPaginationButton: View {
         enum Direction {
             case previous
             case next
-            
+
             var systemImage: String {
                 switch self {
                 case .previous: return "chevron.left"
@@ -462,13 +422,13 @@ struct NotificationMessageCardContent: View {
                 }
             }
         }
-        
+
         let direction: Direction
         let isVisible: Bool
         let action: () -> Void
-        
+
         @State private var isHovered: Bool = false
-        
+
         var body: some View {
             Button(action: action) {
                 Image(systemName: direction.systemImage)
@@ -492,10 +452,6 @@ struct NotificationMessageCardContent: View {
 }
 
 private struct NotificationCardAgentAvatarView: View {
-    let refreshID: String
-
-    @State private var image: NSImage?
-
     private let size: CGFloat = 18
 
     var body: some View {
@@ -503,16 +459,10 @@ private struct NotificationCardAgentAvatarView: View {
             Circle()
                 .fill(Color.clear)
 
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Image(systemName: "sparkles")
-                    .resizable()
-                    .scaledToFit()
-                    .padding(3)
-            }
+            Image(systemName: "sparkles")
+                .resizable()
+                .scaledToFit()
+                .padding(3)
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
@@ -520,82 +470,38 @@ private struct NotificationCardAgentAvatarView: View {
             Circle()
                 .stroke(Color.white.opacity(0.2), lineWidth: 1)
         )
-        .task(id: refreshID) {
-            await loadAvatar()
-        }
-    }
-
-    @MainActor
-    private func loadAvatar() async {
-        image = nil
-        guard ApplicationState.shared.isAuthenticated else { return }
-
-        let loaded = await Self.loadImage {
-            try await APIClient.shared.getAgentAvatarImageData().data
-        }
-        guard !Task.isCancelled else { return }
-        image = loaded
-    }
-
-    @MainActor
-    static func loadImage(loadData: () async throws -> Data) async -> NSImage? {
-        do {
-            let data = try await loadData()
-            guard let image = NSImage(data: data), image.isValid else {
-                AppLogWarn("[NotificationMessageCardView] Agent avatar image could not be decoded; using fallback")
-                return nil
-            }
-            return image
-        } catch is CancellationError {
-            return nil
-        } catch {
-            if let error = error as? URLError {
-                if error.code != .cancelled {
-                    AppLogWarn("[NotificationMessageCardView] Agent avatar request failed (URL error \(error.code.rawValue)); using fallback")
-                }
-            } else if case APIError.httpError(let status) = error {
-                AppLogWarn("[NotificationMessageCardView] Agent avatar request failed (HTTP \(status)); using fallback")
-            } else {
-                AppLogWarn("[NotificationMessageCardView] Agent avatar unavailable; using fallback")
-            }
-            return nil
-        }
     }
 }
 
-#if DEBUG
 /// Interactive preview wrapper with state management
 struct InteractiveCardPreview: View {
     let cards: [NotificationCardManager.Card]
     @State private var currentIndex: Int = 0
     @State private var isHovered: Bool = false
-    
+
     private let cornerRadius: CGFloat = 8
     private let stackOffsetX: CGFloat = -6
     private let stackOffsetY: CGFloat = -12
     private let stackRotation: Double = 2
     private let stackScale: CGFloat = 0.98
-    
+
     private var currentCard: NotificationCardManager.Card {
         cards[currentIndex]
     }
-    
+
     var body: some View {
         VStack(spacing: 8) {
             Text("Card \(currentIndex + 1) of \(cards.count)")
                 .font(.caption)
                 .foregroundColor(.secondary)
-            
+
             // Current card with stacked background
             NotificationMessageCardContent(
                 card: currentCard,
                 totalCards: cards.count,
-                currentIndex: currentIndex,
                 isHovered: isHovered,
-                onChat: { _ in print("Chat tapped") },
                 onRun: { _ in print("Run tapped") },
                 onDismiss: { _ in print("Dismiss tapped") },
-                onMute: { _ in print("Mute tapped") },
                 onDelete: { _ in print("Hint tapped") },
                 onPrevious: {
                     currentIndex = (currentIndex - 1 + cards.count) % cards.count
@@ -634,73 +540,63 @@ struct NotificationMessageCardContent_Previews: PreviewProvider {
             taskId: "flight-search", 
             messageId: "msg-1",
             taskType: "research",
-            timestamp: 1706500000000,
             title: "Trip ideas",
             message: "Looking for flights from LAX to Melbourne? I can compare prices across different platforms.",
             buttonTitle: "Compare",
             expiresAt: 0,
-            correlationId: nil,
             timer: nil
         ),
         NotificationCardManager.Card(
             taskId: "weather-alert",
             messageId: "msg-2",
             taskType: "notification",
-            timestamp: 1706500100000,
             title: "Weather Update",
             message: "Rain expected tomorrow in San Francisco. Would you like me to suggest indoor activities?",
             buttonTitle: "Suggest",
             expiresAt: 0,
-            correlationId: nil,
             timer: nil
         ),
         NotificationCardManager.Card(
             taskId: "meeting-reminder",
             messageId: "msg-3",
             taskType: "reminder",
-            timestamp: 1706500200000,
             title: "Upcoming Meeting",
             message: "You have a team standup in 15 minutes. I can prepare a summary of yesterday's progress.",
             buttonTitle: "Prepare",
             expiresAt: 0,
-            correlationId: nil,
             timer: nil
         ),
         NotificationCardManager.Card(
             taskId: "price-drop",
             messageId: "msg-4",
             taskType: "alert",
-            timestamp: 1706500300000,
             title: "Price Drop Alert",
             message: "The MacBook Pro you've been tracking just dropped $200. Should I show you the deal?",
             buttonTitle: "View Deal",
             expiresAt: 0,
-            correlationId: nil,
             timer: nil
         ),
         NotificationCardManager.Card(
             taskId: "news-digest",
             messageId: "msg-5",
             taskType: "digest",
-            timestamp: 1706500400000,
             title: "Morning News",
             message: "I've compiled today's top tech news. 5 articles about AI, 3 about startups, and 2 about cybersecurity.",
             buttonTitle: "Read",
             expiresAt: 0,
-            correlationId: nil,
             timer: nil
         )
     ]
-    
+
     static var previews: some View {
         VStack(spacing: 30) {
             // Single card (no pagination)
             Text("Single Card")
                 .font(.headline)
             InteractiveCardPreview(cards: [sampleCards[0]])
-            
+
             Divider()
-            
+
             // Multiple cards - interactive
             Text("Multiple Cards (Interactive)")
                 .font(.headline)
@@ -711,4 +607,3 @@ struct NotificationMessageCardContent_Previews: PreviewProvider {
         .frame(width: 320)
     }
 }
-#endif

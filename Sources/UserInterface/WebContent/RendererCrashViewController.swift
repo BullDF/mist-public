@@ -56,19 +56,9 @@ final class RendererCrashViewController: NSViewController {
         hostingController = hosting
     }
 
-    /// Chrome's sad tab uses a single action button whose role flips with
-    /// `showFeedbackButton`: reload normally, send-feedback when repeatedly
-    /// crashing. The label (`buttonLabel`) already matches the chosen role.
     private func performPrimaryAction() {
-        switch data.primaryAction {
-        case .reload:
-            host?.browserState.resolveTab(tabId)?.reload()
-        case .feedback:
-            guard let host else { return }
-            // Pass THIS crashed tab so feedback prefills its url/title regardless
-            // of focus (a split partner pane's crash isn't the focused tab).
-            host.showFeedbackWindow(crashContextTab: host.browserState.resolveTab(tabId))
-        }
+        guard data.primaryAction == .reload else { return }
+        host?.browserState.resolveTab(tabId)?.reload()
     }
 
     private func openHelpLink() {
@@ -124,10 +114,12 @@ private struct RendererCrashView: View {
                 }
 
                 HStack(spacing: 16) {
-                    Button(data.buttonLabel, action: onPrimaryAction)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .keyboardShortcut(.defaultAction)
+                    if data.primaryAction != nil {
+                        Button(data.buttonLabel, action: onPrimaryAction)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .keyboardShortcut(.defaultAction)
+                    }
 
                     if !data.helpLinkLabel.isEmpty, !data.helpLinkUrl.isEmpty {
                         Button(data.helpLinkLabel, action: onHelp)

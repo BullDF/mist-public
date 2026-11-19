@@ -21,10 +21,6 @@ struct SpaceChooserItem: Identifiable {
     let name: String
     let iconName: String
     let isCurrent: Bool
-    /// Draw a divider before this destination. Kiosk uses this to remain a
-    /// distinct action below the Space choices while staying in the same
-    /// keyboard-navigation order.
-    let startsSection: Bool
     /// The Space theme's signature color (ColorRole.themeColor).
     let themeColor: Color
     /// A legible icon/text color on top of `themeColor`.
@@ -33,8 +29,7 @@ struct SpaceChooserItem: Identifiable {
 
 /// Modal "Open in which Space?" prompt shown when a navigation matches an
 /// "ask every time" URL rule. Dims the source window behind a centered list of
-/// destinations: Spaces first (the current one first), then Kiosk in its own
-/// section. Replaces the old NSAlert + popup button.
+/// destinations, with the current Space first. Replaces the old NSAlert + popup button.
 ///
 /// `onChoose` is invoked exactly once: with the chosen destination id, or with
 /// nil when the user keeps the page where it is (Esc, or a tap on the dimmed
@@ -95,11 +90,6 @@ struct SpaceChooserView: View {
             ScrollView {
                 VStack(spacing: 6) {
                     ForEach(items) { item in
-                        if item.startsSection {
-                            Divider()
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                        }
                         row(for: item).id(item.id)
                     }
                 }
@@ -154,15 +144,13 @@ struct SpaceChooserView: View {
         .onTapGesture { onChoose(item.id) }
     }
 
-    /// Hugs the rows (38pt each + 6pt gaps) and section dividers up to a cap,
+    /// Hugs the rows (38pt each + 6pt gaps) up to a cap,
     /// so a few destinations don't leave a tall empty area but many still
     /// scroll.
     private var listHeight: CGFloat {
         let count = CGFloat(items.count)
         let content = count * 38 + max(0, count - 1) * 6
-        // One extra VStack gap plus the divider's line and vertical padding.
-        let sectionHeight = CGFloat(items.filter(\.startsSection).count) * 11
-        return min(content + sectionHeight, 360)
+        return min(content, 360)
     }
 
     private func moveSelection(by delta: Int) {

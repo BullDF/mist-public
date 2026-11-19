@@ -33,8 +33,6 @@ struct TabStripMetricsSnapshot {
     let pinnedContainerFrame: CGRect
     /// Normal container frame in tab-strip coordinates.
     let normalContainerFrame: CGRect
-    /// Fixed width for pinned tabs.
-    let pinnedTabWidth: CGFloat
     /// Current normal-tab frames in container coordinates.
     let normalTabFrames: [CGRect]
     /// Current pinned-tab frames in container coordinates.
@@ -101,11 +99,6 @@ final class TabStripDragController {
 
     /// Active drag context, or `nil` when idle.
     private(set) var context: TabDragContext?
-
-    /// Whether a drag is currently active.
-    var isDragging: Bool {
-        context != nil
-    }
 
     // MARK: - Start Dragging
 
@@ -552,13 +545,6 @@ final class TabStripDragController {
 
         // Drop the drag state after the delegate has handled the result.
         self.context = nil
-    }
-
-    /// Cancels the active drag.
-    func cancelDragging() {
-        guard context != nil else { return }
-        delegate?.dragControllerDidCancelDrag()
-        context = nil
     }
 
     // MARK: - Private Methods

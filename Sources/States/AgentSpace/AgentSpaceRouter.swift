@@ -10,34 +10,31 @@ import Foundation
 /// focused unit coverage.
 enum AgentTaskAccessPolicy {
     static func allows(
-        taskOrigin: AgentTaskOrigin,
         taskPrincipalId: String?,
-        callerOrigin: AgentTaskOrigin,
         callerPrincipalId: String?
     ) -> Bool {
-        guard taskOrigin == callerOrigin else { return false }
-        switch taskOrigin {
-        case .phiAgent:
-            return true
-        case .cdp:
-            guard let taskPrincipalId, !taskPrincipalId.isEmpty,
-                  let callerPrincipalId, !callerPrincipalId.isEmpty else {
-                return false
-            }
-            return taskPrincipalId == callerPrincipalId
+        guard let taskPrincipalId, !taskPrincipalId.isEmpty,
+              let callerPrincipalId, !callerPrincipalId.isEmpty else {
+            return false
         }
+        return taskPrincipalId == callerPrincipalId
     }
 }
 
 /// Parses `agentSpace.*` extension messages and drives `AgentSpaceManager`.
 /// Extension messages are delivered on the main thread, so the manager's
-/// main-actor state is accessed via `MainActor.assumeIsolated`. Messages arrive both from the
-/// Kensington extension and — with senderId "cdp" — from remote-debugging
-/// clients through the PhiAgentSpace CDP domain.
+/// main-actor state is accessed via `MainActor.assumeIsolated`. Messages arrive
+/// with senderId "cdp" from remote-debugging clients through the PhiAgentSpace
+/// CDP domain or the direct agent channel. `ExtensionMessageRouter` rejects
+/// all other senders before dispatching here.
 enum AgentSpaceRouter {
     // These helpers are shared with the management handlers in
     // AgentSpaceRouter+Management.swift (internal, not private, for that
     // reason only — they are not meant as general-purpose API).
+    static var channelName: String {
+        return "canary"
+    }
+
     static func json(_ payload: String) -> [String: Any]? {
         guard let data = payload.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -45,14 +42,10 @@ enum AgentSpaceRouter {
         return obj
     }
 
-    static func origin(for context: ExtensionMessageContext) -> AgentTaskOrigin {
-        context.senderId == "cdp" ? .cdp : .phiAgent
-    }
-
-    /// A caller may only operate on tasks of its own origin and, for external
-    /// CDP tasks, its own app-issued logical driver principal. Thus separate
+    /// A caller may only operate on tasks of its own app-issued logical
+    /// driver principal. Thus separate
     /// approved agents cannot discover a taskId and operate each other's Space.
-    /// Unknown tasks (and cross-origin ones) are treated identically — as if the
+    /// Unknown tasks (and other drivers' tasks) are treated identically — as if the
     /// task doesn't exist — so the boundary reveals nothing about the other
     /// driver's Spaces. Assumes the main actor (all callers are inside one).
     ///
@@ -60,7 +53,7 @@ enum AgentSpaceRouter {
     /// owning driver passes through here, so an authorized caller refreshes the
     /// task's expiry as a side effect — the driver is evidently alive. Explicit
     /// TTL control stays with `agentSpace.ping`. `touchKeepAlive: false` keeps
-    /// the origin gate but skips the refresh, for traffic that proves the
+    /// the principal gate but skips the refresh, for traffic that proves the
     /// SESSION is alive without proving anyone is still driving (the session
     /// mirror's prose) — such traffic must not extend an idle Space's life.
     static func callerMayControl(
@@ -70,9 +63,7 @@ enum AgentSpaceRouter {
         MainActor.assumeIsolated {
             guard let task = AgentSpaceManager.shared.task(forTaskId: taskId),
                   AgentTaskAccessPolicy.allows(
-                    taskOrigin: task.origin,
                     taskPrincipalId: task.driverPrincipalId,
-                    callerOrigin: origin(for: context),
                     callerPrincipalId: context.driverPrincipalId) else {
                 return false
             }
@@ -110,9 +101,9 @@ enum AgentSpaceRouter {
     static func handleAppInfo(context: ExtensionMessageContext) -> String? {
         encode([
             "ok": true,
-            "name": "Phi Browser",
+            "name": "Mist",
             "version": SystemUtils.appVersion,
-            "channel": FeedbackOutbox.channelName,
+            "channel": channelName,
             "buildNumber": SystemUtils.buildNumber,
         ])
     }
@@ -120,38 +111,30 @@ enum AgentSpaceRouter {
     /// `agentSpace.create` — async: spawn the Space, then reply with ids.
     static func handleCreate(context: ExtensionMessageContext) {
         let requestId = context.requestId
-        let taskOrigin = origin(for: context)
         MainActor.assumeIsolated {
             guard let obj = json(context.payload),
                   let taskId = obj["taskId"] as? String else {
                 ExtensionMessaging.shared.sendError("invalid_payload", requestId: requestId)
                 return
             }
-            if taskOrigin == .cdp {
-                guard let principalId = context.driverPrincipalId,
-                      !principalId.isEmpty else {
-                    ExtensionMessaging.shared.sendError(
-                        "missing_driver_principal", requestId: requestId)
-                    return
-                }
+            guard let principalId = context.driverPrincipalId,
+                  !principalId.isEmpty else {
+                ExtensionMessaging.shared.sendError(
+                    "missing_driver_principal", requestId: requestId)
+                return
             }
             let profileName =
                 (obj["profileId"] as? String)
                 ?? (obj["profileName"] as? String)
                 ?? ""
             let persistent = obj["persistent"] as? Bool ?? false
-            // Per-profile agent-Space permission (Settings ▸ Developer ▸ Agent
-            // permissions): refuse creation in a profile the user disallows.
-            // An empty request resolves to the first allowed profile, so the
-            // agent's default never lands on a blocked one; an explicit request
-            // for a blocked profile is refused. The resolved profileId is
-            // passed on so create binds exactly what the permission approved.
+            // An empty request resolves to the first profile; the resolved
+            // profileId is passed on so create binds exactly that profile.
             let agentName = context.agentName
             let proceedCreate: @MainActor (String) -> Void = { resolvedProfileName in
                 AgentSpaceManager.shared.createAgentSpace(
                     taskId: taskId,
                     profileName: resolvedProfileName,
-                    origin: taskOrigin,
                     persistent: persistent,
                     agentName: agentName,
                     driverPrincipalId: context.driverPrincipalId
@@ -182,35 +165,18 @@ enum AgentSpaceRouter {
             switch AgentSpaceManager.shared.resolveAgentCreateProfile(profileName: profileName) {
             case .allowed(let profile):
                 proceedCreate(profile.profileId)
-            case .blocked:
-                ExtensionMessaging.shared.sendResponse(
-                    "{\"ok\":false,\"error\":\"profile_not_agent_allowed\"}",
-                    requestId: requestId)
             case .noMatch:
                 // Unknown profile — let createAgentSpace surface its own failure
                 // (persistent re-bind may still match by taskId).
                 proceedCreate(profileName)
-            case .needsTemporary:
-                // The user left the agent no usable profile — create/reuse a
-                // dedicated one and bind the Space to it.
-                AgentSpaceManager.shared.ensureAgentFallbackProfile { profileId in
-                    MainActor.assumeIsolated {
-                        guard let profileId else {
-                            ExtensionMessaging.shared.sendResponse(
-                                "{\"ok\":false,\"error\":\"create_failed\"}",
-                                requestId: requestId)
-                            return
-                        }
-                        proceedCreate(profileId)
-                    }
-                }
+
             }
         }
     }
 
     /// `agentSpace.listProfiles` — enumerate browser profiles so a client can
     /// pick one for `agentSpace.create`; a stateless CDP client has no other
-    /// discovery path. Informational, so not origin-scoped.
+    /// discovery path. Informational, so not task-scoped.
     static func handleListProfiles(context: ExtensionMessageContext) -> String? {
         let profiles = MainActor.assumeIsolated { () -> [[String: Any]] in
             // Same refresh-before-read as createAgentSpace: a headless CDP
@@ -220,11 +186,7 @@ enum AgentSpaceRouter {
                 [
                     "profileId": $0.profileId,
                     "displayName": $0.displayName,
-                    // Whether the agent may create a Space in this profile
-                    // (Settings ▸ Developer ▸ Agent permissions). A create
-                    // targeting a profile with false is refused.
-                    "agentSpacesAllowed":
-                        PhiPreferences.AgentSpaces.isProfileAgentSpaceAllowed($0.profileId),
+                    "agentSpacesAllowed": true,
                 ]
             }
         }
@@ -238,14 +200,11 @@ enum AgentSpaceRouter {
     /// `agentSpace.list` — enumerate live tasks so a stateless client (the CDP
     /// skill re-connects every round) can rediscover its Space by taskId.
     static func handleList(context: ExtensionMessageContext) -> String? {
-        let caller = origin(for: context)
         let tasks = MainActor.assumeIsolated {
             AgentSpaceManager.shared.tasksBySpaceId.values
                 .filter {
                     AgentTaskAccessPolicy.allows(
-                        taskOrigin: $0.origin,
                         taskPrincipalId: $0.driverPrincipalId,
-                        callerOrigin: caller,
                         callerPrincipalId: context.driverPrincipalId)
                 }
                 .map { task -> [String: Any] in
@@ -375,7 +334,7 @@ enum AgentSpaceRouter {
     /// forwarder flushes each batch as ONE call so delivery is all-or-nothing
     /// and a mid-batch failure can't duplicate an already-delivered prefix).
     /// Fire-and-forget from the driver, like `agentSpace.effect`: cosmetic,
-    /// never load-bearing for the primitive that emitted it. The origin gate
+    /// never load-bearing for the primitive that emitted it. The principal gate
     /// also means one driver cannot spoof lines into another's console.
     /// `touch: false` marks mirror traffic that must not refresh keep-alive
     /// (see `callerMayControl`).
@@ -515,7 +474,7 @@ enum AgentSpaceRouter {
     /// the agent lays pages out exactly as the user's window would — the
     /// hidden window's own view size reads 0×0 over CDP, and measuring user
     /// tabs is unreliable (native-NTP shells). Informational, so not
-    /// origin-scoped — same class as `agentSpace.listProfiles`.
+    /// task-scoped — same class as `agentSpace.listProfiles`.
     static func handlePanelSize(context: ExtensionMessageContext) -> String? {
         let size = MainActor.assumeIsolated { () -> CGSize? in
             let slot = SpaceManager.shared.keySlot ?? SpaceManager.shared.slots.first

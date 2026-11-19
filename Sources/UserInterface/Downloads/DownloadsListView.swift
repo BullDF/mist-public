@@ -7,13 +7,6 @@ import SwiftUI
 struct DownloadsListView: View {
     @ObservedObject var downloadsManager: DownloadsManager
     var onShowAllDownloads: () -> Void = {}
-    @State private var contentSize: CGSize = .zero
-    
-    private let maxVisibleItems = 5
-    private let itemHeight: CGFloat = 56
-    private let listWidth: CGFloat = 308
-    private let bottomBarHeight: CGFloat = 33
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if downloadsManager.downloads.isEmpty {
@@ -22,7 +15,11 @@ struct DownloadsListView: View {
                 downloadsList
             }
             
-            DownloadsBottomBar(onShowAllDownloads: onShowAllDownloads)
+            DownloadsBottomBar(
+                onShowAllDownloads: onShowAllDownloads,
+                onClear: { downloadsManager.clearFinishedDownloads() },
+                isClearEnabled: !downloadsManager.clearableDownloads.isEmpty
+            )
         }
         .frame(width: 340)
         .background(.clear)
@@ -91,7 +88,10 @@ struct DownloadsListView: View {
 
 private struct DownloadsBottomBar: View {
     let onShowAllDownloads: () -> Void
+    let onClear: () -> Void
+    let isClearEnabled: Bool
     @State private var isHovered: Bool = false
+    @State private var isClearHovered: Bool = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -99,6 +99,26 @@ private struct DownloadsBottomBar: View {
                 .background(Color.phiPrimary.opacity(0.1))
             
             HStack {
+                Button(action: onClear) {
+                    Text(NSLocalizedString("downloads.list.clearButton", value: "Clear", comment: "Downloads list - Button that removes finished downloads from the list without deleting files"))
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.phiPrimary.opacity(isClearEnabled ? (isClearHovered ? 1.0 : 0.85) : 0.35))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(isClearEnabled && isClearHovered ? Color.phiPrimary.opacity(0.06) : Color.clear)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(!isClearEnabled)
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isClearHovered = hovering
+                    }
+                }
+                .padding(.leading, 12)
+
                 Spacer()
                 
                 Button(action: {
@@ -132,10 +152,6 @@ private struct DownloadsBottomBar: View {
         }
     }
     
-    private func openAllDownloadsPage() {
-        let url = URLProcessor.processUserInput("phi://downloads")
-        SpaceSessionControllersManager.shared.activeWindowController?.browserState.createTab(url)
-    }
 }
 
 // MARK: - Color Extension
@@ -144,7 +160,6 @@ extension Color {
 }
 
 // MARK: - Preview
-#if DEBUG
 struct DownloadsListView_Previews: PreviewProvider {
     static var previews: some View {
         DownloadsListView(downloadsManager: MockDownloadsManager())
@@ -210,4 +225,3 @@ class MockDownloadsManager: DownloadsManager {
     override func refreshDownloads() {
     }
 }
-#endif

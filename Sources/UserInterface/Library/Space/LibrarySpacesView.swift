@@ -38,8 +38,8 @@ struct LibrarySpacesView: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 22) {
                         ForEach(orderedSpaces) { space in
-                            if let store = AccountController.shared.localDataAccount?.localStorage,
-                               store.identifier == space.storeIdentifier {
+                            let store = AccountController.shared.localDataAccount.localStorage
+                            if store.identifier == space.storeIdentifier {
                                 card(space, store: store)
                                     .id(space.spaceId)
                             }

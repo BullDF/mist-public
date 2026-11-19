@@ -9,13 +9,13 @@ extension NSFont {
     /// The bundled brand display face at `size`, or the system face when
     /// `string` contains characters that face cannot draw.
     ///
-    /// The Ivy Presto and Impact faces shipped in `Resources/Fonts` are
+    /// The Ivy Presto faces shipped in `Resources/Fonts` are
     /// Latin-only: none of them map a single CJK codepoint (verified against
     /// `CTFontCopyCharacterSet`). Setting one on a label holding a localized
     /// title therefore leaves every glyph to system fallback, and on macOS 15
     /// that fallback draws the run clipped — `开始之前` came out as
     /// `丿丨 夂口 乀 刖`, each character shorn of its upper strokes, on the
-    /// onboarding pages. macOS 26 falls back cleanly, which is why this only
+    /// importer. macOS 26 falls back cleanly, which is why this only
     /// ever showed up on 15.
     ///
     /// Substituting the whole run keeps the label's font and the drawn glyphs

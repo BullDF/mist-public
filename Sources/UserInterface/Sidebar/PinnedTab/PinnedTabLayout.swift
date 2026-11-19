@@ -14,7 +14,6 @@ class PinnedTabLayout: NSCollectionViewLayout {
     private struct SectionMetrics {
         var numberOfItems: Int = 0
         var numberOfColumns: Int = 0
-        var numberOfRows: Int = 0
         var itemSize: NSSize = .zero
         var sectionHeight: CGFloat = 0
 
@@ -45,24 +44,12 @@ class PinnedTabLayout: NSCollectionViewLayout {
     private var tabMetrics: SectionMetrics = .empty
     private var extensionMetrics: SectionMetrics = .empty
 
-    var numberOfRows: Int {
-        tabMetrics.numberOfRows
-    }
-
     var currentItemSize: NSSize {
         tabMetrics.itemSize
     }
 
     var contentHeight: CGFloat {
         contentSize.height
-    }
-
-    var tabLayoutInfo: (columns: Int, rows: Int, itemSize: NSSize) {
-        (tabMetrics.numberOfColumns, tabMetrics.numberOfRows, tabMetrics.itemSize)
-    }
-
-    var extensionLayoutInfo: (columns: Int, rows: Int, itemSize: NSSize) {
-        (extensionMetrics.numberOfColumns, extensionMetrics.numberOfRows, extensionMetrics.itemSize)
     }
 
     func configure(parentWidth: CGFloat, tabCount: Int, extensionCount: Int) {
@@ -224,7 +211,6 @@ private extension PinnedTabLayout {
         return SectionMetrics(
             numberOfItems: itemCount,
             numberOfColumns: columns,
-            numberOfRows: rows,
             itemSize: NSSize(width: itemWidth, height: itemHeight),
             sectionHeight: sectionHeight
         )

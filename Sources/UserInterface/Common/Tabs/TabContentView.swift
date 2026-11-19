@@ -196,24 +196,13 @@ private struct TabCornerBadgeVisual: View {
         switch status {
         case .agent:
             lottieBadge(named: "agent", fallbackSystemName: "sparkle")
-        case .inputting:
-            lottieBadge(named: "inputting", fallbackSystemName: "ellipsis")
-        case .chat:
-            lottieBadge(
-                named: "inputting",
-                fallbackSystemName: "ellipsis",
-                playbackMode: .paused(at: .progress(0))
-            )
         }
     }
 
     @ViewBuilder
     private func lottieBadge(
         named name: String,
-        fallbackSystemName: String,
-        playbackMode: LottiePlaybackMode = .playing(
-            .fromProgress(0, toProgress: 1, loopMode: .loop)
-        )
+        fallbackSystemName: String
     ) -> some View {
         if let animation = LottieAnimation.named(
             name,
@@ -222,7 +211,7 @@ private struct TabCornerBadgeVisual: View {
         ) {
             LottieView(animation: animation)
                 .configuration(LottieConfiguration(renderingEngine: .mainThread))
-                .playbackMode(playbackMode)
+                .playbackMode(.playing(.fromProgress(0, toProgress: 1, loopMode: .loop)))
                 .configure { animationView in
                     animationView.setValueProvider(
                         ColorValueProvider(badgeColor.lottieColor),
@@ -473,8 +462,6 @@ struct UnifiedTabFaviconView: View {
     @AppStorage(PhiPreferences.GeneralSettings.showUnloadedTabIndicators.rawValue)
     private var showUnloadedTabIndicators = PhiPreferences.GeneralSettings.showUnloadedTabIndicators.defaultValue
     @ObservedObject private var statusModel: TabStatusModel
-    @Environment(\.phiAppearance) private var phiAppearance
-
     private static let faviconSize: CGFloat = 14
     private static let faviconCornerRadius: CGFloat = 3
 
@@ -485,7 +472,10 @@ struct UnifiedTabFaviconView: View {
 
     var body: some View {
         Group {
-            if let liveFaviconImage = viewModel.liveFaviconImage {
+            if let icon = viewModel.appIcon {
+                Image(icon.asset).resizable().renderingMode(icon.isTemplate ? .template : .original)
+                    .scaledToFit().scaleEffect(icon.scale).themedForeground(.textPrimary)
+            } else if let liveFaviconImage = viewModel.liveFaviconImage {
                 Image(nsImage: liveFaviconImage)
                     .resizable()
                     .scaledToFit()

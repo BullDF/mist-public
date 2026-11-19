@@ -20,6 +20,8 @@ class WebContentContainerViewController: NSViewController {
     weak var browserState: BrowserState?
     private var cancellables = Set<AnyCancellable>()
     private var isSubscriptionsSetup = false
+    private var updatingBrowserAgentPreview = false
+    private weak var presentedBrowserAgentPreviewStack: BrowserAgentPreviewStack?
     
     /// Tab identifier -> WebContentViewController mapping
     private var webContentControllers: [String: WebContentViewController] = [:]
@@ -42,11 +44,13 @@ class WebContentContainerViewController: NSViewController {
     /// `WebContentViewController.restoreFocusAfterPresentation`.
     func restoreFocusAfterPresentation() {
         currentWebContentController?.restoreFocusAfterPresentation()
+        updateBrowserAgentPreview()
     }
 
     /// Hosted mode: the session's tree is about to be hidden or removed.
     /// See `WebContentViewController.collapseContentFullscreenForConcealment`.
     func collapseContentFullscreenForConcealment() {
+        browserState?.browserAgentPreview?.release()
         for controller in webContentControllers.values {
             controller.collapseContentFullscreenForConcealment()
         }
@@ -114,9 +118,7 @@ class WebContentContainerViewController: NSViewController {
     // of or within a split; nothing waits for a first paint and nothing is
     // confirmed back to Chromium. A new view not at the page area's size is
     // laid out at that size before it joins the window; one already at it
-    // joins without that layout. Kiosk's `mountFocusedTab` has the same
-    // shape, though it removes the other views before mounting and does not
-    // lay the new view out first. The container's first mount (cold) leaves
+    // joins without that layout. The container's first mount (cold) leaves
     // a never-shown tab's web view to the controller's deferred content
     // update, one turn later. Over a
     // content surface (chromium ADR 0014) the swap is one frame there: the
@@ -173,6 +175,20 @@ class WebContentContainerViewController: NSViewController {
     /// split-drop hint while a tab is being torn out — TabStrip drives drags
     /// with raw mouse events, not an NSDraggingSession, so the container's
     /// NSDraggingDestination callbacks never fire in that mode.
+    private let browserAgentHolder: NSView = {
+        let view = NSView(frame: .zero)
+        view.wantsLayer = true
+        view.layer?.masksToBounds = true
+        return view
+    }()
+
+    var browserAgentPageHolder: NSView {
+        if contentContainer.subviews.first !== browserAgentHolder {
+            contentContainer.addSubview(browserAgentHolder, positioned: .below, relativeTo: nil)
+        }
+        return browserAgentHolder
+    }
+
     var splitTabDropContainer: SplitTabDropContainer { contentContainer }
 
     /// NTP-colored backdrop pinned under every other subview of
@@ -387,7 +403,7 @@ class WebContentContainerViewController: NSViewController {
         setupSubscriptionsIfNeeded()
         updateLayoutForMode()
     }
-    
+
     // MARK: - UI Setup
     
     private func setupUI() {
@@ -726,9 +742,34 @@ class WebContentContainerViewController: NSViewController {
     private func setupSubscriptionsIfNeeded() {
         guard !isSubscriptionsSetup else { return }
         isSubscriptionsSetup = true
+
+        // Release synchronously, before a focus/split subscriber can remount
+        // the borrowed view. Reconcile only after @Published's willSet ends.
+        browserState?.$splits.dropFirst().sink { [weak self] _ in
+            guard let self, self.hasBrowserAgentPreviewWork else { return }
+            self.browserState?.browserAgentPreview?.release()
+            DispatchQueue.main.async { [weak self] in self?.updateBrowserAgentPreview() }
+        }.store(in: &cancellables)
+        // The store posts on the main actor after updating its preview. Keep
+        // this synchronous so a turn's hold exists before any view handoff.
+        NotificationCenter.default.publisher(for: .browserAgentPreviewDidChange)
+            .filter { [weak self] notification in
+                guard let windowId = notification.userInfo?["windowId"] as? Int,
+                      let state = self?.browserState else { return false }
+                return windowId == state.windowId
+            }
+            .sink { [weak self] _ in self?.updateBrowserAgentPreview() }.store(in: &cancellables)
+        for name in [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+            NotificationCenter.default.publisher(for: name).sink { [weak self] notification in
+                guard let self, self.hasBrowserAgentPreviewWork,
+                      let window = notification.object as? NSWindow, window === self.view.window else { return }
+                self.updateBrowserAgentPreview()
+            }.store(in: &cancellables)
+        }
         
         // Listen to focusingTab changes to switch WebContentViewController
         browserState?.$focusingTab
+            .handleEvents(receiveOutput: { [weak self] _ in self?.browserState?.browserAgentPreview?.release() })
             .receive(on: DispatchQueue.main)
             .sink { [weak self] tab in
                 self?.handleFocusingTabChanged(tab)
@@ -837,13 +878,6 @@ class WebContentContainerViewController: NSViewController {
                 self.updateContentOuterBorder()
             }
             .store(in: &cancellables)
-
-        browserState?.$groupOverviewState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateContentOuterBorder()
-            }
-            .store(in: &cancellables)
     }
 
     private func rebuildGroupChangeSubscriptions(groups: [String: WebContentGroupInfo]) {
@@ -872,6 +906,9 @@ class WebContentContainerViewController: NSViewController {
         super.viewDidLayout()
         updateContentOuterBorder()
         updateStatusURLPosition()
+        // Fit held viewports after sidebar, split, and window layout changes.
+        // ContentSurfaceHosting also reconciles native bounds every run loop.
+        browserState?.browserAgentPreview?.reconcile()
     }
 
     /// Computes and applies the unified content border path for comfortable
@@ -929,9 +966,8 @@ class WebContentContainerViewController: NSViewController {
         // comfortable — the vertical layouts (reachable here with a panel
         // mounted) have no horizontal chips, so their frame is the plain
         // closed outline below.
-        let overviewActive = browserState?.groupOverviewState != nil
         let activeTabForBorder =
-            (overviewActive || !isComfortableLayout) ? nil : controller.associatedTab
+            isComfortableLayout ? controller.associatedTab : nil
         let activeFrame = isComfortableLayout
             ? tabStripBarController?.tabFrame(for: activeTabForBorder, in: view)
             : nil
@@ -1244,6 +1280,125 @@ class WebContentContainerViewController: NSViewController {
         for identifier in controllersToRemove {
             removeWebContentController(for: identifier)
         }
+        updateBrowserAgentPreview()
+    }
+
+    static func isBrowserAgentPreviewCardVisible(_ card: NSView) -> Bool {
+        card.window?.isVisible == true && card.window?.isMiniaturized == false
+            && card.superview?.isHiddenOrHasHiddenAncestor == false
+    }
+
+    /// Cards show frames without moving pages or changing focus.
+    private func updateBrowserAgentPreview() {
+        // Ordinary pages must never enter preview reconciliation from a tab
+        // refresh, appearance callback, or window notification. In particular,
+        // do not instantiate an owner, touch visibility, or settle layout while
+        // the page's card and content surface follow a side panel animation.
+        guard !updatingBrowserAgentPreview, hasBrowserAgentPreviewWork else { return }
+        updatingBrowserAgentPreview = true
+        defer { updatingBrowserAgentPreview = false }
+        guard let state = browserState else { return }
+        updateBrowserAgentMounts()
+        state.browserAgentPreview?.dropStills(keeping: AgentChatStore.shared.browserPreviewCardTabs(windowId: state.windowId))
+        guard let current = currentWebContentController,
+              current.associatedTab?.guid == state.focusingTab?.guid else {
+            hideBrowserAgentPreview()
+            return
+        }
+        // A chat may be the nonfocused pane of the current split. Its native
+        // view is mounted in the focused controller, while its own controller
+        // stays detached. Read the actual card hierarchy, not that controller's
+        // view or appearance callbacks. The focused chat takes priority if two
+        // chat panes are visible.
+        let candidates = [current] + webContentControllers.values.filter { $0 !== current }
+        let controller = candidates.first {
+            guard let card = $0.browserAgentPreviewStack, let tab = $0.associatedTab,
+                  let id = MistApps.address(tab.url)?.chatId,
+                  AgentChatStore.shared.entry(for: id)?.browserPreview?.cards.isEmpty == false else { return false }
+            return card.isDescendant(of: current.view)
+        }
+        guard let controller, let stack = controller.browserAgentPreviewStack,
+              let chat = controller.associatedTab,
+              let id = MistApps.address(chat.url)?.chatId,
+              var preview = AgentChatStore.shared.entry(for: id)?.browserPreview,
+              preview.windowId == state.windowId else {
+            hideBrowserAgentPreview()
+            return
+        }
+        if preview.cardAspect == nil {
+            let size = currentWebPanelSize
+            let aspect = size.flatMap { $0.width > 0 && $0.height > 0 ? $0.height / $0.width : nil } ?? 10 / 16
+            preview.cardAspect = min(2.5, max(0.3, aspect))
+            AgentChatStore.shared.setBrowserPreviewCardAspect(id, aspect: preview.cardAspect!)
+        }
+        let visible = Self.isBrowserAgentPreviewCardVisible(stack)
+        let items = preview.cards.compactMap { card -> BrowserAgentPreviewStack.Item? in
+            guard let tab = state.tabs.first(where: { $0.guid == card.tabId }) else { return nil }
+            let mount = preview.mount(card: card.tabId, chatVisible: visible, tabExists: true)
+            guard mount != .hidden else { return nil }
+            if let childId = card.chat {
+                guard let child = AgentChatStore.shared.entry(for: childId) else { return nil }
+                return .init(tab: tab, mount: .agent, still: nil,
+                    chat: .init(conversation: child.conversation, folder: child.config.folder, engine: child.config.engine))
+            }
+            return .init(tab: tab, mount: mount, still: state.browserAgentPreview?.stills[card.tabId])
+        }
+        guard !items.isEmpty else { hideBrowserAgentPreview(); return }
+        let liveTab = items.first(where: { $0.mount == .live })?.tab
+        if presentedBrowserAgentPreviewStack !== stack {
+            hideBrowserAgentPreview()
+            presentedBrowserAgentPreviewStack = stack
+        }
+        if stack.isHidden { stack.isHidden = false }
+        stack.onClose = { AgentChatStore.shared.dismissBrowserPreview(id, tabId: $0) }
+        stack.onSelect = { [weak state] tab in
+            guard let state, state.tabs.contains(where: { $0 === tab }) else { return }
+            tab.makeSelfActive()
+        }
+        stack.onContentChanged = { [weak self] in self?.updateBrowserAgentPreview() }
+        stack.show(items, aspect: preview.cardAspect ?? 10 / 16)
+        let owner = state.ensureBrowserAgentPreview()
+        owner.onFrame = { [weak self] tabId, image in
+            self?.presentedBrowserAgentPreviewStack?.card(for: tabId)?.setImage(image)
+        }
+        let liveCardTabs = liveTab.flatMap { stack.visibleTabIds.contains($0.guid) ? [$0] : nil } ?? []
+        owner.updateScreencasts(activeWorkingTabs + (visible ? liveCardTabs : []))
+    }
+
+
+    private var hasBrowserAgentPreviewWork: Bool {
+        if presentedBrowserAgentPreviewStack != nil || browserState?.browserAgentPreview?.hasActivity == true { return true }
+        if let state = browserState, !AgentChatStore.shared.activeBrowserPreviews(windowId: state.windowId).isEmpty { return true }
+        return webContentControllers.values.contains {
+            guard $0.browserAgentPreviewStack != nil, let tab = $0.associatedTab,
+                  let id = MistApps.address(tab.url)?.chatId,
+                  let preview = AgentChatStore.shared.entry(for: id)?.browserPreview else { return false }
+            return preview.windowId == browserState?.windowId && !preview.cards.isEmpty
+        }
+    }
+
+    private var activeWorkingTabs: [Tab] {
+        guard let state = browserState else { return [] }
+        return AgentChatStore.shared.activeBrowserPreviews(windowId: state.windowId).compactMap { preview in
+            guard !preview.cards.contains(where: { $0.tabId == preview.tabId && $0.chat != nil }) else { return nil }
+            return state.tabs.first(where: { $0.guid == preview.tabId })
+        }
+    }
+
+    private func updateBrowserAgentMounts() {
+        guard let state = browserState else { return }
+        let tabs = activeWorkingTabs
+        guard !tabs.isEmpty || state.browserAgentPreview != nil else { return }
+        let owner = state.ensureBrowserAgentPreview()
+        owner.holder = { [weak self] in self?.browserAgentPageHolder }
+        owner.realSize = { [weak self] in self?.currentWebPanelSize }
+        owner.updateMounts(tabs)
+    }
+
+    private func hideBrowserAgentPreview() {
+        if let card = presentedBrowserAgentPreviewStack, !card.isHidden { card.isHidden = true }
+        presentedBrowserAgentPreviewStack = nil
+        browserState?.browserAgentPreview?.updateScreencasts(activeWorkingTabs)
     }
     
     /// Resolve the controller owning `tab`'s content WITHOUT the
@@ -1527,26 +1682,7 @@ class WebContentContainerViewController: NSViewController {
         }
         shell.mountPlaceholderNativeView(nativeView)
 
-        // Focus the placeholder so the user can immediately press Space to
-        // start the dino game without first clicking the canvas.
-        // Two-step focus matches WebContentViewController.focusWebContent:
-        //   1. Cocoa-level: window.makeFirstResponder routes Cocoa events.
-        //   2. Chromium-level: wrapper.focus() routes Chromium's internal
-        //      focus tracker so the renderer receives keystrokes. Without
-        //      it, makeFirstResponder alone may leave the renderer in a
-        //      "not focused" state and keyDown events go nowhere.
-        // wrapper.focus() may silently fail if chrome://dino hasn't
-        // committed navigation yet (URL=nil), but the page loads fast
-        // enough that the first user keystroke arrives after commit.
-        // A background Space of the shared shell must not take focus.
-        if browserState?.windowController?.isPresentedOrLegacy ?? true {
-            nativeView.window?.makeFirstResponder(nativeView)
-            if wrapper.responds(to: #selector(WebContentWrapper.focus)) {
-                wrapper.focus()
-            }
-        }
-
-        AppLogInfo("🦖 [Container] attached placeholder shell + focused")
+        AppLogInfo("🦖 [Container] attached placeholder shell")
     }
 
     /// Tear down the placeholder shell. Synchronous structural cleanup —
@@ -1893,6 +2029,8 @@ class WebContentContainerViewController: NSViewController {
     /// Mounts `controller`'s view as the current tab and removes every other
     /// tab view in the same turn (see "Tab switch" above).
     private func switchToWebContentController(_ controller: WebContentViewController) {
+        browserState?.browserAgentPreview?.release()
+        controller.onAgentPreviewVisibilityChanged = { [weak self] in self?.updateBrowserAgentPreview() }
         if let current = currentWebContentController, current !== controller {
             // Outgoing focused VC no longer owns the split host — drop its
             // partner-crash subscription (its own observers won't re-run).
@@ -1972,12 +2110,13 @@ class WebContentContainerViewController: NSViewController {
         }
         hasMountedTab = true
 
-        // Unmount only now, unlike Kiosk: a split's two pages and its shared
+        // Unmount only now: a split's two pages and its shared
         // AI Chat panel have just moved over from the outgoing view while it
         // was still in the window, which spares them a windowless transition.
         unmountTabViews(except: controller)
 
         currentWebContentController = controller
+        updateBrowserAgentPreview()
         // Now the focused split host (if in a split) — watch the partner pane's
         // crashState so a non-focused-pane crash shows without a focus switch.
         controller.updatePartnerCrashSubscription()
@@ -2009,6 +2148,7 @@ class WebContentContainerViewController: NSViewController {
 
         // If this is the current controller, remove from view
         if controller === currentWebContentController {
+            browserState?.browserAgentPreview?.release()
             controller.view.removeFromSuperview()
             controller.removeFromParent()
             currentWebContentController = nil
@@ -2078,20 +2218,8 @@ class WebContentContainerViewController: NSViewController {
     
     /// Toggle AI Chat for the current tab
     /// This toggles the AI Chat state on the currently focused tab
-    func toggleAIChat(trigger: BrowserState.AIChatSidebarOpenTrigger = .button) {
-        guard browserState?.groupOverviewState == nil else { return }
-        // Toggle on the current WebContentViewController (which will update the associated tab)
-        if let controller = currentWebContentController {
-            controller.toggleAIChatInTraditionalLayout(trigger: trigger)
-        } else {
-            // Fallback: directly toggle the focusingTab's state
-            if let tab = browserState?.focusingTab {
-                if tab.aiChatCollapsed {
-                    browserState?.prepareAIChatSidebarOpen(trigger: trigger)
-                }
-                tab.toggleAIChat()
-            }
-        }
+    func toggleAIChat() {
+        browserState?.toggleAIChat()
     }
 
     // =========================================================================
@@ -2101,6 +2229,14 @@ class WebContentContainerViewController: NSViewController {
     /// Find the WebContentViewController managing a given Chromium tab ID.
     func findController(forTabId tabId: Int) -> WebContentViewController? {
         webContentControllers.values.first { $0.associatedTab?.guid == tabId }
+    }
+
+    func appPage(for tab: Tab) -> (NSViewController & MistAppPage)? {
+        findController(forTabId: tab.guid)?.appPageController
+    }
+
+    func markdownReader(for tab: Tab) -> MarkdownReaderViewController? {
+        findController(forTabId: tab.guid)?.markdownReaderController
     }
 
     /// True when the inspected tab is part of a split currently mounted by

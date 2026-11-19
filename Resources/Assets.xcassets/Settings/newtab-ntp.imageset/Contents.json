@@ -1,22 +1,56 @@
 {
-  "images" : [
+  "images": [
     {
-      "filename" : "Frame 676.pdf",
-      "idiom" : "universal"
+      "filename": "mist-light@1x.png",
+      "idiom": "universal",
+      "scale": "1x"
     },
     {
-      "appearances" : [
+      "filename": "mist-light@2x.png",
+      "idiom": "universal",
+      "scale": "2x"
+    },
+    {
+      "filename": "mist-light@3x.png",
+      "idiom": "universal",
+      "scale": "3x"
+    },
+    {
+      "filename": "mist-dark@1x.png",
+      "idiom": "universal",
+      "scale": "1x",
+      "appearances": [
         {
-          "appearance" : "luminosity",
-          "value" : "dark"
+          "appearance": "luminosity",
+          "value": "dark"
         }
-      ],
-      "filename" : "Frame 677.pdf",
-      "idiom" : "universal"
+      ]
+    },
+    {
+      "filename": "mist-dark@2x.png",
+      "idiom": "universal",
+      "scale": "2x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    },
+    {
+      "filename": "mist-dark@3x.png",
+      "idiom": "universal",
+      "scale": "3x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
     }
   ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
+  "info": {
+    "author": "xcode",
+    "version": 1
   }
 }

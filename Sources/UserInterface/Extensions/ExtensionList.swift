@@ -36,18 +36,7 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
     private let showsManagement: Bool
     private let onRequestDismiss: (() -> Void)?
     private let triggerAnchorView: NSView?
-    @State private var contentSize: CGSize = .zero
-    
-    var onFrameChanged: ((CGSize) -> Void)?
-    
-    #if DEBUG
-    @State private var isTestMode = false
-    @State private var currentTestCase = 0
-    private let testCases = [0, 1, 3, 4, 8, 12, 15, 16, 17, 24, 32]
-    #endif
-    
     private let columns = Array(repeating: GridItem(.fixed(50), spacing: 6), count: 4)
-    private let itemWidth: CGFloat = 50
     private let itemHeight: CGFloat = 32
     private let spacing: CGFloat = 6
     private let maxRows = 4
@@ -64,7 +53,6 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
     ) {
         self.extensionManager = extensionManager
         self.browserState = browserState
-        self.onFrameChanged = onFrameChanged
         self.needSettings = needSettings
         self.showsManagement = showsManagement
         self.onRequestDismiss = onRequestDismiss
@@ -275,66 +263,6 @@ struct ExtensionList<Manager: ExtensionManagerProtocol>: View {
         )
     }
     
-    #if DEBUG
-    private var debugTestButtons: some View {
-        VStack(spacing: 8) {
-            Divider()
-                .padding(.horizontal, 16)
-            
-            Text("DEBUG Test Mode")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.orange)
-                .padding(.horizontal, 16)
-            
-            HStack(spacing: 8) {
-                if isTestMode {
-                    Button("Next Test (\(testCases[currentTestCase]) items)") {
-                        currentTestCase = (currentTestCase + 1) % testCases.count
-                        loadTestData(itemCount: testCases[currentTestCase])
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    
-                    Button("Restore") {
-                        isTestMode = false
-                        extensionManager.refreshExtensions()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            // no isLoaded update needed
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                } else {
-                    Button("Start Test") {
-                        isTestMode = true
-                        currentTestCase = 0
-                        loadTestData(itemCount: testCases[currentTestCase])
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-    
-    private func loadTestData(itemCount: Int) {
-        if let realManager = extensionManager as? ExtensionManager {
-            realManager.loadTestData(itemCount: itemCount)
-        } else if let mockManager = extensionManager as? MockExtensionManager {
-            let mockExtensions = (1...itemCount).map { i in
-                Extension.mock(
-                    id: "test_\(i)",
-                    name: "Test Extension \(i)",
-                    isPinned: i <= min(4, itemCount / 4),
-                    pinnedIndex: i <= min(4, itemCount / 4) ? i : -1
-                )
-            }
-            mockManager.extensions = mockExtensions
-            mockManager.pinedExtensions = mockExtensions.filter { $0.isPinned }
-        }
-    }
-    #endif
 }
 
 struct ExtensionGridItem: View {
@@ -668,45 +596,3 @@ private struct MenuAnchorViewRepresentable: NSViewRepresentable {
         }
     }
 }
-
-#if DEBUG
-// MARK: - Mock Data for Testing
-
-class MockExtensionManager: ObservableObject, ExtensionManagerProtocol {
-    @Published var extensions: [Extension] = []
-    @Published var pinedExtensions: [Extension] = []
-    @Published var phiExtensionVersion: String?
-    @Published var badges: [String: ExtensionManager.BadgeState] = [:]
-    @Published var dynamicIcons: [String: NSImage] = [:]
-    
-    init(mockExtensions: [Extension]) {
-        self.extensions = mockExtensions
-        self.pinedExtensions = mockExtensions.filter { $0.isPinned }
-    }
-    
-    func refreshExtensions() {
-        // Do nothing for mock
-    }
-    
-    func togglePin(_ model: Extension) {
-        // Mock toggle for debug test
-        if let index = extensions.firstIndex(where: { $0.id == model.id }) {
-            extensions[index].isPinned.toggle()
-            pinedExtensions = extensions.filter { $0.isPinned }
-        }
-    }
-}
-
-extension Extension {
-    static func mock(id: String, name: String, isPinned: Bool = false, pinnedIndex: Int = -1) -> Extension {
-        let dict: [String: Any] = [
-            "id": id,
-            "name": name,
-            "version": "1.0.0",
-            "isPinned": isPinned,
-            "pinnedIndex": pinnedIndex
-        ]
-        return Extension(from: dict)
-    }
-}
-#endif

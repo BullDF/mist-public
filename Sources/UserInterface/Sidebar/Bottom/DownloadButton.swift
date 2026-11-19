@@ -160,60 +160,8 @@ struct DownloadButtonView: View {
 
 // MARK: - NSView Wrapper for AppKit Integration
 
-/// NSView wrapper for DownloadButtonView to use in SidebarBottomBar
-class DownloadButtonNSView: NSView {
-    private var hostingView: ThemedHostingView?
-    private let viewModel: DownloadButtonViewModel
-    private var onTap: (() -> Void)?
-    
-    // MARK: - Initialization
-    
-    init(downloadsManager: DownloadsManager? = nil, onTap: @escaping () -> Void) {
-        self.viewModel = DownloadButtonViewModel(downloadsManager: downloadsManager)
-        self.onTap = onTap
-        super.init(frame: .zero)
-        setupHostingView()
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    // MARK: - Setup
-    
-    private func setupHostingView() {
-        let hosting = ThemedHostingView(rootView: DownloadButtonView(viewModel: viewModel, onTap: { [weak self] in
-            self?.onTap?()
-        }))
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hosting)
-        
-        NSLayoutConstraint.activate([
-            hosting.topAnchor.constraint(equalTo: topAnchor),
-            hosting.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hosting.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-        
-        self.hostingView = hosting
-    }
-    
-    // MARK: - Public Methods
-    
-    /// Bind to a DownloadsManager to observe progress
-    func bindTo(_ downloadsManager: DownloadsManager) {
-        viewModel.bindTo(downloadsManager)
-    }
-    
-    /// Get the view for popover positioning
-    var popoverAnchorView: NSView {
-        return self
-    }
-}
-
 // MARK: - Preview
 
-#if DEBUG
 struct DownloadButtonView_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 20) {
@@ -258,4 +206,3 @@ class PreviewDownloadButtonViewModel: DownloadButtonViewModel {
         self.animationPlayCount = animationCount
     }
 }
-#endif

@@ -51,7 +51,7 @@ final class ShortcutCloseMenuIntegrationTests: XCTestCase {
     // Exercise the real controller's role adaptation with both window contexts,
     // without closing a user window or depending on desktop activation.
     private func updateRoles(hasBrowserTabs: Bool) throws {
-        let controllerClass = try XCTUnwrap(NSClassFromString("PhiAppController"))
+        let controllerClass: AnyClass = try XCTUnwrap(NSClassFromString("PhiAppController"))
         let sharedSelector = NSSelectorFromString("sharedController")
         let sharedMethod = try XCTUnwrap(class_getClassMethod(controllerClass, sharedSelector))
         typealias Shared = @convention(c) (AnyObject, Selector) -> Unmanaged<AnyObject>
@@ -162,7 +162,7 @@ final class ShortcutCloseMenuIntegrationTests: XCTestCase {
                         && $0.key.menuKeyEquivalent == commandW.menuKeyEquivalent
                 })
                 XCTAssertFalse(owner.scope.contains(.browser))
-                XCTAssertFalse(owner.scope.contains(.kiosk))
+                XCTAssertFalse(owner.scope.contains(.peek))
                 XCTAssertFalse(owner.scope.isEmpty, "Retain the real active owner for chord search and app-wide conflicts")
                 XCTAssertTrue(inventory.occupants(of: commandW).contains(owner))
                 XCTAssertTrue(inventory.conflicts(for: CommandWrapper.IDC_OPTIONS.rawValue,

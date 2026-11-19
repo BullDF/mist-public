@@ -188,7 +188,6 @@ struct BookmarkFolderIconPicker: View {
     let onSelect: (BookmarkFolderIcon) -> Void
 
     private static let itemSize: CGFloat = 26
-    private static let iconSize: CGFloat = 20
     private static let columnSpacing: CGFloat = 16
     private static let rowSpacing: CGFloat = 4
     private static let gridWidth: CGFloat = 236

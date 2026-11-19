@@ -23,7 +23,6 @@ int main(int argc, const char * argv[]) {
         for (int i = 0; i < argc; i++) {
             AppLogDebug(@"argv[%d]: %s", i, argv[i]);
         }
-#if DEBUG
         if (EnvironmentChecker.isRunningPreview) {
             AppLogInfo(@"Running in Xcode Preview environment");
             [[NSThread currentThread] setName:@"main"];
@@ -31,7 +30,6 @@ int main(int argc, const char * argv[]) {
             [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
             return NSApplicationMain(argc, (const char **)argv);
         }
-#endif
 
         // Finish any interrupted user-data removal before Chromium — or the
         // Time Machine bootstrap below — reads or writes any state: stops a
@@ -53,6 +51,7 @@ int main(int argc, const char * argv[]) {
         }
         
         AppLogInfo(@"ChromiumLauncher singleton created (Chromium will initialize after app launch)");
+        [MistChromiumAutofillPolicy applyBeforeLaunch];
         [launcher launchChromiumWithArgc:argc argv:(const char **)argv];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     } @catch (NSException *exception) {

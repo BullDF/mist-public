@@ -146,7 +146,7 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
 
     func testRecordedShiftedDigitsUseSharedDisplayWithoutChangingSavedKeys() throws {
         let model = ShortcutsViewModel()
-        let commands: [CommandWrapper] = [.IDC_RELOAD, .PHI_COPY_URL, .IDS_EDIT_USE_SELECTION_MAC]
+        let commands: [CommandWrapper] = [.IDC_RELOAD, .PHI_COPY_URL, .IDS_EDIT_JUMP_TO_SELECTION_MAC]
         let digits: [(String, String, UInt16)] = [
             ("1", "!", 18), ("2", "@", 19), ("3", "#", 20), ("4", "$", 21),
             ("5", "%", 23), ("6", "^", 22), ("7", "&", 26), ("8", "*", 28),
@@ -318,7 +318,6 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
     func testSelectionCommandsKeepNativeActionsAcrossRebindReloadDisableAndRestore() throws {
         let bridge = try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge)
         let commands: [(CommandWrapper, String)] = [
-            (.IDS_EDIT_USE_SELECTION_MAC, "copyToFindPboard:"),
             (.IDS_EDIT_JUMP_TO_SELECTION_MAC, "centerSelectionInVisibleArea:")
         ]
         let model = ShortcutsViewModel()
@@ -376,13 +375,6 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
             try assertMenu(command, action: action, key: original)
         }
 
-        let useSelection = CommandWrapper.IDS_EDIT_USE_SELECTION_MAC
-        let jump = CommandWrapper.IDS_EDIT_JUMP_TO_SELECTION_MAC
-        model.setCustomShortcut(for: jump, key: try XCTUnwrap(Shortcuts.DefaultShortcuts[useSelection]))
-        model.rebuildSections()
-        XCTAssertTrue(model.conflicts(for: jump).contains { $0.command == useSelection })
-        XCTAssertTrue(model.conflicts(for: useSelection).contains { $0.command == jump })
-        XCTAssertNil(Shortcuts.overrideState(for: useSelection.rawValue))
     }
 
     func testBookmarkBarCommandKeepsNativeActionAcrossShortcutChanges() throws {
@@ -504,7 +496,7 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
     }
 
     func testBrowserCommandTitlesStayConsistentAcrossRowsConflictsAndSearch() throws {
-        let commands: [CommandWrapper] = [.IDC_CLEAR_BROWSING_DATA, .IDC_SHOW_BOOKMARK_BAR,
+        let commands: [CommandWrapper] = [.IDC_TASK_MANAGER, .IDC_SHOW_BOOKMARK_BAR,
                                           .IDC_SHOW_BOOKMARK_MANAGER]
         for source in [ShortcutBinding.Source.menu, .hidden] {
             let bindings = (commands + [.IDC_DUPLICATE_TAB]).map { command in
@@ -667,8 +659,6 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
     func testDetailKeycapsPreserveDisplayNotationAndDisabledState() throws {
         let model = ShortcutsViewModel(additionalBindings: { [] })
         XCTAssertEqual(try item(.IDC_NEW_WINDOW, in: model).shortcutKeycapTokens, ["⌘", "N"])
-        XCTAssertEqual(try item(.IDC_SELECT_PREVIOUS_TAB, in: model).shortcutKeycapTokens, ["⇧", "⌘", "["])
-        XCTAssertEqual(try item(.IDC_SELECT_NEXT_TAB, in: model).shortcutKeycapTokens, ["⇧", "⌘", "]"])
         model.setCustomShortcut(for: .IDC_NEW_WINDOW, key: customKey)
         XCTAssertEqual(try item(.IDC_NEW_WINDOW, in: model).shortcutKeycapTokens, ["⌃", "⌘", "J"])
         model.disableShortcut(for: .IDC_NEW_WINDOW)
@@ -733,7 +723,7 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
             modifierFlags: [.control, .shift, .numericPad], timestamp: 0, windowNumber: 0,
             context: nil, characters: "1", charactersIgnoringModifiers: "1", isARepeat: false, keyCode: 83))
         let key = try XCTUnwrap(ShortcutsKey.recordingKey(for: shiftedEvent, inputSourceIdentifier: source))
-        for command in [CommandWrapper.IDC_SELECT_TAB_0, .PHI_COPY_URL] {
+        for command in [CommandWrapper.IDC_RELOAD, .PHI_COPY_URL] {
             let model = ShortcutsViewModel(additionalBindings: { [] })
             model.setCustomShortcut(for: command, key: key)
             XCTAssertNil(model.persistenceFailure)
@@ -902,7 +892,7 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
     }
 
     func testDisablingRuntimeBindingWithoutSwiftDefaultPersistsExplicitDisable() throws {
-        let command = CommandWrapper.IDC_DUPLICATE_TAB
+        let command = CommandWrapper.IDC_WINDOW_MUTE_SITE
         XCTAssertNil(Shortcuts.DefaultShortcuts[command])
         let model = ShortcutsViewModel(additionalBindings: {
             [ShortcutBinding(commandID: command.rawValue, key: self.customKey,
@@ -1106,52 +1096,8 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
     }
 
 
-    func testConflictingForwardAliasPreservesAllKeysAcrossReloadAndRestore() throws {
-        let bridge = try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge)
-        let arrow = ShortcutsKey(characters: "\u{F703}", modifiers: .command)
-        let bracket = ShortcutsKey(characters: "]", modifiers: .command)
-        for (taken, retained) in [(arrow, bracket), (bracket, arrow)] {
-            bridge.requestRebuildMainMenu()
-            let model = ShortcutsViewModel()
-            model.setCustomShortcut(for: .IDC_DUPLICATE_TAB, key: taken)
-            XCTAssertNil(Shortcuts.overrideState(for: CommandWrapper.IDC_FORWARD.rawValue))
-            XCTAssertEqual(try item(.IDC_FORWARD, in: model).shortcutKey, Shortcuts.DefaultShortcuts[.IDC_FORWARD])
-            for _ in 0..<2 {
-                // Inspect actual menu and Framework exports, not only UI filtering.
-                let bindings = Shortcuts.additionalBindings().filter { $0.commandID == CommandWrapper.IDC_FORWARD.rawValue }
-                XCTAssertTrue(bindings.contains { $0.key.menuKeyEquivalent == retained.menuKeyEquivalent })
-                XCTAssertTrue(bindings.contains { $0.key.menuKeyEquivalent == taken.menuKeyEquivalent })
-                XCTAssertEqual(Set(model.inventory.occupants(of: taken).map(\.owner)),
-                               [.command(CommandWrapper.IDC_DUPLICATE_TAB.rawValue), .command(CommandWrapper.IDC_FORWARD.rawValue)])
-                _ = Shortcuts.reloadOverrides()
-                bridge.requestRebuildMainMenu()
-                model.rebuildSections()
-            }
-            model.disableShortcut(for: .IDC_FORWARD)
-            XCTAssertTrue(Shortcuts.additionalBindings().filter { $0.commandID == CommandWrapper.IDC_FORWARD.rawValue }.isEmpty)
-            model.restoreDefaultShortcut(for: .IDC_DUPLICATE_TAB)
-            model.restoreDefaultShortcut(for: .IDC_FORWARD)
-            let restored = Shortcuts.additionalBindings().filter { $0.commandID == CommandWrapper.IDC_FORWARD.rawValue }
-            XCTAssertTrue(restored.contains { $0.key.menuKeyEquivalent == arrow.menuKeyEquivalent })
-            XCTAssertTrue(restored.contains { $0.key.menuKeyEquivalent == bracket.menuKeyEquivalent })
-        }
-    }
-
-    func testConflictingHiddenTabAliasPreservesPrimaryAndAliasBindings() throws {
-        let bridge = try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge)
-        bridge.requestRebuildMainMenu()
-        let model = ShortcutsViewModel()
-        let pageDown = ShortcutsKey(characters: "\u{F72D}", modifiers: .control)
-        let original = try XCTUnwrap(try item(.IDC_SELECT_NEXT_TAB, in: model).shortcutKey)
-        model.setCustomShortcut(for: .IDC_DUPLICATE_TAB, key: pageDown)
-        let remaining = Shortcuts.additionalBindings().filter { $0.commandID == CommandWrapper.IDC_SELECT_NEXT_TAB.rawValue }
-        XCTAssertTrue(remaining.contains { $0.key.menuKeyEquivalent == pageDown.menuKeyEquivalent })
-        XCTAssertTrue(remaining.contains { $0.key.menuKeyEquivalent == original.menuKeyEquivalent })
-        XCTAssertEqual(try item(.IDC_SELECT_NEXT_TAB, in: model).shortcutKey, original)
-    }
-
     func testSuccessiveConflictingRecordingsPreserveAllOtherCommandAliases() throws {
-        let command = CommandWrapper.IDC_FORWARD
+        let command = CommandWrapper.IDC_RELOAD
         let first = ShortcutsKey(characters: "\u{F703}", modifiers: .command)
         let second = ShortcutsKey(characters: "f", modifiers: [.control, .option])
         let primary = try XCTUnwrap(Shortcuts.DefaultShortcuts[command])
@@ -1242,8 +1188,6 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
 
     func testTextSearchPreservesDisplayedKeysAndLiteralPlus() {
         let model = ShortcutsViewModel(additionalBindings: { [] })
-        model.searchText = "cmd shift ["
-        XCTAssertTrue(model.filteredSections.flatMap(\.items).contains { $0.command == .IDC_SELECT_PREVIOUS_TAB })
         model.setCustomShortcut(for: .IDC_DUPLICATE_TAB,
                                 key: ShortcutsKey(characters: "+", modifiers: [.command, .shift]))
         for query in ["+", "cmd shift +", "command+shift++", "⌘⇧+"] {
@@ -1328,27 +1272,7 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
         XCTAssertNotNil(model.selectedItem)
     }
 
-    func testPairedFrameworkExportsAliasesAndHonorsRebindDisableRestore() throws {
-        let bridge = try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge)
-        XCTAssertTrue(bridge.responds(to: NSSelectorFromString("shortcutBindings")))
-        let command = CommandWrapper.IDC_SELECT_NEXT_TAB
-        let pageDown = ShortcutsKey(characters: "\u{F72D}", modifiers: .control)
-        bridge.requestRebuildMainMenu()
-        func aliases() -> [ShortcutBinding] {
-            Shortcuts.additionalBindings().filter { $0.commandID == command.rawValue && $0.source == .hidden }
-        }
-        XCTAssertTrue(aliases().contains { $0.key.menuKeyEquivalent == pageDown.menuKeyEquivalent })
-        let model = ShortcutsViewModel()
-        model.setCustomShortcut(for: command, key: customKey)
-        XCTAssertFalse(aliases().isEmpty)
-        XCTAssertTrue(aliases().allSatisfy { $0.key.menuKeyEquivalent == customKey.menuKeyEquivalent })
-        model.disableShortcut(for: command)
-        XCTAssertTrue(aliases().isEmpty)
-        model.restoreDefaultShortcut(for: command)
-        XCTAssertTrue(aliases().contains { $0.key.menuKeyEquivalent == pageDown.menuKeyEquivalent })
-    }
-
-    func testSplitTabStaysMenuOnlyAcrossKioskChangesAndRestoreAll() throws {
+    func testSplitTabStaysMenuOnlyAcrossOverrideReloadAndRestoreAll() throws {
         let bridge = try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge)
         let model = ShortcutsViewModel()
         func findSplit(in menu: NSMenu) -> NSMenuItem? {
@@ -1367,9 +1291,6 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
             XCTAssertTrue(entry.keyEquivalent.isEmpty)
             XCTAssertNil(Shortcuts.key(for: .IDC_NEW_SPLIT_TAB))
             XCTAssertTrue(model.inventory.bindings(for: CommandWrapper.IDC_NEW_SPLIT_TAB.rawValue).isEmpty)
-            XCTAssertFalse(model.conflicts(for: .PHI_NEW_KIOSK_WINDOW).contains {
-                $0.id == .command(CommandWrapper.IDC_NEW_SPLIT_TAB.rawValue)
-            })
             let override = try XCTUnwrap(PhiChromiumCoordinator.shared.keyEquivalentOverride(
                 forCommand: Int32(CommandWrapper.IDC_NEW_SPLIT_TAB.rawValue)))
             XCTAssertEqual(override["keyEquivalent"] as? String, "")
@@ -1382,22 +1303,16 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
         ])
         try Shortcuts.reloadOverrides().get()
         try assertMenuOnly()
-        model.setCustomShortcut(for: .PHI_NEW_KIOSK_WINDOW, key: customKey)
-        try assertMenuOnly()
-        model.disableShortcut(for: .PHI_NEW_KIOSK_WINDOW)
-        try assertMenuOnly()
         model.restoreAllShortcuts()
         XCTAssertNil(model.persistenceFailure)
-        XCTAssertEqual(Shortcuts.key(for: .PHI_NEW_KIOSK_WINDOW), Shortcuts.DefaultShortcuts[.PHI_NEW_KIOSK_WINDOW])
         try assertMenuOnly()
     }
 
     private var productOwnedCommands: [CommandWrapper] {
-        [.PHI_NEW_KIOSK_WINDOW, .PHI_COPY_URL, .PHI_SELECT_NEXT_SPACE,
-         .PHI_SELECT_PREVIOUS_SPACE, .PHI_TOGGLE_READER, .PHI_TOGGLE_SIDEBAR]
+        [.PHI_COPY_URL, .PHI_TOGGLE_SIDEBAR, .IDC_ZOOM_PLUS, .IDC_DUPLICATE_TAB]
     }
 
-    func testProductDefaultsHaveOneOwnerAndKeepOtherChromiumAliases() throws {
+    func testProductDefaultsHaveOneOwnerAndDroppedCommandsStayUnbound() throws {
         try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge).requestRebuildMainMenu()
         let model = ShortcutsViewModel()
         for command in productOwnedCommands {
@@ -1406,16 +1321,8 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
                            [.command(command.rawValue)], "Product default: \(command)")
             XCTAssertFalse(try item(command, in: model).hasConflict)
         }
-        for (command, key) in [
-            (CommandWrapper.IDC_DEV_TOOLS_INSPECT, ShortcutsKey(characters: "c", modifiers: [.command, .option])),
-            (.IDC_SELECT_NEXT_TAB, ShortcutsKey(characters: "\u{F72D}", modifiers: .control)),
-            (.IDC_SELECT_PREVIOUS_TAB, ShortcutsKey(characters: "\u{F72C}", modifiers: .control)),
-            (.IDC_SELECT_NEXT_TAB, try XCTUnwrap(Shortcuts.DefaultShortcuts[.IDC_SELECT_NEXT_TAB])),
-            (.IDC_SELECT_PREVIOUS_TAB, try XCTUnwrap(Shortcuts.DefaultShortcuts[.IDC_SELECT_PREVIOUS_TAB]))
-        ] {
-            XCTAssertTrue(model.inventory.bindings(for: command.rawValue).contains {
-                $0.key.menuKeyEquivalent == key.menuKeyEquivalent
-            }, "Unrelated alias must remain: \(command)")
+        for command in Shortcuts.disabledShortcutCommands {
+            XCTAssertTrue(model.inventory.bindings(for: command.rawValue).isEmpty)
         }
         XCTAssertFalse(model.reservedShortcuts.contains { $0.id == .command(CommandWrapper.IDC_NEW_SPLIT_TAB.rawValue) })
         XCTAssertFalse(model.reservedShortcuts.contains { $0.id == .command(CommandWrapper.IDC_SHOW_READING_MODE_KEYBOARD.rawValue) })
@@ -1454,12 +1361,12 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
         try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge).requestRebuildMainMenu()
         let model = ShortcutsViewModel()
         let copyKey = try XCTUnwrap(Shortcuts.DefaultShortcuts[.PHI_COPY_URL])
-        model.setCustomShortcut(for: .IDC_DEV_TOOLS_INSPECT, key: copyKey)
+        model.setCustomShortcut(for: .IDC_DEV_TOOLS, key: copyKey)
         XCTAssertEqual(Shortcuts.key(for: .PHI_COPY_URL), copyKey)
         XCTAssertEqual(Set(model.inventory.occupants(of: copyKey).map(\.owner)),
-                       [.command(CommandWrapper.IDC_DEV_TOOLS_INSPECT.rawValue), .command(CommandWrapper.PHI_COPY_URL.rawValue)])
-        XCTAssertTrue(model.inventory.bindings(for: CommandWrapper.IDC_DEV_TOOLS_INSPECT.rawValue).contains {
-            $0.source == .hidden && $0.key.menuKeyEquivalent == copyKey.menuKeyEquivalent
+                       [.command(CommandWrapper.IDC_DEV_TOOLS.rawValue), .command(CommandWrapper.PHI_COPY_URL.rawValue)])
+        XCTAssertTrue(model.inventory.bindings(for: CommandWrapper.IDC_DEV_TOOLS.rawValue).contains {
+            $0.key.menuKeyEquivalent == copyKey.menuKeyEquivalent
         }, "Explicit user overrides must still reach the Framework")
         model.restoreAllShortcuts()
         XCTAssertEqual(Set(model.inventory.occupants(of: copyKey).map(\.owner)),
@@ -1485,37 +1392,31 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
         XCTAssertEqual(Set(model.inventory.occupants(of: oldKey).map(\.owner)), [.command(CommandWrapper.PHI_TAB_SWITCHER_FORWARD.rawValue)])
     }
 
-    func testLiveHiddenOwnersHaveNamesAndConflictingBindingsArePreserved() throws {
+    func testLiveHiddenTableKeepsNoDroppedCommandAndNamesTheRest() throws {
         let bridge = try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge)
         XCTAssertTrue(bridge.responds(to: NSSelectorFromString("shortcutBindings")))
         bridge.requestRebuildMainMenu()
+        // The Framework's own snapshot, before Mist filters it: a dropped command keeps no hidden key.
+        for record in bridge.shortcutBindings() where (record["source"] as? String) == "hidden" {
+            guard let characters = record["keyEquivalent"] as? String, !characters.isEmpty else { continue }
+            let id = try XCTUnwrap(record["commandId"] as? Int)
+            XCTAssertFalse(Shortcuts.isShortcutDisabled(for: id), "\(id) kept \(characters)")
+        }
         let model = ShortcutsViewModel()
-        let hidden = model.inventory.bindings.filter { $0.source == .hidden }
-        XCTAssertFalse(hidden.isEmpty)
-        for binding in hidden {
+        for binding in model.inventory.bindings where binding.source == .hidden {
             let command = try XCTUnwrap(binding.commandID.flatMap(CommandWrapper.init(rawValue:)))
             let name = model.sections.flatMap(\.items).first { $0.command == command }?.name
                 ?? model.reservedShortcuts.first { $0.id == binding.owner }?.name
             XCTAssertFalse(try XCTUnwrap(name).isEmpty)
             XCTAssertNotEqual(name, "Reserved browser shortcut")
         }
-        let reserved = try XCTUnwrap(hidden.first { $0.commandID == CommandWrapper.IDC_MOVE_TAB_NEXT.rawValue })
-        let row = try item(.IDC_MOVE_TAB_NEXT, in: model)
-        XCTAssertEqual(row.name, "Move Tab Right")
-        XCTAssertEqual(row.shortcutKey, reserved.key)
-        model.setCustomShortcut(for: .IDC_DUPLICATE_TAB, key: reserved.key)
-        XCTAssertEqual(writeCount, 1)
-        XCTAssertNil(Shortcuts.overrideState(for: CommandWrapper.IDC_MOVE_TAB_NEXT.rawValue))
-        XCTAssertEqual(try item(.IDC_MOVE_TAB_NEXT, in: model).shortcutKey, reserved.key)
-        XCTAssertTrue(model.conflicts(for: .IDC_DUPLICATE_TAB).contains { $0.command == .IDC_MOVE_TAB_NEXT })
     }
 
     func testBrowserCommandsCanBeCustomizedDisabledAndRestoredInLiveTables() throws {
         let bridge = try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge)
         bridge.requestRebuildMainMenu()
         let model = ShortcutsViewModel()
-        for command in [CommandWrapper.IDC_RELOAD_BYPASSING_CACHE, .IDC_MOVE_TAB_PREVIOUS,
-                        .IDC_ADD_NEW_TAB_TO_GROUP] {
+        for command in [CommandWrapper.IDC_RELOAD_BYPASSING_CACHE, .IDC_DEV_TOOLS] {
             let original = try XCTUnwrap(try item(command, in: model).shortcutKey)
             model.setCustomShortcut(for: command, key: customKey)
             XCTAssertEqual(try item(command, in: model).shortcutKey, customKey)
@@ -1590,6 +1491,10 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
             return nil
         }
         for (_, key, keyCode) in productDisabledKeys {
+            // A released Chromium key may now belong to a Mist default.
+            if Shortcuts.DefaultShortcuts.values.contains(where: { $0.menuKeyEquivalent == key.menuKeyEquivalent }) {
+                continue
+            }
             model.setCustomShortcut(for: .IDC_RELOAD, key: key)
             XCTAssertEqual(Shortcuts.key(for: .IDC_RELOAD), key)
             // Product policy releases application owners, not macOS reservations.

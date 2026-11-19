@@ -21,7 +21,8 @@ final class EmojiRuntimeSupportDetectorTests: XCTestCase {
         XCTAssertFalse(detector.supportsEmoji("\u{10FFFD}"))
         XCTAssertFalse(detector.supportsEmoji("😀‍😀"))
         XCTAssertFalse(detector.supportsEmoji("🇦🇦"))
-        XCTAssertFalse(detector.supportsEmoji("🇹🇼"))
+        // Valid regional flags can render or fall back depending on macOS's region.
+        // Use the unassigned AA flag above to exercise fallback consistently.
         XCTAssertFalse(detector.supportsEmoji("🏴\u{E0061}\u{E0061}\u{E007F}"))
     }
 

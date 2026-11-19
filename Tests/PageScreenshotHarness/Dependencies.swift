@@ -3,7 +3,8 @@ extension Notification.Name {
     static let phiInWindowOverlayVisibilityChanged = Notification.Name("PhiInWindowOverlayVisibilityChanged")
 }
 @MainActor final class BrowserState { var windowId = 7; var focusingTab: Tab?; var pageCommandTarget: Tab? { focusingTab } }
-@MainActor final class Tab { var guid = 1; var isShowingNativeNTP = false; var title = "Fixture"; var url: String?; var isLoading = false; var webContentView: NSView?; var webContentWrapper: Wrapper? }
+struct MistAppAddress: Equatable { let app: String }
+@MainActor final class Tab { var guid = 1; var isShowingNativeNTP = false; var appAddress: MistAppAddress?; var title = "Fixture"; var url: String?; var isLoading = false; var webContentView: NSView?; var webContentWrapper: Wrapper? }
 @MainActor final class Wrapper { var devToolsTargetId: String? = "fixture" }
 @MainActor final class ChromiumLauncher { static func sharedInstance() -> ChromiumLauncher { ChromiumLauncher() }; var bridge: Int? = 1 }
 @MainActor enum PageScreenshotPresenter { static func showCopied(pngData: Data, title: String, windowId: Int, area: Bool = false) {}; static func edit(pngData: Data, title: String, windowId: Int) {} }

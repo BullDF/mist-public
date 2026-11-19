@@ -38,14 +38,12 @@ final class AIChatSidebarStateStore {
     private var loadedStoreURL: URL?
     private var pendingPersistWorkItem: DispatchWorkItem?
     private var hasDirtyChanges = false
-    private var isGuestAccountTransitionBlocked = false
 
     private init() {}
 
     func state(for urlString: String) -> AIChatSidebarState? {
         queue.sync {
-            guard !isGuestAccountTransitionBlocked else { return nil }
-            guard ensureStoreLoadedLocked() else { return nil }
+            ensureStoreLoadedLocked()
             guard let key = cacheKeyLocked(for: urlString), var state = storage[key] else { return nil }
             state.lastSeenDate = Date()
             storage[key] = state
@@ -57,8 +55,7 @@ final class AIChatSidebarStateStore {
 
     func cachedState(for urlString: String) -> AIChatSidebarState? {
         queue.sync {
-            guard !isGuestAccountTransitionBlocked else { return nil }
-            guard ensureStoreLoadedLocked() else { return nil }
+            ensureStoreLoadedLocked()
             guard let key = cacheKeyLocked(for: urlString) else { return nil }
             return storage[key]
         }
@@ -66,8 +63,7 @@ final class AIChatSidebarStateStore {
 
     func record(urlString: String, isCollapsed: Bool, width: CGFloat) {
         queue.async {
-            guard !self.isGuestAccountTransitionBlocked else { return }
-            guard self.ensureStoreLoadedLocked() else { return }
+            self.ensureStoreLoadedLocked()
             guard let key = self.cacheKeyLocked(for: urlString) else { return }
 
             let state = AIChatSidebarState(
@@ -83,48 +79,9 @@ final class AIChatSidebarStateStore {
         }
     }
 
-    /// Cancels source-account cache persistence before Guest migration takes
-    /// its terminal snapshot. The cache is intentionally not migrated, and a
-    /// delayed write must not recreate the Guest directory after cleanup.
-    func beginGuestAccountTransition() {
-        queue.sync {
-            isGuestAccountTransitionBlocked = true
-            pendingPersistWorkItem?.cancel()
-            pendingPersistWorkItem = nil
-            hasDirtyChanges = false
-            storage.removeAll()
-            loadedAccountID = nil
-            loadedStoreURL = nil
-        }
-    }
-
-    /// Resumes cache persistence after controllers have rebound to either a
-    /// fresh Guest account or the committed authenticated account.
-    func endGuestAccountTransition() {
-        queue.sync {
-            storage.removeAll()
-            loadedAccountID = nil
-            loadedStoreURL = nil
-            hasDirtyChanges = false
-            isGuestAccountTransitionBlocked = false
-        }
-    }
-
-    @discardableResult
-    private func ensureStoreLoadedLocked() -> Bool {
-        guard let account = currentAccountLocked() else {
-            // Login-required and recovery gates have no local-data owner.
-            // Discard rather than flush a stale account write, which could
-            // recreate its directory after logout or migration cleanup.
-            pendingPersistWorkItem?.cancel()
-            pendingPersistWorkItem = nil
-            hasDirtyChanges = false
-            storage.removeAll()
-            loadedAccountID = nil
-            loadedStoreURL = nil
-            return false
-        }
-        guard loadedAccountID != account.userID else { return true }
+    private func ensureStoreLoadedLocked() {
+        let account = AccountController.shared.localDataAccount
+        guard loadedAccountID != account.userID else { return }
 
         flushPendingPersistLocked()
         loadedAccountID = account.userID
@@ -132,11 +89,6 @@ final class AIChatSidebarStateStore {
         storage = loadStorageLocked(from: loadedStoreURL) ?? [:]
         pruneLocked()
         schedulePersistLocked()
-        return true
-    }
-
-    private func currentAccountLocked() -> Account? {
-        AccountController.shared.localDataAccount
     }
 
     private func flushPendingPersistLocked() {

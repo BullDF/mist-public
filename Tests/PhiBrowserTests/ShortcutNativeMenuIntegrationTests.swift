@@ -314,7 +314,7 @@ final class ShortcutNativeMenuIntegrationTests: XCTestCase {
         let base = try XCTUnwrap(NSClassFromString("ChromeCommandDispatcherDelegate") as? NSObject.Type)
         guard let handlingPriority else { return base.init() }
         let name = "ShortcutPriorityTest_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        let subclass = try XCTUnwrap(objc_allocateClassPair(base, name, 0))
+        let subclass: AnyClass = try XCTUnwrap(objc_allocateClassPair(base, name, 0))
         let selector = NSSelectorFromString("eventHandledByViewsFocusManager:priority:")
         let method = try XCTUnwrap(class_getInstanceMethod(base, selector))
         let handler: @convention(block) (NSObject, NSEvent, Int32) -> Bool = { _, _, priority in
@@ -393,7 +393,7 @@ final class ShortcutNativeMenuIntegrationTests: XCTestCase {
     }
 
     func testSelectionCommandTagsKeepNativeDispatchWhenReboundToHiddenKey() throws {
-        for command in [CommandWrapper.IDS_EDIT_USE_SELECTION_MAC, .IDS_EDIT_JUMP_TO_SELECTION_MAC] {
+        for command in [CommandWrapper.IDS_EDIT_JUMP_TO_SELECTION_MAC] {
             try assertNativeOwnership(characters: "\u{F72D}", modifiers: .control,
                                       keyCode: 121, enabled: true, command: command)
             try assertNativeOwnership(characters: "\u{F72D}", modifiers: .control,

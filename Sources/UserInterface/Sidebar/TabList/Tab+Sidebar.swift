@@ -13,15 +13,7 @@ extension Tab: SidebarItem {
         return guid
     }
     
-    var iconName: String? {
-        return nil // Use faviconUrl instead
-    }
-    
     var isExpandable: Bool {
-        return !subTabs.isEmpty
-    }
-    
-    var hasChildren: Bool {
         return !subTabs.isEmpty
     }
     
@@ -29,20 +21,11 @@ extension Tab: SidebarItem {
         return subTabs
     }
     
-    var depth: Int {
-        return 0 // Tabs are always at root level in our design
-    }
-    
     var itemType: SidebarItemType {
         return .tab
     }
     
     func performAction(with owner: SidebarTabListItemOwner?) {
-        Task { @MainActor [windowId] in
-            SpaceSessionControllersManager.shared
-                .getBrowserState(for: windowId)?
-                .clearGroupOverview()
-        }
         webContentWrapper?.setAsActiveTab()
     }
     
@@ -66,10 +49,12 @@ extension Tab: ContextMenuRepresentable {
         let browserStateForMenu = contextMenuState
         let splitMembership = browserStateForMenu?.splitMembership(forCellTab: self)
         let isPinnedSplitCell = splitMembership?.isPinned == true
+        // Shortcuts act on the focused tab, so only its menu shows them.
+        let showsShortcuts = browserStateForMenu?.focusingTab?.guid == guid
 
         // Off-the-record windows (standalone incognito and the Incognito
-        // Space) have no pinned tabs and no bookmark writes, so every
-        // pin/bookmark item is dropped from the menu rather than disabled.
+        // Space) have no pinned tabs, so the pin item is dropped from the
+        // menu rather than disabled.
         let isIncognitoWindow = browserStateForMenu?.isIncognito == true
 
         if !isIncognitoWindow {
@@ -128,9 +113,19 @@ extension Tab: ContextMenuRepresentable {
             duplicateItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.duplicateTab", value: "Duplicate", comment: "Tab context menu - Menu item to duplicate the selected tab"),
                                        action: #selector(duplicateTab),
                                        keyEquivalent: "")
+            if showsShortcuts {
+                applyShortcut(.IDC_DUPLICATE_TAB, to: duplicateItem)
+            }
         }
         duplicateItem.target = self
         items.append(duplicateItem)
+
+        if !isSplitCell {
+            let renameItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.rename", value: "Rename", comment: "Tab context menu - Rename the selected tab"),
+                                        action: #selector(beginRenamingTab), keyEquivalent: "")
+            renameItem.target = self
+            items.append(renameItem)
+        }
 
         // Splits expose one copy item per pane so the user can pick which
         // side to copy without having to dissolve the split. Regular tabs
@@ -176,8 +171,8 @@ extension Tab: ContextMenuRepresentable {
             items.append(copySecondaryURLItem)
         } else {
             let copyUrlItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.copyTabURL", value: "Copy Link", comment: "Tab context menu - Menu item to copy the tab URL to clipboard"), action: #selector(SpaceSessionController.myCopyLink(_:)), keyEquivalent: "")
-            if browserStateForMenu?.focusingTab?.guid == guid {
-                applyCopyURLShortcut(to: copyUrlItem)
+            if showsShortcuts {
+                applyShortcut(.PHI_COPY_URL, to: copyUrlItem)
             }
             items.append(copyUrlItem)
         }
@@ -265,95 +260,17 @@ extension Tab: ContextMenuRepresentable {
             }
         }
         
-        // When this tab belongs to a split (normal or pinned, live or closed)
-        // offer one-click actions that persist both panes together. The
-        // `splitMembership` lookup above already covers all three shapes.
-        if let splitState = contextMenuState,
-           !isIncognitoWindow,
-           splitMembership != nil {
-            let addSplitItem = NSMenuItem(
-                title: NSLocalizedString("sidebar.tabContextMenu.addSplitToBookmarks", value: "Add Split to Bookmark", comment: "Tab context menu - Save both panes of the split as a bookmark folder"),
-                action: #selector(addSplitToBookmarks(_:)),
-                keyEquivalent: "")
-            addSplitItem.target = self
-            if let liveGroup = splitMembership?.liveGroup {
-                addSplitItem.representedObject = liveGroup.id
-            }
-            items.append(addSplitItem)
-
-            // Mirrors the single-tab "Add to Folder" submenu but persists the
-            // whole split pair into the chosen folder via
-            // `addSplitBookmarkFromTab(_:toFolder:)`. Each folder item carries
-            // the `Bookmark` as `representedObject`; the trailing "New Folder"
-            // entry presents the modal and creates the split inside the new
-            // folder atomically.
-            let addSplitToFolder = NSMenuItem(
-                title: NSLocalizedString("sidebar.tabContextMenu.addSplitToFolder", value: "Add Split to Folder", comment: "Tab context menu - Save both panes of the split into a chosen bookmark folder"),
-                action: nil,
-                keyEquivalent: "")
-            let splitFolderSubmenu = NSMenu()
-            addSplitToFolder.submenu = splitFolderSubmenu
-
-            let folders = splitState.bookmarkManager.getAllFolderWithHierarchy()
-            let newSplitFolderItem = NSMenuItem(
-                title: NSLocalizedString("sidebar.tabContextMenu.addSplitToFolder.newFolderAction", value: "New Folder", comment: "Sidebar context menu title"),
-                action: #selector(createFolderAndBookmarkSplit),
-                keyEquivalent: "")
-            newSplitFolderItem.target = self
-
-            if folders.isEmpty {
-                splitFolderSubmenu.addItem(newSplitFolderItem)
-            } else {
-                buildSplitFolderMenuItems(from: folders, into: splitFolderSubmenu)
-                splitFolderSubmenu.addItem(.separator())
-                splitFolderSubmenu.addItem(newSplitFolderItem)
-            }
-            items.append(addSplitToFolder)
-        }
-
-        // Splits skip the single-URL "Add to Bookmark" / "Add to Folder"
-        // entries — those would persist only one pane and lose the pairing.
-        // "Add Split to Bookmark" above already covers the split case for
-        // both pinned and non-pinned splits.
-        if !isSplitCell && !isIncognitoWindow {
-            let isLegacy = contextMenuState?.layoutMode == .comfortable
-            let title = isLegacy ? NSLocalizedString("sidebar.tabContextMenu.addToBookmarkBar", value: "Add to Bookmark Bar", comment: "Tab context menu - Add current tab to root bookmark bar") :
-                                   NSLocalizedString("sidebar.tabContextMenu.addToBookmarks", value: "Add to Bookmark", comment: "Tab context menu - Add current tab to root bookmark bar in sidebar")
-            let addToRootItem = NSMenuItem(title: title, action: #selector(addTabToRootBookmarks), keyEquivalent: "")
-            addToRootItem.target = self
-            items.append(addToRootItem)
-
-            let addToBookmark = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.addToFolder", value: "Add to Folder", comment: "Tab context menu - Menu item to add tab to bookmarks"), action: nil, keyEquivalent: "")
-            let bookmarkSubmenu = NSMenu()
-            addToBookmark.submenu = bookmarkSubmenu
-
-            let folders = contextMenuState?.bookmarkManager.getAllFolderWithHierarchy() ?? []
-
-            let addBookmarkItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.addTabToFolder.newFolderAction", value: "New Folder", comment: "Sidebar context menu title"), action: #selector(createFolderAndBookmarkTab), keyEquivalent: "")
-            addBookmarkItem.target = self
-
-            if folders.isEmpty {
-                bookmarkSubmenu.addItem(addBookmarkItem)
-            } else {
-                addToBookmark.isEnabled = true
-                buildFolderMenuItems(from: folders, into: bookmarkSubmenu)
-                bookmarkSubmenu.addItem(.separator())
-                bookmarkSubmenu.addItem(addBookmarkItem)
-            }
-
-            items.append(addToBookmark)
-        }
-
-        // In incognito the whole bookmark block above is skipped, so the
-        // previous item may already be a separator — don't stack another.
+        // The split block above may already end with a separator — don't
+        // stack another.
         if items.last?.isSeparatorItem == false {
             items.append(.separator())
         }
 
         let countBeforeTabGroupBlock = items.count
         appendTabGroupMenuItems(into: &items)
+        appendMoveToWindowMenuItems(into: &items)
         if items.count > countBeforeTabGroupBlock {
-            // Tab-group block contributed entries; close it with a
+            // Group and window items contributed entries; close them with a
             // separator before the pin/edit/close block.
             items.append(.separator())
         }
@@ -374,10 +291,17 @@ extension Tab: ContextMenuRepresentable {
         
         if !isPinned || (isPinned && isOpenned) {
             let closeItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.closeTab", value: "Close", comment: "Tab context menu - Menu item to close the selected tab"), action: #selector(SpaceSessionController.closeTab(_:)), keyEquivalent: "")
+            // A split cell's Close closes both panes; the shortcut closes one.
+            if showsShortcuts && !isSplitCell {
+                applyShortcut(.IDC_CLOSE_TAB, to: closeItem)
+            }
             items.append(closeItem)
         }
-        
+
         let closeOther = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.closeOtherTabs", value: "Close Other Tabs", comment: "Tab context menu - Menu item to close all tabs except the selected one"), action: #selector(SpaceSessionController.closeOther(_:)), keyEquivalent: "")
+        if showsShortcuts {
+            applyShortcut(.IDC_WINDOW_CLOSE_OTHER_TABS, to: closeOther)
+        }
         items.append(closeOther)
         
         items.forEach { item in
@@ -399,123 +323,12 @@ extension Tab: ContextMenuRepresentable {
             ?? SpaceSessionControllersManager.shared.activeWindowController
     }
 
-    private func applyCopyURLShortcut(to item: NSMenuItem) {
-        item.tag = CommandWrapper.PHI_COPY_URL.rawValue
-        guard let key = Shortcuts.key(for: .PHI_COPY_URL) else { return }
-        let menuKey = key.menuKeyEquivalent
-        item.keyEquivalent = menuKey.characters
-        item.keyEquivalentModifierMask = menuKey.modifiers
+    /// Shows the shortcut currently set for `command`, read each time the
+    /// menu is built.
+    private func applyShortcut(_ command: CommandWrapper, to item: NSMenuItem) {
+        item.tag = command.rawValue
+        Shortcuts.updateShortcut(for: item)
     }
-  
-    @objc private func addToBookmarkFolder(_ menuItem: NSMenuItem) {
-        guard let folder = menuItem.representedObject as? Bookmark else {
-            return
-        }
-        contextMenuState?.bookmarkManager.addBookmark(title: title,
-                                                                                                                    url: URLProcessor.processUserInput(url ?? ""),
-                                                                                                                    to: folder,
-                                                                                                                    faviconData: liveFaviconData ?? cachedFaviconData)
-    }
-
-    @objc private func addTabToRootBookmarks() {
-        contextMenuState?.bookmarkManager.addBookmark(title: title,
-                                                                                                                    url: URLProcessor.processUserInput(url ?? ""),
-                                                                                                                    to: nil,
-                                                                                                                    faviconData: liveFaviconData ?? cachedFaviconData)
-    }
-    
-    @MainActor
-    @objc private func createFolderAndBookmarkTab() {
-        guard let windowController = contextMenuWindowController else {
-            return
-        }
-        let state = windowController.browserState
-        let tabTitle = title
-        let tabURL = URLProcessor.processUserInput(url ?? "")
-        let tabFaviconData = liveFaviconData ?? cachedFaviconData
-
-        EditPinnedTabPresenter.presentModal(
-            mode: .newFolder,
-            from: windowController.window
-        ) { result in
-            guard let folderName = result.title, !folderName.isEmpty else { return }
-            state.bookmarkManager.addFolderFromTabStrip(
-                title: folderName,
-                to: nil,
-                bookmarkTitle: tabTitle,
-                bookmarkURL: tabURL,
-                bookmarkFaviconData: tabFaviconData
-            ) { _, _ in }
-        }
-    }
-    
-    /// Recursively build folder menu items with nested submenus.
-    private func buildFolderMenuItems(from folders: [Bookmark], into menu: NSMenu) {
-        for folder in folders {
-            let folderItem = NSMenuItem(title: folder.title, action: #selector(addToBookmarkFolder(_:)), keyEquivalent: "")
-            folderItem.target = self
-            folderItem.representedObject = folder
-
-            if folder.hasChildren {
-                let submenu = NSMenu()
-                buildFolderMenuItems(from: folder.children, into: submenu)
-                folderItem.submenu = submenu
-            }
-
-            menu.addItem(folderItem)
-        }
-    }
-
-    /// Same shape as `buildFolderMenuItems` but the leaf action wires up the
-    /// split-pair save path instead of the single-tab save path.
-    private func buildSplitFolderMenuItems(from folders: [Bookmark], into menu: NSMenu) {
-        for folder in folders {
-            let folderItem = NSMenuItem(title: folder.title, action: #selector(addSplitToBookmarkFolder(_:)), keyEquivalent: "")
-            folderItem.target = self
-            folderItem.representedObject = folder
-
-            if folder.hasChildren {
-                let submenu = NSMenu()
-                buildSplitFolderMenuItems(from: folder.children, into: submenu)
-                folderItem.submenu = submenu
-            }
-
-            menu.addItem(folderItem)
-        }
-    }
-
-    @MainActor
-    @objc private func addSplitToBookmarkFolder(_ menuItem: NSMenuItem) {
-        guard let folder = menuItem.representedObject as? Bookmark,
-              let state = contextMenuState else {
-            return
-        }
-        state.addSplitBookmarkFromTab(self, toFolder: folder, bindLiveSplit: false)
-    }
-
-    @MainActor
-    @objc private func createFolderAndBookmarkSplit() {
-        guard let windowController = contextMenuWindowController else {
-            return
-        }
-        let state = windowController.browserState
-
-        EditPinnedTabPresenter.presentModal(
-            mode: .newFolder,
-            from: windowController.window
-        ) { [weak self] result in
-            guard let self,
-                  let folderName = result.title, !folderName.isEmpty else { return }
-            // Pre-generate the folder guid so we can place the split bookmark
-            // inside it without waiting for the bookmark publisher to refresh
-            // and surface a `Bookmark` instance.
-            let folderGuid = UUID().uuidString
-            // Use the scoped manager so the folder and split share a Space.
-            state.bookmarkManager.addFolder(title: folderName, guid: folderGuid)
-            state.addSplitBookmarkFromTab(self, toFolderGuid: folderGuid, bindLiveSplit: false)
-        }
-    }
-
 
     @MainActor
     @objc private func editPinnedTab() {
@@ -596,20 +409,27 @@ extension Tab: ContextMenuRepresentable {
               let normalizedURL = state.localStore.normalizedURL(from: rawURL) else { return }
 
         let normalizedString = normalizedURL.absoluteString
+        let row = state.localStore.getTab(by: pinnedGuid)
+        let displayTitle = row.map { $0.overrideTitle.flatMap { $0.isEmpty ? nil : $0 } ?? $0.title } ?? targetTab.title
+        let nameChange: String?? = newTitle.flatMap { title in
+            title.isEmpty ? .some(nil) : (title == displayTitle ? nil : .some(title))
+        }
         state.localStore.updatePinnedTab(
             resolving: pinnedGuid,
             profileId: state.profileId,
             spaceId: state.spaceId,
             url: normalizedURL,
-            title: newTitle
+            title: nil,
+            overrideTitle: nameChange
         )
 
         targetTab.pinnedUrl = normalizedString
         if targetTab.url != normalizedString {
             targetTab.url = normalizedString
         }
-        if let newTitle {
-            targetTab.applyStoredTitle(newTitle)
+        if let nameChange {
+            if let nameChange { targetTab.applyStoredTitle(nameChange) }
+            else { targetTab.clearStoredTitle() }
         }
         if targetTab.isOpenned, let wrapper = targetTab.webContentWrapper {
             wrapper.updateTabCustomValue("")
@@ -619,6 +439,19 @@ extension Tab: ContextMenuRepresentable {
                 wrapper.updateTabCustomValue(currentGuid)
             }
         }
+    }
+
+    @MainActor
+    static var renameTabLabel: String {
+        NSLocalizedString("sidebar.tabContextMenu.renameTab", value: "Rename Tab",
+                          comment: "Tab name editor - Accessibility label of the field that renames a tab")
+    }
+
+    @MainActor
+    @objc private func beginRenamingTab() {
+        // Reset first: an editor that couldn't begin (its view off screen) leaves it set.
+        isRenaming = false
+        DispatchQueue.main.async { [weak self] in self?.isRenaming = true }
     }
 
     @MainActor
@@ -633,7 +466,8 @@ extension Tab: ContextMenuRepresentable {
     ///   * Ungrouped tab → "New Tab Group" + (when other groups exist)
     ///     "Add to Group ▶" submenu listing this window's groups in
     ///     strip order with color swatches.
-    ///   * Grouped tab → "Remove from Group".
+    ///   * Grouped tab → move and remove commands, plus the start page
+    ///     command for eligible tabs in the vertical sidebar.
     ///
     /// Skipped entirely for pinned tabs (Chromium's TabStripModel
     /// doesn't allow them in groups). Also skipped for
@@ -645,13 +479,9 @@ extension Tab: ContextMenuRepresentable {
     /// other tab.
     @MainActor
     private func appendTabGroupMenuItems(into items: inout [NSMenuItem]) {
-        if isPinned {
-            return
-        }
         let browserState = SpaceSessionControllersManager.shared
             .getBrowserState(for: windowId)
-        let inHorizontalStrip = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
-        if !inHorizontalStrip, isBookmarkBackedTab(state: browserState) {
+        guard offersGroupAndWindowMenuItems(state: browserState) else {
             return
         }
         if groupToken == nil {
@@ -664,7 +494,7 @@ extension Tab: ContextMenuRepresentable {
             items.append(newGroupItem)
 
             let orderedGroups = orderedGroupsInStripOrder(state: browserState)
-            if !orderedGroups.isEmpty, let browserState {
+            if !orderedGroups.isEmpty {
                 let parent = NSMenuItem(
                     title: NSLocalizedString("sidebar.tabContextMenu.addToGroupSubmenu", value: "Add to Group",
                         comment: "Tab context menu - Submenu to add this tab to an existing tab group"),
@@ -672,10 +502,8 @@ extension Tab: ContextMenuRepresentable {
                     keyEquivalent: "")
                 let submenu = NSMenu()
                 for group in orderedGroups {
-                    let memberCount = browserState.normalTabs
-                        .lazy.filter { $0.groupToken == group.token }.count
                     let entry = NSMenuItem(
-                        title: group.displayTitle(memberCount: memberCount),
+                        title: group.displayTitle,
                         action: #selector(addToExistingTabGroup(_:)),
                         keyEquivalent: "")
                     entry.target = self
@@ -694,7 +522,7 @@ extension Tab: ContextMenuRepresentable {
             // the destination, so a single bridge call suffices.
             let otherGroups = orderedGroupsInStripOrder(state: browserState)
                 .filter { $0.token != currentToken }
-            if !otherGroups.isEmpty, let browserState {
+            if !otherGroups.isEmpty {
                 let parent = NSMenuItem(
                     title: NSLocalizedString("sidebar.tabContextMenu.moveToGroupSubmenu", value: "Move to Group",
                         comment: "Tab context menu - Submenu to move this tab to another tab group"),
@@ -702,10 +530,8 @@ extension Tab: ContextMenuRepresentable {
                     keyEquivalent: "")
                 let submenu = NSMenu()
                 for group in otherGroups {
-                    let memberCount = browserState.normalTabs
-                        .lazy.filter { $0.groupToken == group.token }.count
                     let entry = NSMenuItem(
-                        title: group.displayTitle(memberCount: memberCount),
+                        title: group.displayTitle,
                         action: #selector(addToExistingTabGroup(_:)),
                         keyEquivalent: "")
                     entry.target = self
@@ -725,6 +551,19 @@ extension Tab: ContextMenuRepresentable {
             moveToNewItem.target = self
             items.append(moveToNewItem)
 
+            if browserState?.layoutMode.isTraditional == false, canHaveGroupStartPage {
+                // Sidebar menus use AppKit's automatic item validation.
+                let canSet = canSetGroupStartPage
+                let setStartPageItem = NSMenuItem(
+                    title: NSLocalizedString("sidebar.tabContextMenu.setStartPage", value: "Set Current Page as Start Page",
+                        comment: "Tab context menu - Remember the current page as the grouped tab's start page"),
+                    action: canSet ? #selector(setCurrentPageAsGroupStartPage) : nil,
+                    keyEquivalent: "")
+                setStartPageItem.target = self
+                setStartPageItem.isEnabled = canSet
+                items.append(setStartPageItem)
+            }
+
             let removeItem = NSMenuItem(
                 title: NSLocalizedString("sidebar.tabContextMenu.removeFromGroup", value: "Remove from Group",
                     comment: "Tab context menu - Remove this tab from its tab group"),
@@ -733,6 +572,132 @@ extension Tab: ContextMenuRepresentable {
             removeItem.target = self
             items.append(removeItem)
         }
+    }
+
+    /// Pinned tabs, and bookmark-backed tabs in sidebar layouts, get neither
+    /// the group items nor the window items; see `appendTabGroupMenuItems`.
+    private func offersGroupAndWindowMenuItems(state: BrowserState?) -> Bool {
+        if isPinned {
+            return false
+        }
+        let inHorizontalStrip = PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+            || (state?.bookmarksAreLaunchers ?? false)
+        return inHorizontalStrip || !isBookmarkBackedTab(state: state)
+    }
+
+    /// Appends "Move to New Window", which becomes a "Move to Another
+    /// Window ▶" submenu once another window can take this tab: "New Window",
+    /// a separator, then one row per such window, frontmost first. A row
+    /// stands for the Space its window shows. A split moves as a pair, as the
+    /// group items treat it.
+    @MainActor
+    private func appendMoveToWindowMenuItems(into items: inout [NSMenuItem]) {
+        let sourceState = SpaceSessionControllersManager.shared.getBrowserState(for: windowId)
+        guard let sourceState, webContentWrapper != nil,
+              offersGroupAndWindowMenuItems(state: sourceState) else { return }
+
+        let targets = moveToWindowTargets(from: sourceState)
+        guard !targets.isEmpty else {
+            let moveItem = NSMenuItem(
+                title: NSLocalizedString("sidebar.tabContextMenu.moveToNewWindow", value: "Move to New Window",
+                    comment: "Tab context menu - Move this tab into a newly created window"),
+                action: #selector(moveToNewWindow),
+                keyEquivalent: "")
+            moveItem.target = self
+            items.append(moveItem)
+            return
+        }
+
+        let parent = NSMenuItem(
+            title: NSLocalizedString("sidebar.tabContextMenu.moveToWindowSubmenu", value: "Move to Another Window",
+                comment: "Tab context menu - Submenu to move this tab into a new window or another open window"),
+            action: nil,
+            keyEquivalent: "")
+        let submenu = NSMenu()
+        let newWindowItem = NSMenuItem(
+            title: NSLocalizedString("sidebar.tabContextMenu.moveToWindowSubmenu.newWindow", value: "New Window",
+                comment: "Tab context menu - Move to Another Window entry that moves this tab into a newly created window"),
+            action: #selector(moveToNewWindow),
+            keyEquivalent: "")
+        newWindowItem.target = self
+        submenu.addItem(newWindowItem)
+        submenu.addItem(.separator())
+        for target in targets {
+            let active = target.focusingTab ?? target.tabs.last
+            let activeTitle = active.map { $0.title.isEmpty ? ($0.url ?? "") : $0.title } ?? ""
+            let entry = NSMenuItem(
+                title: TabWindowMoveMenu.windowTitle(activeTabTitle: activeTitle,
+                                                     otherTabCount: max(0, target.tabs.count - 1)),
+                action: #selector(moveToExistingWindow(_:)),
+                keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = target.windowId
+            submenu.addItem(entry)
+        }
+        parent.submenu = submenu
+        items.append(parent)
+    }
+
+    /// Windows this tab can move into, frontmost first: each window's
+    /// presented Space, leaving out the tab's own window, windows without a
+    /// tab strip (popups, apps, agent Spaces), and windows Chromium can't move
+    /// it into (another profile, or a different off-the-record kind).
+    @MainActor
+    private func moveToWindowTargets(from sourceState: BrowserState) -> [BrowserState] {
+        let sourceWindow = sourceState.windowController?.window
+        let stripTypes: Set<ChromiumBrowserType> = [.normal, .incognito, .incognitoSpace]
+        let candidates = SpaceSessionControllersManager.shared.getAllWindows().filter { controller in
+            controller.isPresentedOrLegacy
+                && controller.windowId != sourceState.windowId
+                && (sourceWindow == nil || controller.window !== sourceWindow)
+                && stripTypes.contains(controller.browserType)
+                && controller.browserState.canAcceptCrossWindowDrag(from: sourceState)
+        }
+        let frontToBack = NSApp.orderedWindows
+        func depth(_ controller: SpaceSessionController) -> Int {
+            controller.window.flatMap { window in frontToBack.firstIndex { $0 === window } }
+                ?? frontToBack.count
+        }
+        return candidates
+            .sorted { (depth($0), $0.windowId) < (depth($1), $1.windowId) }
+            .map(\.browserState)
+    }
+
+    /// Tears this tab (with its split partner) off into a new window, as a
+    /// drag out of the strip does.
+    @MainActor
+    @objc private func moveToNewWindow() {
+        guard let wrapper = webContentWrapper else { return }
+        let state = SpaceSessionControllersManager.shared.getBrowserState(for: windowId)
+        // A bookmark-opened tab leaves its binding behind, as a tear-off does.
+        graduateBookmarkBackedMembers(splitAwareGroupMemberIds(state: state), state: state)
+        state?.seedNewTabBeforeMovingOut(tabIds: [guid])
+        wrapper.moveSplit(toNewWindow: true)
+    }
+
+    /// Moves this tab (with its split partner) to the end of the chosen
+    /// window's strip, then brings that window forward. Chromium activates the
+    /// arriving tab there; both windows' tab lists follow its callbacks.
+    @MainActor
+    @objc private func moveToExistingWindow(_ sender: NSMenuItem) {
+        guard let targetWindowId = sender.representedObject as? Int,
+              let wrapper = webContentWrapper,
+              let targetController = SpaceSessionControllersManager.shared.controller(for: targetWindowId) else {
+            return
+        }
+        let sourceState = SpaceSessionControllersManager.shared.getBrowserState(for: windowId)
+        let targetState = targetController.browserState
+        let memberIds = splitAwareGroupMemberIds(state: sourceState)
+        graduateBookmarkBackedMembers(memberIds, state: sourceState)
+        // A lone tab books its slot in the target's normal list, as the
+        // Move to Space path does; a split arrives as a pair without one
+        // (see `TabStrip.moveTabToWindow`).
+        if memberIds.count == 1 {
+            targetState.scheduleNormalTabInsertion(tabGuid: guid, at: targetState.normalTabs.count)
+        }
+        sourceState?.seedNewTabBeforeMovingOut(tabIds: [guid])
+        wrapper.moveSplit(toWindow: targetState.windowId.int64Value, at: targetState.tabs.count)
+        targetController.window?.makeKeyAndOrderFront(nil)
     }
 
     /// Appends a "Move to Space ▶" submenu listing every Space except the one
@@ -908,24 +873,17 @@ extension Tab: ContextMenuRepresentable {
     @MainActor
     @objc private func addToExistingTabGroup(_ sender: NSMenuItem) {
         guard let token = sender.representedObject as? String,
-              let bridge = ChromiumLauncher.sharedInstance().bridge else {
-            AppLogDebug("[TAB_GROUPS] addToExistingTabGroup: missing token or bridge")
+              ChromiumLauncher.sharedInstance().bridge != nil,
+              let state = SpaceSessionControllersManager.shared.getBrowserState(for: windowId) else {
+            AppLogDebug("[TAB_GROUPS] addToExistingTabGroup: missing token, bridge or window")
             return
         }
-        let state = SpaceSessionControllersManager.shared
-            .getBrowserState(for: windowId)
         let tabIds = splitAwareGroupMemberIds(state: state)
         // Graduate any bookmark-opened member into a plain tab first; Chromium's
         // `addTabsToGroup` rejects the whole batch if any member is Phi-managed.
         graduateBookmarkBackedMembers(tabIds, state: state)
-        bridge.addTabsToGroup(withWindowId: Int64(windowId),
-                              tabIds: tabIds,
-                              tokenHex: token)
+        state.addTabsToGroupEnd(tabIds.map(\.intValue), token: token)
         AppLogDebug("[TAB_GROUPS] addToExistingTabGroup windowId=\(windowId) tabIds=\(tabIds) token=\(token)")
-        for member in tabIds {
-            state?.applyOptimisticGroupMembership(
-                tabId: member.intValue, newToken: token)
-        }
     }
 
     @MainActor
@@ -971,14 +929,6 @@ extension Tab: ContextMenuRepresentable {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(URLProcessor.phiBrandEnsuredUrlString(urlString), forType: .string)
-    }
-
-    @MainActor
-    @objc private func addSplitToBookmarks(_ sender: NSMenuItem) {
-        // The menu item is only attached when this tab is in a split, so the
-        // helper should always succeed here; the bool result is ignored.
-        guard let state = contextMenuState else { return }
-        state.addSplitBookmarkFromTab(self, bindLiveSplit: false)
     }
 
     @MainActor

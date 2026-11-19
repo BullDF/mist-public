@@ -6,9 +6,8 @@
 // management/lifecycle is served by the app directly on the same socket
 // (/phi-agent). This client discovers the socket from a pointer file the app
 // writes and speaks HTTP + the CDP WebSocket over it. The socket is there
-// whenever Phi runs, switched on or not: connecting while agent control is off
-// raises the consent prompt that offers to turn it on, so the skill never has
-// to send the user into Settings first.
+// whenever Phi runs. External access requires the agent-control switch in
+// Settings ▸ Advanced.
 //
 // That socket is Phi's ONLY CDP surface. `--remote-debugging-port` and
 // `--remote-debugging-pipe` are stripped from the launch arguments before
@@ -24,38 +23,27 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// PHI_BUNDLE_ID pins one channel: discovery and launch see only that bundle,
-// so a running build of the OTHER channel can never answer for it (the CLI's
-// --canary sets it). Without the pin, canary is preferred, stable is the
-// fallback.
+// Mist: discovery and launch see one bundle only, so official Phi running
+// alongside can never answer. PHI_BUNDLE_ID pins it (com.bulldf.mist.dev for
+// Mist Dev); otherwise it is the app this copy is linked into, and a repo
+// checkout targets main Mist.
+const TARGET_BUNDLE_ID =
+  process.env.PHI_BUNDLE_ID || linkedBundleId() || 'com.bulldf.mist'
 const CANDIDATE_DIRS = [
   process.env.PHI_USER_DATA_DIR,
-  ...(process.env.PHI_BUNDLE_ID
-    ? [join(homedir(), 'Library/Application Support', process.env.PHI_BUNDLE_ID)]
-    : [
-        join(homedir(), 'Library/Application Support/com.phibrowser.canary.Mac'),
-        join(homedir(), 'Library/Application Support/com.phibrowser.Mac'),
-      ]),
+  join(homedir(), 'Library/Application Support', TARGET_BUNDLE_ID),
 ].filter(Boolean)
 
-// The consent prompt can hold the very first connection open while the user
-// decides, so the first HTTP request tolerates a long wait.
-const CONSENT_WAIT_MS = 180000
+// Allow a slow endpoint time to answer its first HTTP request.
+const ENDPOINT_WAIT_MS = 30000
 // When another advertised channel is available, do not let a connected but
-// non-responsive higher-precedence socket shadow it for the full consent
-// window. The final/only candidate still gets CONSENT_WAIT_MS so a genuine
-// first-run approval prompt remains usable.
+// non-responsive higher-precedence socket shadow it for the full wait.
 export const FALLBACK_ENDPOINT_WAIT_MS = 5000
 
 // How long to wait for a just-launched Phi to publish its socket. Cold start
 // has to bring up Chromium and restore the session before the listener runs.
 const LAUNCH_WAIT_MS = 60000
 const LAUNCH_POLL_MS = 250
-
-// Tried in order when this copy of the skill isn't inside an app bundle — a
-// repo checkout driving the scripts directly, where there is no linked
-// install to infer. Canary first, matching endpoint discovery's precedence.
-const LAUNCH_BUNDLE_IDS = ['com.phibrowser.canary.Mac', 'com.phibrowser.Mac']
 
 const NOT_FOUND_MESSAGE =
   'Phi Browser CDP endpoint not found, and Phi could not be started. Phi ' +
@@ -70,10 +58,8 @@ const LAUNCH_TIMEOUT_MESSAGE =
   'retry.'
 
 const DENIED_MESSAGE =
-  'Phi Browser denied this agent CDP access. The user may have blocked it for ' +
-  '30 minutes or for good, in which case retrying will not prompt again — ask ' +
-  'them to allow it, or to unblock it under Settings ▸ Developer ▸ Remote ' +
-  'debugging ▸ Blocked agents.'
+  'Mist denied this agent CDP access. Enable “Allow agents to control Mist” ' +
+  'in Settings ▸ Advanced.'
 
 /** A refusal from the app (HTTP 403), tagged so callers can tell it apart
  * from the connection failures that surround it.
@@ -99,7 +85,7 @@ export function isPhiDenied(err) {
 
 /**
  * All plausible socket endpoints in precedence order — the PHI_USER_DATA_DIR
- * override, then canary, then stable. A pointer or socket FILE can outlive a
+ * override, then TARGET_BUNDLE_ID's dir. A pointer or socket FILE can outlive a
  * crashed app (a crash skips the clean-quit unlink), so existence is not
  * liveness — callers walk the list and probe, see discoverLiveEndpoint. Each
  * entry is `{socketPath}`.
@@ -134,13 +120,29 @@ export function discoverEndpoints() {
  * shipped with — canary or stable, /Applications or a DerivedData dev build —
  * with nothing to guess. Cutting at the FIRST `.app/` keeps the outer bundle
  * if one is ever nested. Returns null for a repo checkout, where the scripts
- * belong to no install and `LAUNCH_BUNDLE_IDS` decides instead.
+ * belong to no install and `TARGET_BUNDLE_ID` falls back to main Mist.
  */
 export function linkedAppPath() {
   try {
     const real = realpathSync(fileURLToPath(import.meta.url))
     const marker = real.indexOf('.app/')
     return marker < 0 ? null : real.slice(0, marker + '.app'.length)
+  } catch {
+    return null
+  }
+}
+
+/** The CFBundleIdentifier of linkedAppPath(), or null. */
+function linkedBundleId() {
+  const app = linkedAppPath()
+  if (!app) return null
+  try {
+    return execFileSync(
+      '/usr/bin/plutil',
+      ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-',
+       join(app, 'Contents/Info.plist')],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim() || null
   } catch {
     return null
   }
@@ -164,16 +166,14 @@ export function linkedAppPath() {
  */
 function launchPhi() {
   if (process.env.PHI_NO_LAUNCH) return null
-  // A linked app wins even under a PHI_BUNDLE_ID pin: the engine loads from
-  // the pinned bundle then, so `linked` IS the pinned app — and `-a <path>`
+  // The linked app is opened by path when it is the target: `-a <path>`
   // names that exact copy where `-b` lets LaunchServices pick among every
-  // registered copy of the id.
+  // registered copy of the id. A PHI_BUNDLE_ID pin naming another bundle
+  // launches that bundle instead.
   const linked = linkedAppPath()
-  const attempts = linked
+  const attempts = linked && linkedBundleId() === TARGET_BUNDLE_ID
     ? [['-g', '-a', linked]]
-    : (process.env.PHI_BUNDLE_ID
-        ? [process.env.PHI_BUNDLE_ID]
-        : LAUNCH_BUNDLE_IDS).map((id) => ['-g', '-b', id])
+    : [['-g', '-b', TARGET_BUNDLE_ID]]
   for (const args of attempts) {
     try {
       execFileSync(
@@ -194,7 +194,7 @@ function launchPhi() {
  *  unlink), so walking on to the next candidate is safe. Anything else is a
  *  real answer from a live endpoint (denial, sandbox wall, timeout) and
  *  must propagate. NEVER probe with a naked connect(2) instead: a zero-byte
- *  connection reaches the app's serial consent pipeline as an unidentifiable
+ *  connection reaches the app's serial identity pipeline as an unidentifiable
  *  peer — liveness is only checked with real, identified requests. */
 export function isDeadSocketError(err) {
   return /ECONNREFUSED|ENOENT/.test(String(err?.message || err))
@@ -216,7 +216,7 @@ export function discoverEndpoint() {
 /**
  * The claim header carried on every connection to the app socket: names the
  * agent session this process acts for. IDENTIFICATION ONLY — the app logs it
- * but neither joins a task principal nor substitutes the consent identity
+ * but neither joins a task principal nor substitutes the peer identity
  * from it; a process whose ancestry no longer reaches its agent proves the
  * delegation with the app-issued capability instead (agentCapabilityHeader).
  * Chromium-bound requests carry it too — DevTools ignores unknown headers.
@@ -265,12 +265,11 @@ function httpGetJson(endpoint, path, timeoutMs, agentPid = null,
 
 /**
  * Confirms the endpoint is live and returns `{ browserWsPath }` — the resource
- * path for the browser-target WebSocket upgrade. This is the first connection,
- * so it may trigger (and wait on) the consent prompt.
+ * path for the browser-target WebSocket upgrade.
  */
 export async function verifyEndpoint(endpoint, { agentPid = null,
                                                  agentCapability = null,
-                                                 timeoutMs = CONSENT_WAIT_MS } = {}) {
+                                                 timeoutMs = ENDPOINT_WAIT_MS } = {}) {
   let version
   try {
     version = await httpGetJson(endpoint, '/json/version', timeoutMs,
@@ -292,8 +291,7 @@ export async function verifyEndpoint(endpoint, { agentPid = null,
         `(unsandboxed) permissions. [${err.message}]`)
     }
     const wrapped = new Error(
-      `Phi Browser CDP endpoint is not responding. A consent prompt may be ` +
-      `waiting for the user in Phi; otherwise check that Phi Browser is ` +
+      `Phi Browser CDP endpoint is not responding. Check that Mist is ` +
       `running. [${err.message}]`)
     if (err?.code === 'ETIMEDOUT' || err?.message === 'timed out') {
       wrapped.code = 'ETIMEDOUT'
@@ -319,6 +317,8 @@ export async function verifyEndpoint(endpoint, { agentPid = null,
  * with continuation reassembly and ping/pong handling.
  */
 export class UnixWebSocket {
+  get closed() { return this._closed || !this._sock?.writable }
+
   constructor({ socketPath, path, host = 'localhost', agentPid = null,
                 agentCapability = null }) {
     this._listeners = { open: [], message: [], error: [], close: [] }
@@ -511,6 +511,8 @@ export class UnixWebSocket {
 }
 
 export class CdpClient {
+  get closed() { return !this.ws || this.ws.closed }
+
   /** `transport` is `{ socketPath, wsPath, agentPid?, agentCapability? }` on
    *  the app socket. */
   constructor(transport) {
@@ -569,6 +571,7 @@ export class CdpClient {
 
   /** Sends a command. `sessionId` targets a flat-mode attached session. */
   send(method, params = {}, sessionId = undefined, timeoutMs = 40000) {
+    if (this.closed) return Promise.reject(new Error('CDP connection closed'))
     const id = this.nextId++
     const payload = { id, method, params }
     if (sessionId) payload.sessionId = sessionId
@@ -634,6 +637,8 @@ export class CdpClient {
  * `onEvent(type, cb)` surface, so helpers.mjs doesn't care which is in play.
  */
 export class DirectPhiChannel {
+  get closed() { return !this.ws || this.ws.closed }
+
   constructor({ socketPath, agentPid = null, agentCapability = null }) {
     this.socketPath = socketPath
     this.agentPid = agentPid
@@ -646,7 +651,7 @@ export class DirectPhiChannel {
   async connect() {
     // The agent-session pid rides the upgrade URL — kept alongside the newer
     // X-Phi-Agent-Pid header (which every connection carries) so an app that
-    // predates the header still resolves the daemon's consent identity from
+    // predates the header still resolves the daemon's identity from
     // the query (see AgentCDPListener.claimedAgentPid).
     const path = Number.isInteger(this.agentPid) && this.agentPid > 0
       ? `/phi-agent?agentPid=${this.agentPid}`
@@ -698,6 +703,7 @@ export class DirectPhiChannel {
   }
 
   send(type, payload = {}, timeoutMs = 40000) {
+    if (this.closed) return Promise.reject(new Error('phi-agent channel closed'))
     const id = this.nextId++
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -732,14 +738,9 @@ export class DirectPhiChannel {
  * WebSocket) is a real answer from a live endpoint and propagates.
  *
  * Precedence survives a slow first reply: a higher-precedence endpoint whose
- * first /json/version outlives the short probe may be sitting on the
- * FIRST-RUN CONSENT PROMPT — the app deliberately holds the request open
- * while the user decides, which is indistinguishable from a wedged socket
- * from out here. So the walk first maps the landscape with the short probe,
- * then, before settling for a lower-precedence endpoint, gives each
- * higher-precedence timeout the full consent window: silently driving the
- * wrong install would contradict the documented canary preference, and the
- * user's eventual Allow would land on an abandoned connection. A DEAD
+ * first /json/version outlives the short probe may simply be slow. The walk
+ * first maps the landscape with a short probe, then gives each higher-precedence
+ * timeout the full wait before settling for a lower-precedence endpoint. A DEAD
  * leftover socket still refuses instantly and is walked past at no cost.
  */
 async function connectOverCandidates(candidates, opts, out) {
@@ -769,8 +770,8 @@ async function connectOverCandidates(candidates, opts, out) {
     }
   }
   // Every endpoint that timed out above outranks whatever verified after it
-  // (the first success breaks the walk). Re-probe them with the full consent
-  // window, in precedence order; the first to come live wins the connection.
+  // (the first success breaks the walk). Re-probe them with the full wait,
+  // in precedence order; the first to come live wins the connection.
   for (const endpoint of timedOut) {
     try {
       const { browserWsPath } = await verifyEndpoint(endpoint, opts)
@@ -835,4 +836,23 @@ export async function connectBrowser({ agentPid = null, agentCapability = null }
   const client = await connectAfterLaunch(opts, out)
   if (!client) throw new Error(LAUNCH_TIMEOUT_MESSAGE)
   return client
+}
+
+/**
+ * Opens only the app's `/phi-agent` channel: no Chromium connection, no
+ * launch. Mist admits a Drifter chat's channel outside a turn for a few
+ * requests (BrowserAgentCapability.outsideTurnTypes), while its Chromium
+ * connections need a running turn.
+ */
+export async function connectPhiChannel({ agentCapability = null } = {}) {
+  let lastErr = null
+  for (const { socketPath } of discoverEndpoints()) {
+    try {
+      return await new DirectPhiChannel({ socketPath, agentCapability }).connect()
+    } catch (err) {
+      if (!isDeadSocketError(err)) throw err
+      lastErr = err
+    }
+  }
+  throw lastErr ?? new Error(NOT_FOUND_MESSAGE)
 }

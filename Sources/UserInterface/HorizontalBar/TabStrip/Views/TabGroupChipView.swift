@@ -110,13 +110,13 @@ final class TabGroupChipView: NSView {
     }
 
     private enum PendingClickTarget {
-        case overview
+        case body
         case collapse
         case expandFromMosaic
     }
 
     private var pendingAction: PendingChipAction = .idle
-    private var pendingClickTarget: PendingClickTarget = .overview
+    private var pendingClickTarget: PendingClickTarget = .body
     private var mouseDownLocation: CGPoint = .zero
 
     /// Horizontal pixel threshold to promote click → drag. Matches
@@ -129,11 +129,7 @@ final class TabGroupChipView: NSView {
     private(set) var color: GroupColor = .grey
     private(set) var displayTitle: String = ""
     private(set) var memberCount: Int = 0
-    private(set) var hasUserSetTitle: Bool = false
     private(set) var isCollapsed: Bool = false
-    private(set) var memberFavicons: [Data?] = []
-    private var isOverviewSelected = false
-
     // MARK: - Subviews / sublayers
 
     private let colorDotLayer = CALayer()
@@ -202,7 +198,7 @@ final class TabGroupChipView: NSView {
         addSubview(collapseImageView)
         mosaicView.isHidden = true
 
-        toolTip = NSLocalizedString("toolbar.tabGroupChip.interactionTooltip", value: "Click the title for overview. Click the arrow to expand or collapse.",
+        toolTip = NSLocalizedString("toolbar.tabGroupChip.interactionTooltip", value: "Click to expand or collapse the group.",
             comment: "Tab Groups - tooltip for horizontal-strip group chip interactions")
     }
 
@@ -219,7 +215,6 @@ final class TabGroupChipView: NSView {
         color: GroupColor,
         displayTitle: String,
         memberCount: Int,
-        hasUserSetTitle: Bool,
         isCollapsed: Bool,
         memberFavicons: [Data?]
     ) {
@@ -227,10 +222,7 @@ final class TabGroupChipView: NSView {
         self.color = color
         self.displayTitle = displayTitle
         self.memberCount = memberCount
-        self.hasUserSetTitle = hasUserSetTitle
         self.isCollapsed = isCollapsed
-        self.memberFavicons = memberFavicons
-
         labelField.stringValue = displayTitle
         countField.stringValue = "\(memberCount)"
         mosaicView.configure(memberFavicons: memberFavicons, memberCount: memberCount)
@@ -252,14 +244,7 @@ final class TabGroupChipView: NSView {
     /// first collapsed layout would leave the mosaic at `.zero` until
     /// the next layout pass.
     func updateMosaic(memberFavicons: [Data?]) {
-        self.memberFavicons = memberFavicons
         mosaicView.configure(memberFavicons: memberFavicons, memberCount: memberCount)
-    }
-
-    func setOverviewSelected(_ selected: Bool) {
-        guard isOverviewSelected != selected else { return }
-        isOverviewSelected = selected
-        applyOverviewSelectionAppearance()
     }
 
     // MARK: - Appearance
@@ -286,31 +271,18 @@ final class TabGroupChipView: NSView {
         countBackgroundLayer.cornerRadius = (TabGroupChipView.countFont.pointSize +
                                               Self.countVerticalPadding * 2) / 2.0
         collapseImageView.contentTintColor = .secondaryLabelColor
-        applyOverviewSelectionAppearance()
 
-        // Count badge: only when expanded + user-named. When the mosaic
-        // shows (collapsed), the count is suppressed because the mosaic
+        // Count badge: only when expanded. When the mosaic shows
+        // (collapsed), the count is suppressed because the mosaic
         // carries the count via the overflow cell.
-        let showCount = hasUserSetTitle && !isCollapsed
-        countField.isHidden = !showCount
-        countBackgroundLayer.isHidden = !showCount
+        countField.isHidden = isCollapsed
+        countBackgroundLayer.isHidden = isCollapsed
         mosaicView.isHidden = !isCollapsed
     }
 
     private func updateCollapseImage() {
         let name = isCollapsed ? "chevron.right" : "chevron.left"
         collapseImageView.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
-    }
-
-    private func applyOverviewSelectionAppearance() {
-        layer?.borderWidth = isOverviewSelected ? 1 : 0
-        guard isOverviewSelected else {
-            layer?.borderColor = nil
-            return
-        }
-        effectiveAppearance.performAsCurrentDrawingAppearance { [self] in
-            layer?.borderColor = color.nsColor.cgColor
-        }
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -353,7 +325,7 @@ final class TabGroupChipView: NSView {
             let labelMaxX = mosaicX - Self.countToLabelGap
             labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
                                        width: max(0, labelMaxX - labelX), height: labelHeight)
-        } else if hasUserSetTitle {
+        } else {
             // Count badge anchored to the trailing edge.
             let countString = countField.stringValue as NSString
             let countTextWidth = countString.size(withAttributes: [.font: Self.countFont]).width
@@ -369,10 +341,6 @@ final class TabGroupChipView: NSView {
             let labelMaxX = countX - Self.countToLabelGap
             labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
                                        width: max(0, labelMaxX - labelX), height: labelHeight)
-        } else {
-            // No badge, no mosaic — label fills the full trailing range.
-            labelField.frame = CGRect(x: labelX, y: (bounds.height - labelHeight) / 2,
-                                       width: max(0, trailingX - labelX), height: labelHeight)
         }
 
         CATransaction.commit()
@@ -386,16 +354,11 @@ final class TabGroupChipView: NSView {
     /// and fed to the layout engine via `TabStripLayoutInput.chipFullWidths`.
     ///
     /// - Parameters:
-    ///   - title: rendered group title (`group.displayTitle(memberCount:)`).
-    ///   - hasUserSetTitle: drives count-badge visibility in expanded state.
-    ///     Ignored when `isCollapsed` is true — the mosaic always wins over
-    ///     both the badge and the bare-label paths.
+    ///   - title: rendered group title (`group.displayTitle`).
     ///   - memberCount: drives count-badge digit width in expanded state.
     ///   - isCollapsed: when true, reserves mosaic (`TabGroupChipMosaicView.mosaicSize`)
-    ///     in place of the count badge — even for unnamed groups, since
-    ///     the mosaic is the preview signal.
+    ///     in place of the count badge.
     static func chipWidth(forTitle title: String,
-                              hasUserSetTitle: Bool,
                               memberCount: Int,
                               isCollapsed: Bool) -> CGFloat {
         let labelWidth = (title as NSString)
@@ -407,10 +370,8 @@ final class TabGroupChipView: NSView {
                   + labelRightPadding
 
         if isCollapsed {
-            // Mosaic always reserves space when collapsed,
-            // independent of hasUserSetTitle.
             width += countToLabelGap + TabGroupChipMosaicView.mosaicSize
-        } else if hasUserSetTitle {
+        } else {
             let countString = "\(memberCount)" as NSString
             let countTextWidth = countString
                 .size(withAttributes: [.font: countFont])
@@ -493,7 +454,7 @@ final class TabGroupChipView: NSView {
         } else if mosaicExpandRect().contains(localPoint) {
             pendingClickTarget = .expandFromMosaic
         } else {
-            pendingClickTarget = .overview
+            pendingClickTarget = .body
         }
         pendingAction = .click
     }
@@ -503,7 +464,7 @@ final class TabGroupChipView: NSView {
         let dx = event.locationInWindow.x - mouseDownLocation.x
         switch pendingAction {
         case .click:
-            guard pendingClickTarget == .overview else { return }
+            guard pendingClickTarget == .body else { return }
             if abs(dx) >= Self.dragActivationThreshold {
                 pendingAction = .drag
                 onDragStart?(token, event.locationInWindow)
@@ -519,7 +480,7 @@ final class TabGroupChipView: NSView {
         defer {
             mouseDownInside = false
             pendingAction = .idle
-            pendingClickTarget = .overview
+            pendingClickTarget = .body
         }
         guard mouseDownInside else { return }
         switch pendingAction {
@@ -533,11 +494,10 @@ final class TabGroupChipView: NSView {
             case .expandFromMosaic:
                 guard mosaicExpandRect().contains(p) else { return }
                 onCollapseToggle?(token)
-            case .overview:
+            case .body:
                 if event.modifierFlags.contains(.command) {
-                    // Cmd+click never opens the overview: a collapsed group
-                    // expands, an expanded group does nothing (in particular
-                    // it must not clear an active multi-selection).
+                    // Cmd+click expands a collapsed group; an expanded group
+                    // does nothing and keeps any active multi-selection.
                     if isCollapsed {
                         onCollapseToggle?(token)
                     }
@@ -560,12 +520,19 @@ final class TabGroupChipView: NSView {
 
     override func accessibilityLabel() -> String? {
         let format = isCollapsed
-            ? NSLocalizedString("toolbar.tabGroupChip.collapsedAccessibilityLabel", value: "%@ tab group, %d tabs, collapsed",
-                comment: "Tab Groups - VoiceOver label for collapsed horizontal-strip group chip")
-            : NSLocalizedString("toolbar.tabGroupChip.expandedAccessibilityLabel", value: "%@ tab group, %d tabs, expanded",
-                comment: "Tab Groups - VoiceOver label for expanded horizontal-strip group chip")
-        return String(format: format, color.localizedName, memberCount)
+            ? NSLocalizedString("toolbar.tabGroupChip.collapsedAccessibilityLabel", value: "%@ tab group, collapsed",
+                comment: "Tab Groups - VoiceOver label for collapsed horizontal-strip group chip; %@ is the group's name, or its color name when unnamed")
+            : NSLocalizedString("toolbar.tabGroupChip.expandedAccessibilityLabel", value: "%@ tab group, expanded",
+                comment: "Tab Groups - VoiceOver label for expanded horizontal-strip group chip; %@ is the group's name, or its color name when unnamed")
+        return String(format: format, displayTitle)
     }
 
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityPerformPress() -> Bool {
+        onCollapseToggle?(token)
+        return true
+    }
 }

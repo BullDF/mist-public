@@ -156,6 +156,22 @@ final class ShortcutTabSwitchIntegrationTests: XCTestCase {
         }
     }
 
+    func testEscapeWhileHoldingEndsTheGestureWithoutSwitching() throws {
+        let otherWindow = makeWindow()
+        defer { otherWindow.close() }
+        try press(forward)
+        try press(forward)
+        XCTAssertEqual(window.childWindows?.filter(\.isVisible).count, 1)
+        XCTAssertFalse(manager.handleKeyDown(try escape(in: otherWindow)))
+        XCTAssertTrue(manager.handleKeyDown(try escape()))
+        XCTAssertTrue(window.childWindows?.isEmpty ?? true)
+        try flags([])
+        manager.revealOverlayIfAnchorStillDown(modifiers: [])
+        XCTAssertEqual(activations, [0, 0, 0])
+        // Outside a gesture, Esc goes on to the page.
+        XCTAssertFalse(manager.handleKeyDown(try escape()))
+    }
+
     func testShiftOnlyNavigationAndMenuInvocationCommitImmediately() throws {
         let key = ShortcutsKey(characters: "\u{F72D}", modifiers: .shift)
         configure(forward: key, backward: backward)
@@ -209,6 +225,12 @@ final class ShortcutTabSwitchIntegrationTests: XCTestCase {
             modifierFlags: modifiers, timestamp: 0, windowNumber: (otherWindow ?? window).windowNumber,
             context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 59))
         manager.handleFlagsChanged(event)
+    }
+
+    private func escape(in otherWindow: NSWindow? = nil) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .control, timestamp: 0,
+            windowNumber: (otherWindow ?? window).windowNumber, context: nil, characters: "\u{1b}",
+            charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
     }
 
     private func makeWindow() -> NSWindow {

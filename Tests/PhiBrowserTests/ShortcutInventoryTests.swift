@@ -50,21 +50,21 @@ final class ShortcutInventoryTests: XCTestCase {
 
     func testDisjointWindowScopesCanCoexistInBothDirections() {
         let inventory = ShortcutInventory(bindings: [
-            binding(1, scope: .browser), binding(2, scope: .kiosk), binding(3, scope: .nonBrowser),
+            binding(1, scope: .browser), binding(2, scope: .peek), binding(3, scope: .nonBrowser),
         ])
         XCTAssertTrue(inventory.conflicts(for: 1, key: key, in: .browser).isEmpty)
-        XCTAssertTrue(inventory.conflicts(for: 2, key: key, in: .kiosk).isEmpty)
+        XCTAssertTrue(inventory.conflicts(for: 2, key: key, in: .peek).isEmpty)
         XCTAssertTrue(inventory.conflicts(for: 3, key: key, in: .nonBrowser).isEmpty)
-        XCTAssertEqual(inventory.occupants(of: key, in: .kiosk).map(\.commandID), [2])
+        XCTAssertEqual(inventory.occupants(of: key, in: .peek).map(\.commandID), [2])
         XCTAssertEqual(inventory.occupants(of: key, in: .nonBrowser).map(\.commandID), [3])
     }
 
     func testSharedBindingConflictsWithEachApplicableScope() {
         let inventory = ShortcutInventory(bindings: [
-            binding(1, scope: .browser), binding(2, scope: .kiosk), binding(3), binding(4, scope: .nonBrowser),
+            binding(1, scope: .browser), binding(2, scope: .peek), binding(3), binding(4, scope: .nonBrowser),
         ])
         XCTAssertEqual(inventory.conflicts(for: 1, key: key, in: .browser).map(\.commandID), [3])
-        XCTAssertEqual(inventory.conflicts(for: 2, key: key, in: .kiosk).map(\.commandID), [3])
+        XCTAssertEqual(inventory.conflicts(for: 2, key: key, in: .peek).map(\.commandID), [3])
         XCTAssertEqual(inventory.conflicts(for: 4, key: key, in: .nonBrowser).map(\.commandID), [3])
         XCTAssertEqual(inventory.conflicts(for: 3, key: key, in: .all).map(\.commandID), [1, 2, 4])
     }

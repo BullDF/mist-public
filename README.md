@@ -1,86 +1,74 @@
-![Phi Browser](docs/assets/phibrowser_github_2000.png)
+<p align="center"><img src="mist/brand/logo.png" alt="Mist" width="128"></p>
 
-# Phi Browser
+# Mist
 
-**The AI browser for macOS.** Agentic, local-first, native Swift.
+Mist is a personal macOS browser, forked from [Phi Browser](https://github.com/phibrowser/phibrowser-mac) and tailored to how I browse and work with coding agents. It keeps Phi's Chromium engine and native AppKit and SwiftUI client, replaces Phi's AI with Drifter, a native agent chat that runs Claude Code and Codex, adds native Mail and Clipboard apps, and trims features I don't use.
 
-Phi is a Chromium-based browser built as a real native macOS app (AppKit + SwiftUI), with an AI agent that acts in the page, a memory that lives in a file you can read, and the option to run AI entirely on your own machine. It is built for something new: a browser a person and an AI agent can use *together*, in the same window and the same session, each a first-class user.
+## Mist apps
 
-**Download Phi** (free, Apple Silicon): **[phibrowser.com](https://phibrowser.com)**
-If this is your kind of thing, a ⭐ helps a lot.
+Drifter, Mail and Clipboard are built-in apps that open as ordinary tabs, so they pin, group and move like any page. They open from the Apps menu, the New Tab page's app tiles, Tab Search (⇧⌘A) and the address bar, which suggests an app as you type its name. Their native pages share one design kit, tinted with the Space's theme color.
 
-<br>
+### Drifter
 
-## What makes it different
+- **Home.** ⇧⌘D opens Drifter's home page: a composer that starts a chat in a new tab, every ongoing chat with its live status (working, needs you, running in background), and a searchable history of past chats.
+- **One agent, two engines.** Each chat runs Claude Code (`claude`) or Codex (`codex app-server`), picked by the model in its composer, with an effort level and a confirmation mode. Every chat gets Mist's own MCP server, `mistbrowser`, which drives tabs, reads and writes mail, works in Slack and talks to other chats; a Mist feature is added there once and every engine and model gets it.
+- **Browser work.** Tabs a chat opens go into a tab group under its chat in the sidebar and close 5 minutes after the agent last used them. Each worked tab shows as a live preview card beside the transcript.
+- **Chats that work together.** A chat can spawn child chats, up to three levels deep, which open as background tabs in its group and report back when their turns end. Any chat can list, read and message the others.
+- **Chat panel.** Every tab has its own Chat panel that starts a chat with the tab already mentioned. A chat moves between its full tab and a panel (Show in Chat Panel, Mount to Tab, Unmount from Tab), and both share one draft.
+- **Composer.** `@` mentions open tabs, `/` completes commands and skills, `! ` runs a shell command, fenced code blocks edit in place, and images and files attach. Messages sent while the agent works queue up and stay editable.
+- **Transcript.** Native markdown with tables, code blocks and LaTeX math; grouped tool rows with readable summaries; permission, question and plan-approval cards; background tasks and context usage; named markers to jump between; find (⌘F) and text zoom (⌘= / ⌘−). `/context`, `/model`, `/effort`, `/compact`, `/mcp` and `/clear` render as native rows.
+- **Hand-offs and background work.** An agent hands me a step it can't do (a sign-in, 2FA, a CAPTCHA) with a Done card and waits. Long commands run in the background and wake the chat when they finish, on either engine.
+- **Memory and skills.** Chats start in Drifter's home folder (my agent-memory repo when it's there, otherwise a folder in Mist's app data), whose `memory/` and `skills/` both engines share, along with the skills of any repo a chat works in. They also load every MCP server and claude.ai connector the CLIs load, and Claude chats turn on Remote Control, so I can follow and answer them from claude.ai.
+- **Chats persist.** They save as they run and resume their session when their tab comes back, across relaunches too. The sidebar lists them under Drifter, and the History menu lists recent ones.
+- **Drifter in Slack.** With a Slack app's tokens in Settings ▸ Slack, chats get Slack's own MCP tools, and Drifter answers me in its DM and in channel threads where I mention it. Each thread is one chat in a background tab, with Slack's working status, buttons for permission cards and questions, and a leading model name (`sonnet`, `fable 5.1 high`) to pick the model.
+- **External agents** such as Codex or Claude Code can also drive the browser over the agent CDP socket (Settings ▸ Advanced ▸ Allow agents to control Mist), each in its own agent Space.
 
-- **Built for people who live in a browser.** Phi is an everyday browser made for heavy, all-day use, with the productivity power-ups that implies. It is also built so an AI agent can work beside you: seeing what you are working on, carrying the thread forward, and handing it back, in the same window and the same session rather than boxed off in a sandbox.
-- **Simple until you want more.** Phi opens as a clean tabbed browser that feels properly at home on macOS, and nothing is in your way until you reach for it. Then it unfolds: spaces, profiles, split views, tab groups, URL rules, keyboard shortcuts, Raycast support, picture-in-picture, and plenty more.
-- **The AI goes as deep as you want it to.** Persistent memory that builds up as you work. An assistant you can shape to how you think. Scheduled tasks that run without you. Private AI, where models run on your own Mac and nothing leaves it. A local guardrail that screens credentials out before anything reaches memory. Phi Sentinel, a separate daemon that oversees the AI work rather than burying it in the browser process. Your memory exposed over MCP. A command-line interface. And the ability to hand Phi to another agent entirely and let it drive.
-- **An agent with the same reach you have.** The agent sees what you see and picks up from where you are, so you rarely have to spell out every step. Inside a browser window today most things are full applications rather than pages, and the agent operates them the way you would, with the same capabilities as a human operator and a visible record of every action it took. Not a chat panel bolted onto a browser.
-- **Memory you can actually read.** Phi's memory of your browsing is created and stored on your device and stays your property. You can open it, edit it, delete entries, or wipe it. We do not collect it and we do not upload it. We do not train AI models on your content.
-- **Your AI, your choice of where it runs.** Point Phi at models on your own Mac or your own hardware through LM Studio or Ollama, and no account is involved. Or use Phi Cloud. Or switch AI off entirely and use Phi as a plain browser.
-- **Skills it builds for itself.** Show the agent a workflow once and it condenses what you did into a reusable skill, ready the next time you need it.
-- **Independent, and nothing to lock you into.** Phinomenon is a small independent software house. We do not run a search business, an ad network, or a cloud we need to keep you inside, so our incentive is simply that you like the browser enough to keep it. Bring your own models, use ours, or use none.
-- **A real browser underneath.** A genuine Chromium engine with a native macOS client on top, AppKit and SwiftUI. A full browser that holds up as one, fast and at home on the Mac.
+### Mail
 
-<br>
+- **A native mail client** for plain IMAP/SMTP accounts with passwords (a Gmail app password works): three panes, All Inboxes, All Sent, All Trash and All Junk across accounts, search, Mark All as Read, notifications for new mail, and unread counts on its pinned tab.
+- **Rich-text compose** opens inline in a pane, not a window, with attachments. Drafts autosave, survive a relaunch, and sync through IMAP.
+- **HTML mail** renders with JavaScript off, with find and body zoom, and attachments show as file cards.
+- **Accounts sync** between Macs through Mist Sync, passwords included.
+- **Drifter** can search, read and draft mail, and mark, flag, archive, move or trash messages. Sending always asks with a card, and agents can never delete mail permanently.
 
-## What this repository is
+### Clipboard
 
-This is the source of the Phi Browser macOS client, published under Apache 2.0. It is not a mirror or a snapshot: the Phi you download from phibrowser.com is built from this repository, from these commits. A fix that lands here lands in the browser people are actually using.
+Shares one item, text, an image or a file up to 10 MB, between my Macs through Mist Sync, end-to-end encrypted. Drop, paste (⌘V) or choose a file, then send it: it replaces the item on every Mac and expires 5 minutes later. Settings ▸ Sync turns sharing off per Mac.
 
-We publish it for a fairly simple reason. A browser sees everything you do, and we would rather you could read the code that runs it than take our word for how it behaves. Developing in the open tends to produce better software too: bugs get found that we would have missed, and people who care about one detail more than we ever could come and fix it properly.
+## How it differs from Phi
 
-Not all of Phi is here, and we would rather point at the line than let you discover it. The browser engine is our own Chromium build. We release it as a built binary you can download and link against, and you need it to build this repository, but its source is not published. The server side stays with us as well: the models, the prompts, and the pipelines behind the AI features. Phinomenon Inc. is a company rather than a foundation, and that shapes where the boundary sits. Section 1 of our [Terms of Use](https://phibrowser.com/terms/) sets out the same boundary in legal language.
+- **Rebranded.** Bundle ID `com.bulldf.mist`, Mist name and logo throughout, including Chromium's own menus, New Tab page, and WebUI pages.
+- **No Phi services.** Built from the open-source configuration: no Phi account, Phi AI, auto-updates, telemetry, or crash uploads, and Chromium runs sandboxed.
+- **Mist Sync.** Passwords, profiles, Spaces, bookmarks, and mail accounts sync between Macs through a small Cloudflare Worker relay (`mist/sync-server/`), which also carries the shared clipboard. Records are encrypted on the Mac with a key carried in the pairing code (Settings ▸ Sync), so the relay only stores ciphertext.
+- **Native New Tab page.** Normal and incognito new tabs open a native search composer with address-bar suggestions, and the Mist apps' tiles below it. Enter on an open-tab match switches to that tab; hold ⌘ to open a new one instead. Alternate New Tab (⌥⌘T) opens the omnibox instead, or the page if New Tab is set to the omnibox.
+- **Address bar.** Searches always use the default engine (Google or Bing), with search suggestions fetched natively and calculator and unit-conversion answers as a copy row. Bookmarks and already-open pages come first, then past searches, suggestions, and browsing history ranked by Mist's own history search. Site search ("Tab to search") is removed.
+- **Markdown reader.** Local and web `.md` files open in a native reader with find and zoom, and local files reload when they change.
+- **Tab Search (⇧⌘A)** also searches browsing history and the Mist apps, and lists bookmarks before open tabs.
+- **Bookmarks.** Sidebar bookmarks show as flat rows at the top of the tab list under a collapsible Bookmarks header. They always open as normal tabs, and they're mirrored into Chromium so the address bar's bookmark suggestions match.
+- **Tabs.** Any tab can be renamed inline, and its name survives moves, reopening, and relaunch. Tabs opened from links always go to the end of the tab list. Clicking a tab group collapses or expands it instead of opening an overview page. Tabs, selections, and groups move to a new or another window from their context menus, and a reopened tab returns to its old place in its group. A grouped tab remembers the page it joined with and offers a one-click way back once it wanders off. Links from other apps open in the window you make primary. The ⌃Tab switcher lists every tab, and crashed tabs are flagged in the tab list.
+- **Shortcuts.** Unused default shortcuts, Chromium's ⌃⌘ tab group keys among them, are dropped; every app opens from an assignable command in Settings ▸ Shortcuts.
+- **Native password manager** under Settings ▸ Passwords, with save prompts, login-field autofill, saved email addresses for sign-up fields, and verification codes filled straight from Mail, since `chrome://password-manager` and the iCloud Passwords extension don't work in a self-signed build.
+- **Downloads.** The downloads popover has a Clear button that removes finished downloads from the list; the files stay on disk.
+- **Removed:** Phi's AI panel and settings, extension controls in the window chrome, the profile button, Kiosk windows and Open in Kiosk (external links open as normal tabs), Folio (save for later), importing from Arc, Dia, and Zen along with the migration wizard, Phi's Account, Sync and Developer settings panes, Bitwarden, Report an Issue, short highlight links, the offline-page games, Chromium's form autocomplete, and the Spanish, Dutch and Korean localizations.
 
-### A build you make yourself
+## Build and install
 
-The Apache licence gives you the right to build this source, change it, and ship it. A build you make is your own browser. It is not the Phi we distribute, and the two are not interchangeable.
+There are no prebuilt releases: Mist is built from source. Requirements: an Apple Silicon Mac on macOS 15 or later and Xcode 27.1. Drifter needs the Claude Code CLI for Claude models and the Codex CLI for GPT models, each signed in.
 
-A self-built Phi does not sign in to a Phi account, does not reach Phi Cloud, does not sync, and does not use our connectors or messaging relay. It does not receive our updates: the updater is part of what we ship, not part of what we publish. It carries your signature or none.
+```sh
+./scripts/download_phi_framework.sh --version v2.17.0  # Chromium framework from Phi's releases into Frameworks/
+mist/scripts/install.sh                                # build, install and launch /Applications/Mist.app
+mist/scripts/install.sh --dev                          # or a separate Mist Dev.app with its own settings and data
+```
 
-Our [Terms of Use](https://phibrowser.com/terms/) and [Privacy Statement](https://phibrowser.com/privacy/) cover the application we distribute from phibrowser.com. They do not cover a build you made.
+Sync needs your own relay: deploy `mist/sync-server/` to a free Cloudflare account ([instructions](mist/sync-server/README.md)). Drifter in Slack needs your own Slack app's tokens.
 
-Do not present a build of your own as the application we distribute.
-
-<br>
-
-## Build from source
-
-### Requirements
-- Mac with Apple Silicon
-- Xcode 26+
-- `Phi Framework.framework` (built binary, see above)
-
-### Steps
-1. Check out this repository.
-2. Install the latest `Phi Framework` using either method:
-   - **Automatically:** Run `./scripts/download_phi_framework.sh` from the repository root. The script downloads the latest release, verifies its SHA-256 digest, and installs it into `Frameworks/`.
-   - **Manually:** Download `Phi.Framework.zip` from [phibrowser/phibrowser-framework releases](https://github.com/phibrowser/phibrowser-framework/releases), extract it, and place `Phi Framework.framework` into the root `Frameworks/` directory.
-3. Open `Phi.xcodeproj` in Xcode and let Swift Package Manager resolve dependencies.
-4. Select the `PhiBrowser-OpenSource` scheme.
-5. Build.
-
-<br>
+The app builds with the `PhiBrowser-OpenSource` scheme. Fork-owned branding, scripts, and the sync relay live in `mist/`. Development notes, tests, and the upstream sync process are in [CLAUDE.md](CLAUDE.md), written for the coding agents that do most of the work here.
 
 ## Contributing
 
-Because the Phi we distribute is built from this repository, a contribution accepted here reaches everyone using Phi. You are not patching a side project or a public mirror; you are changing the browser that ships.
-
-Contributions are welcome: bug reports, feature requests, documentation, and pull requests. Found a bug or have an idea? Open an issue first. To contribute code, send a PR with a clear description of the change and the motivation behind it.
-
-### Getting in touch
-
-- **Discord** for community chat, and for talking to the people who build Phi in something close to real time: [discord.com/invite/aj7rumAMgC](https://discord.com/invite/aj7rumAMgC)
-- **X** for development news as it happens: [@phibrowser](https://x.com/phibrowser)
-- **Security issues: please tell us privately first, at [hi@phi.cc](mailto:hi@phi.cc).** Not in an issue, not in a PR, not on Discord. Give us the chance to fix it before it is public.
-
-### Translations
-
-Phi ships in 8 languages, currently machine-seeded and waiting for native speakers to make them feel right. If you can read a JSON file, you can help: every user-visible string in the Phi product family lives in [phibrowser/phi-i18n](https://github.com/phibrowser/phi-i18n), each with context on where it appears and what it does. Translations merged there flow into the next Phi build automatically, credited to you. Prefer a web UI over git? Our Weblate is live at [i18n.phibrowser.com](https://i18n.phibrowser.com): browse every string without an account, sign in to translate, with a shared glossary and context for each one.
-
-<br>
+Mist is a personal tool shaped around how I work, so I'm not accepting pull requests. Sorry! Forking is very welcome, though: take it and make it yours.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE). The bundled `Phi Framework.framework` is not covered by that licence; it is our proprietary build, redistributed to you as a binary. Third-party components are listed in the credits page reachable from **About Phi**, and the Chromium engine's own components at `chrome://credits`.
+Apache License 2.0, see [LICENSE](LICENSE). Mist is based on the Phi Browser macOS client by Phinomenon Inc. The Chromium engine ships as `Phi Framework.framework`, Phinomenon's proprietary prebuilt binary, which this license doesn't cover. Third-party components are listed in the app's credits page and at `chrome://credits`.

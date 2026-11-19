@@ -6,10 +6,7 @@
 import XCTest
 @testable import Phi
 
-/// Locks the crash-page tab-resolution contract: `resolveTab` searches ONLY the
-/// normal `tabs` table. AI Chat tabs (which live in `aiChatTabs`) must not
-/// resolve — their renderer crashes are blocked at the Chromium dispatch source,
-/// and the Mac client never shows a crash page for the AI chat sidebar.
+/// Crash-page events resolve live page tabs by their Chromium guid.
 @MainActor
 final class BrowserStateCrashResolveTests: XCTestCase {
     private var tempDirectories: [URL] = []
@@ -46,17 +43,4 @@ final class BrowserStateCrashResolveTests: XCTestCase {
         XCTAssertNil(state.resolveTab(99))
     }
 
-    func testResolveTabIgnoresAIChatTabs() throws {
-        let state = try makeState()
-        state.tabs = [Tab(guid: 1, url: "https://a.example", isActive: false, index: 0)]
-        let aiChatTab = Tab(guid: 42,
-                            url: "chrome-extension://x/chat.html",
-                            isActive: false,
-                            index: 0,
-                            customGuid: "ai-chat-for:1")
-        state.aiChatTabs["1"] = aiChatTab
-
-        XCTAssertNil(state.resolveTab(42), "AI Chat tabs must not resolve for crash handling")
-        XCTAssertEqual(state.resolveTab(1)?.guid, 1, "Normal tabs still resolve alongside an AI chat tab")
-    }
 }

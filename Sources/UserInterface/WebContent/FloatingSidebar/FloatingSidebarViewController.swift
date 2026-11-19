@@ -89,10 +89,18 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
     /// attached; borrowing the key slot would route clicks to another shell.
     private var spacesStripSlot: SpaceWindowSlot? { state.windowController?.slot }
     private var spacesStripHostingView: SpacesStripHostingView?
+    private var primaryRoleCancellable: AnyCancellable?
 
     func bindSpaceStripToSession() {
         guard state.participatesInSpaces, spacesStripHostingView == nil,
               let slot = spacesStripSlot else { return }
+        primaryRoleCancellable = slot.$primaryRole.removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] role in self?.bottomBarSwiftUI.setMarkAsPrimaryVisible(role == .markable) }
+        bottomBarSwiftUI.onMarkAsPrimaryTap = { [weak slot] in
+            guard let slot else { return }
+            SpaceManager.shared.markPrimary(slot)
+        }
         let wheelTracker = SpacesStripWheelTracker()
         let stripGeometry = SpacesStripGeometry()
         let presence = SpacesStripPresence()
@@ -128,14 +136,12 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
     /// windows that resolve no slot, neither of which mounts the strip.
     private(set) weak var spacesStripRowView: NSView?
 
-    private let messageCardPresentation = NotificationCardPresentation(isPresented: false)
 
     private lazy var messageCardHostingController: ThemedHostingController<NotificationMessageCardView> = {
         let hostingController = ThemedHostingController(
             rootView: NotificationMessageCardView(
                 manager: NotificationCardManager.shared,
                 layoutMode: .sidebar,
-                presentation: messageCardPresentation,
                 onRun: { card in
                     NotificationCardManager.shared.decide(card: card, decision: .accept)
                 },
@@ -159,39 +165,20 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
 
     private(set) lazy var bottomBarSwiftUI: SidebarBottomBarSwiftUIView = {
         let view = SidebarBottomBarSwiftUIView()
-        view.onFeedbackTap = { [weak self] in
-            self?.state.windowController?.showFeedbackWindow()
-        }
-        view.onBookmarkTap = { [weak self] in
-            let url = "phi://bookmarks"
-            self?.state.openTab(URLProcessor.processUserInput(url))
-        }
         view.onChatTap = { [weak self] in
             guard let self else { return }
             // Defense in depth: chat entry should be hidden in placeholder
             // mode. Early-return if a stale tap reaches this handler.
-            guard self.state.isInPlaceholderMode == false,
-                  self.state.groupOverviewState == nil else {
+            guard self.state.isInPlaceholderMode == false else {
                 NSSound.beep()
                 return
             }
-            FeatureEntryAnalytics.capture(.chat, surface: .sidebar)
             self.state.toggleAIChat()
         }
         view.onCardEntryTap = {
             NotificationCardManager.shared.showManually(for: .sidebar)
         }
-        view.onMemoryTap = {
-            guard let state = BrowserState.currentState() else { return }
-            FeatureEntryAnalytics.capture(.memory, surface: .sidebar)
-            state.createTab(
-                "chrome://memory/memory.html",
-                focusAfterCreate: true
-            )
-            FirstTimeActionTracker.capture(.memoryOpened)
-        }
         view.onDownloadTap = {
-            FeatureEntryAnalytics.capture(.download, surface: .sidebar)
         }
         return view
     }()
@@ -247,7 +234,6 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
         setupConfigObserverIfNeeded()
         updateHeaderHeight()
         updateChatButtonVisibility()
-        updateMemoryButtonVisibility()
         setContentActive(false)
     }
 
@@ -445,13 +431,6 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
             }
             .store(in: &cancellables)
 
-        state.$groupOverviewState
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateChatButtonVisibility()
-            }
-            .store(in: &cancellables)
-
         NotificationCardManager.shared.shouldShowInSidebar
             .receive(on: DispatchQueue.main)
             .sink { [weak self] shouldShow in
@@ -476,7 +455,6 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.updateChatButtonVisibility()
-                self?.updateMemoryButtonVisibility()
                 self?.headerView.updateSpaceSwitchVisibility()
                 self?.updateHeaderHeight()
             }
@@ -533,23 +511,13 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
 
     private func updateChatButtonVisibility() {
         let navigationAtTop = PhiPreferences.GeneralSettings.loadLayoutMode().showsNavigationAtTop
-        let overviewActive = state.groupOverviewState != nil
         let focusedAIChat = state.focusingTab?.aiChatEnabled ?? false
-        // Outside overview, split chat is shared with the partner pane. Keep
+        // Split chat is shared with the partner pane. Keep
         // the button visible while either pane has chat enabled.
         let partnerAIChat = focusingTabSplitPartner()?.aiChatEnabled ?? false
         let aiChatEnabled = focusedAIChat || partnerAIChat
-        let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
-        let shouldHideChat = overviewActive || state.isIncognito || navigationAtTop || !aiChatEnabled || !phiAIEnabled
+        let shouldHideChat = state.isIncognito || state.isAgentSpace || state.isInPlaceholderMode || navigationAtTop || !aiChatEnabled
         bottomBarSwiftUI.setChatHidden(shouldHideChat)
-    }
-
-    /// Hide the AI memory button when Phi AI is disabled or in incognito mode,
-    /// mirroring the docked sidebar (`SidebarViewController`).
-    private func updateMemoryButtonVisibility() {
-        let phiAIEnabled = UserDefaults.standard.bool(forKey: PhiPreferences.AISettings.phiAIEnabled.rawValue)
-        let shouldHideMemory = state.isIncognito || !phiAIEnabled
-        bottomBarSwiftUI.setMemoryHidden(shouldHideMemory)
     }
 
     private func updateBottomBarHeight(_ newHeight: CGFloat) {
@@ -669,7 +637,6 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
         shouldShowMessageCard = shouldShow
         updateBottomContentFooterGap()
         guard !isCreateSpaceCoveredContentSuppressed else {
-            messageCardPresentation.isPresented = false
             messageCardHostingController.view.isHidden = true
             return
         }
@@ -680,7 +647,6 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
 
         messageCardContainerView.isHidden = false
         messageCardHostingController.view.isHidden = false
-        messageCardPresentation.isPresented = true
         view.layoutSubtreeIfNeeded()
 
         updateMessageCardHeight(animated: animated)
@@ -695,12 +661,10 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
                 context.allowsImplicitAnimation = true
                 view.layoutSubtreeIfNeeded()
             }) { [weak self] in
-                self?.messageCardPresentation.isPresented = false
                 self?.messageCardHostingController.view.isHidden = true
             }
         } else {
             view.layoutSubtreeIfNeeded()
-            messageCardPresentation.isPresented = false
             messageCardHostingController.view.isHidden = true
         }
     }
@@ -943,7 +907,6 @@ class FloatingSidebarViewController: NSViewController, BrowserThemeContextProvid
         bottomBarSwiftUI.setCreateSpaceOverlayInteractionSuppressed(suppressed)
 
         if suppressed {
-            messageCardPresentation.isPresented = false
             messageCardHostingController.view.isHidden = true
         } else {
             updateMessageCardVisibility(shouldShow: shouldShowMessageCard)

@@ -10,7 +10,7 @@ import XCTest
 
 final class SystemShortcutBindingsTests: XCTestCase {
     private let key = ShortcutsKey(characters: "1", modifiers: .control)
-    private let layout = KioskGlobalShortcutRegistrar.KeyboardLayout(inputSourceIdentifier: "com.apple.keylayout.US") { code, flags in
+    private let layout = SystemShortcutChordResolver.KeyboardLayout(inputSourceIdentifier: "com.apple.keylayout.US") { code, flags in
         switch Int(code) {
         case kVK_ANSI_1: return flags.contains(.shift) ? "!" : "1"
         case kVK_ANSI_2: return flags.contains(.shift) ? "@" : "2"
@@ -75,7 +75,7 @@ final class SystemShortcutBindingsTests: XCTestCase {
     }
 
     func testPhysicalKeyIsResolvedUsingCurrentLayout() {
-        let swapped = KioskGlobalShortcutRegistrar.KeyboardLayout(inputSourceIdentifier: "test.swapped") { code, _ in
+        let swapped = SystemShortcutChordResolver.KeyboardLayout(inputSourceIdentifier: "test.swapped") { code, _ in
             code == UInt16(kVK_ANSI_J) ? "1" : nil
         }
         XCTAssertTrue(SystemShortcutBindings.conflicts(with: [binding(key)], records: [record()], layout: swapped).isEmpty)

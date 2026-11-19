@@ -6,7 +6,6 @@
 import Foundation
 @objc final class FileSystemUtils: NSObject {
     static let defaultBundleId = "com.phibrowser.Mac"
-    static let groupId = "group.com.phibrowser.shared"
     static let teamId = "87DQ3HMK5G"
     static let bundleId = Bundle.main.infoDictionary?[kCFBundleIdentifierKey as String] as? String ?? defaultBundleId
 
@@ -82,25 +81,5 @@ import Foundation
     static func phiBrowserDataDirectory() -> String {
         return (applicationSupportDirctory() as NSString)
             .appendingPathComponent("Phi")
-    }
-    
-    static func sharedContainerURL() -> URL? {
-        if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupId) {
-            return url
-        }
-        return nil
-    }
-
-    static func sharedContainerApplicationSupportURL(createIfNeeded: Bool = true) -> URL? {
-        guard let containerURL = sharedContainerURL() else { return nil }
-        let appSupportURL = containerURL.appendingPathComponent("Library/Application Support", isDirectory: true)
-        if createIfNeeded {
-            do {
-                try FileManager.default.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
-            } catch {
-                return nil
-            }
-        }
-        return appSupportURL
     }
 }

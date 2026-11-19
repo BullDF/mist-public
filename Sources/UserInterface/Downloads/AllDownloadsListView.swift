@@ -255,7 +255,7 @@ struct DownloadsSearchField: NSViewRepresentable {
             findShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak field] event in
                 guard let field, let window = field.window,
                       event.window === window,
-                      event.modifierFlags.contains(.command),
+                      event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                       event.charactersIgnoringModifiers?.lowercased() == "f" else { return event }
                 window.makeFirstResponder(field)
                 return nil
@@ -271,34 +271,5 @@ struct DownloadsSearchField: NSViewRepresentable {
             guard let field = notification.object as? NSSearchField else { return }
             text.wrappedValue = field.stringValue
         }
-    }
-}
-
-final class AllDownloadsWindowController: NSWindowController, NSWindowDelegate {
-    var onClose: (() -> Void)?
-
-    init() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 760, height: 620),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered, defer: false
-        )
-        window.title = NSLocalizedString("downloads.all.windowTitle", value: "All Downloads", comment: "All downloads window - Window title")
-        window.minSize = NSSize(width: 560, height: 360)
-        window.isReleasedWhenClosed = false
-        window.contentViewController = ThemedHostingController(
-            rootView: AllDownloadsListView(downloadsManager: DownloadsManager(profileIds: []))
-        )
-        window.center()
-        super.init(window: window)
-        window.delegate = self
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        onClose?()
     }
 }

@@ -216,47 +216,9 @@ class GradientBorderButton: NSView {
         set { state.title = newValue }
     }
     
-    var titleColor: Color {
-        get { state.titleColor }
-        set { state.titleColor = newValue }
-    }
-    
-    var backgroundColor: Color {
-        get { state.backgroundColor }
-        set { state.backgroundColor = newValue }
-    }
-    
     var isEnabled: Bool {
         get { state.isEnabled }
         set { state.isEnabled = newValue }
-    }
-    
-    /// Set colors for gradient border. Use single color array for solid border.
-    var borderColors: [Color] {
-        get { state.borderColors }
-        set { state.borderColors = newValue }
-    }
-    
-    var borderWidth: CGFloat {
-        get { state.borderWidth }
-        set { state.borderWidth = newValue }
-    }
-    
-    /// If nil, button fills available width from constraints
-    var buttonWidth: CGFloat? {
-        get { state.width }
-        set { state.width = newValue }
-    }
-    
-    /// If nil, button fills available height from constraints
-    var buttonHeight: CGFloat? {
-        get { state.height }
-        set { state.height = newValue }
-    }
-    
-    var cornerRadius: CGFloat {
-        get { state.cornerRadius }
-        set { state.cornerRadius = newValue }
     }
     
     var clickAction: (() -> Void)? {
@@ -291,4 +253,3 @@ class GradientBorderButton: NSView {
         hostingView = hosting
     }
 }
-

@@ -5,7 +5,7 @@
 
 import AppKit
 
-private var phiObserverKey = "phiThemeObserverKey"
+private var phiObserverKey: UInt8 = 0
 
 /// Theme-aware property binder.
 @dynamicMemberLookup
@@ -65,24 +65,6 @@ public struct Phi<Base: AnyObject> {
         nonmutating set { self[key: keyPath] = newValue }
     }
     
-    /// Optional target KeyPath subscript (e.g., `\.layer, \.backgroundColor`)
-    public subscript<Target, V>(
-        _ targetKeyPath: KeyPath<Base, Target?>,
-        _ keyPath: ReferenceWritableKeyPath<Target, V>
-    ) -> Mapper<V>? {
-        get { self[key: OptionalReferenceWritableKeyPath(targetKeyPath, keyPath)] }
-        nonmutating set { self[key: OptionalReferenceWritableKeyPath(targetKeyPath, keyPath)] = newValue }
-    }
-}
-
-// MARK: - NSObject String KeyPath Support
-
-public extension Phi where Base: NSObject {
-    /// ObjC string key path subscript.
-    subscript(_ keyPath: String) -> Mapper<Any>? {
-        get { self[key: StringKeyPath<Base>(keyPath)] }
-        nonmutating set { self[key: StringKeyPath<Base>(keyPath)] = newValue }
-    }
 }
 
 // MARK: - Subscribe Support
@@ -97,10 +79,6 @@ public extension Phi {
         return key
     }
     
-    /// Cancels a subscription created through `subscribe`.
-    func unsubscribe(for key: VoidKey<Base>) {
-        set(value: nil, for: key)
-    }
 }
 
 // MARK: - PhiCompatible Protocol
@@ -126,21 +104,6 @@ public extension PhiCompatible where Self: ThemeSource {
 // MARK: - NSObject Conformance
 
 extension NSObject: PhiCompatible {}
-
-// MARK: - Convenience Extensions
-
-public extension PhiCompatible {
-    /// Subscribes using the shared theme manager as the source.
-    @discardableResult
-    func phiSubscribe(action: @escaping (Theme, Appearance) -> Void) -> VoidKey<Self> {
-        phi(source: ThemeManager.shared).subscribe(action: action)
-    }
-    
-    /// Cancels a shared theme-manager subscription.
-    func phiUnsubscribe(for key: VoidKey<Self>) {
-        phi(source: ThemeManager.shared).unsubscribe(for: key)
-    }
-}
 
 // MARK: - Legacy Support
 

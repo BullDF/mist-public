@@ -882,14 +882,22 @@ final class LibrarySpaceManagementController: NSViewController,
                   let url = URL(string: URLProcessor.processUserInput(rawURL)) else { return }
             if let id = tab?.guidInLocalDB {
                 guard store.getAllPinnedTabs(for: contents.scope.profileId, spaceId: contents.scope.spaceId).contains(where: { $0.guid == id }) else { return }
+                @MainActor func nameChange(_ submitted: String?, for id: String) -> String?? {
+                    guard let submitted, let row = store.getTab(by: id) else { return nil }
+                    if submitted.isEmpty { return .some(nil) }
+                    let displayTitle = row.overrideTitle.flatMap { $0.isEmpty ? nil : $0 } ?? row.title
+                    return submitted == displayTitle ? nil : .some(submitted)
+                }
                 if let secondaryTab {
                     guard let secondaryID = secondaryTab.guidInLocalDB,
                           contents.pins.contains(where: { $0.id == id && $0.secondaryID == secondaryID }),
                           let secondaryURL = store.normalizedURL(from: result.secondaryUrl) else { return }
                     store.updatePinnedTab(resolving: secondaryID, profileId: contents.scope.profileId,
-                                          spaceId: contents.scope.spaceId, url: secondaryURL, title: result.secondaryTitle)
+                                          spaceId: contents.scope.spaceId, url: secondaryURL, title: nil,
+                                          overrideTitle: nameChange(result.secondaryTitle, for: secondaryID))
                 }
-                store.updatePinnedTab(resolving: id, profileId: contents.scope.profileId, spaceId: contents.scope.spaceId, url: url, title: result.title)
+                store.updatePinnedTab(resolving: id, profileId: contents.scope.profileId, spaceId: contents.scope.spaceId, url: url, title: nil,
+                                      overrideTitle: nameChange(result.title, for: id))
             } else {
                 store.createPinnedTab(guid: UUID().uuidString, url: url.absoluteString, title: result.title ?? "",
                                       profileId: contents.scope.profileId, spaceId: contents.scope.spaceId)

@@ -86,8 +86,7 @@ final class LocalStoreCompatibilityController {
         var createdBackup: LocalStoreBackupRecord?
         let backupContext = LocalStoreBackupContext(
             activeStoreFormatVersion: manifestState.manifest.activeStoreFormatVersion,
-            currentStoreFormatVersion: configuration.currentStoreFormatVersion,
-            existingBackups: manifestState.manifest.backups
+            currentStoreFormatVersion: configuration.currentStoreFormatVersion
         )
         if configuration.backupPolicy.shouldBackupBeforeOpening(backupContext) {
             let backup = try createBackup(

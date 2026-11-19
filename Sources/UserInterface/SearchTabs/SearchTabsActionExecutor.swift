@@ -9,10 +9,13 @@ import Foundation
 final class SearchTabsActionExecutor {
     typealias ActivateChromiumTab = (Int64, Int64) -> Bool
     typealias RestoreClosedTab = (Int64, Int64) -> Bool
+    typealias CreateTab = (BrowserState, String) -> Void
 
     private weak var browserState: BrowserState?
     private let activateChromiumTab: ActivateChromiumTab
     private let restoreClosedTab: RestoreClosedTab
+    private let createTab: CreateTab
+    private let openApp: @MainActor (BrowserState, MistAppID) -> Void
 
     init(browserState: BrowserState) {
         self.browserState = browserState
@@ -20,20 +23,25 @@ final class SearchTabsActionExecutor {
             ChromiumLauncher.sharedInstance().bridge?
                 .activateSearchTab(withTabId: tabId, windowId: windowId) ?? false
         }
-        self.restoreClosedTab = { sessionId, windowId in
-            ChromiumLauncher.sharedInstance().bridge?
-                .openRecentlyClosedSearchEntry(withSessionId: sessionId, windowId: windowId) ?? false
+        self.restoreClosedTab = { [weak browserState] sessionId, _ in
+            browserState?.reopenClosedTabAsNewRow(sessionId: sessionId) ?? false
         }
+        self.createTab = { state, url in state.createTab(url) }
+        self.openApp = { state, id in state.openApp(id) }
     }
 
     init(
         browserState: BrowserState?,
         activateChromiumTab: @escaping ActivateChromiumTab,
-        restoreClosedTab: @escaping RestoreClosedTab
+        restoreClosedTab: @escaping RestoreClosedTab,
+        createTab: @escaping CreateTab = { state, url in state.createTab(url) },
+        openApp: @escaping @MainActor (BrowserState, MistAppID) -> Void = { state, id in state.openApp(id) }
     ) {
         self.browserState = browserState
         self.activateChromiumTab = activateChromiumTab
         self.restoreClosedTab = restoreClosedTab
+        self.createTab = createTab
+        self.openApp = openApp
     }
 
     @discardableResult
@@ -43,6 +51,9 @@ final class SearchTabsActionExecutor {
         }
 
         switch action {
+        case let .openApp(id):
+            openApp(state, id)
+            return true
         case let .activateChromiumTab(tabId, _):
             return activateChromiumTab(Int64(tabId), Int64(state.windowId))
         case let .restoreClosedTab(sessionId, _, _):
@@ -57,6 +68,9 @@ final class SearchTabsActionExecutor {
             return true
         case .showBookmarkMenuRoot:
             return false
+        case let .openHistoryURL(url):
+            createTab(state, url)
+            return true
         }
     }
 

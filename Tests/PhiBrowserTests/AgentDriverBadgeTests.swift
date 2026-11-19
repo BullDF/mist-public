@@ -7,35 +7,16 @@ import XCTest
 @testable import Phi
 
 /// How the pill over a driven tab names the agent driving it.
-///
-/// The case that motivated these: the browser's own agent, reported by a
-/// browser-side drive rather than by a task the app opened, arrives named
-/// after its script — "phi-agent.bundle" — and `friendlyName` keeps only the
-/// text after the last dot, so the pill read "bundle" over the user's tab.
 final class AgentDriverBadgeTests: XCTestCase {
 
     // MARK: - The browser's own agent
 
-    /// `origin` carries the answer wherever the app already knows.
-    func testPhiAgentOriginWearsTheProductMark() {
-        let badge = AgentDriverBadge.make(agentName: "", origin: .phiAgent)
-        XCTAssertEqual(badge.label, "Phi")
-        XCTAssertEqual(badge.assetName, AgentDriverBadge.phiBrandAssetName)
-    }
-
-    /// The regression: the name the ancestry walk derives for the component.
-    func testScriptDerivedNameIsRecognizedInsteadOfReadingBundle() {
-        let badge = AgentDriverBadge.make(agentName: "phi-agent.bundle", origin: .cdp)
-        XCTAssertEqual(badge.label, "Phi", "must not fall through to \"bundle\"")
-        XCTAssertEqual(badge.assetName, AgentDriverBadge.phiBrandAssetName)
-    }
-
-    /// The bare component name, and the display name the first-party pass mints.
-    func testPhiAgentNameFormsAreRecognized() {
-        for name in ["phi-agent", "Phi", "phi"] {
-            let badge = AgentDriverBadge.make(agentName: name, origin: .cdp)
-            XCTAssertEqual(badge.label, "Phi", "\(name) should read as Phi")
-        }
+    func testBrowserAgentUsesTheGlobeAndLocalizedName() {
+        let name = AgentIdentity.mistBrowserAgent(pid: nil).displayName
+        let badge = AgentDriverBadge.make(agentName: name)
+        XCTAssertEqual(badge.label, name)
+        XCTAssertEqual(badge.symbol, "globe")
+        XCTAssertNil(badge.assetName)
     }
 
     // MARK: - Everyone else keeps their own identity
@@ -44,38 +25,19 @@ final class AgentDriverBadgeTests: XCTestCase {
     /// its own badge rather than being absorbed into Phi's.
     func testPiAgentKeepsItsOwnBadge() {
         for name in ["pi-agent.bundle", "pi-agent", "pi"] {
-            let badge = AgentDriverBadge.make(agentName: name, origin: .cdp)
+            let badge = AgentDriverBadge.make(agentName: name)
             XCTAssertEqual(badge.label, "Pi", "\(name) must not be labelled Phi")
             XCTAssertEqual(badge.assetName, "agent-pi")
-        }
-    }
-
-    /// Matched as a whole dot-separated segment, so a name that merely
-    /// contains the text cannot borrow the product's mark.
-    func testLookalikeNamesDoNotBorrowTheMark() {
-        for name in ["not-phi-agentx", "phi-agentx.bundle", "phi-agent-evil"] {
-            let badge = AgentDriverBadge.make(agentName: name, origin: .cdp)
-            XCTAssertNotEqual(badge.label, "Phi", "\(name) must not read as Phi")
-            XCTAssertNotEqual(badge.assetName, AgentDriverBadge.phiBrandAssetName)
-        }
-    }
-
-    /// Sibling Sentinel components are not the agent and get no Phi mark.
-    func testSiblingComponentsAreNotThePhiAgent() {
-        for name in ["phi-memory.bundle", "im-server.bundle", "phi-mcp-server.bundle"] {
-            let badge = AgentDriverBadge.make(agentName: name, origin: .cdp)
-            XCTAssertNotEqual(badge.assetName, AgentDriverBadge.phiBrandAssetName,
-                              "\(name) must not wear the product mark")
         }
     }
 
     /// Two Grok products, one mark, two labels: the desktop app by its
     /// bundle name, the CLI by its signing id.
     func testGrokBotAndGrokBuildAreToldApart() {
-        let bot = AgentDriverBadge.make(agentName: "Grok Bot", origin: .cdp)
+        let bot = AgentDriverBadge.make(agentName: "Grok Bot")
         XCTAssertEqual(bot.label, "Grok Bot")
         XCTAssertEqual(bot.assetName, "agent-grokbot")
-        let build = AgentDriverBadge.make(agentName: "xai-grok-pager", origin: .cdp)
+        let build = AgentDriverBadge.make(agentName: "xai-grok-pager")
         XCTAssertEqual(build.label, "Grok Build")
         XCTAssertEqual(build.assetName, "agent-grok")
     }
@@ -96,7 +58,7 @@ final class AgentDriverBadgeTests: XCTestCase {
             ("codebuddy", "agent-codebuddy"),
         ]
         for (name, asset) in expected {
-            XCTAssertEqual(AgentDriverBadge.make(agentName: name, origin: .cdp).assetName,
+            XCTAssertEqual(AgentDriverBadge.make(agentName: name).assetName,
                            asset, "\(name) lost its badge")
         }
     }

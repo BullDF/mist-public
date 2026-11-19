@@ -9,15 +9,13 @@ import XCTest
 ///
 /// The suite boots Phi with launch arguments instead of mutating persisted
 /// preferences: `-layoutMode` selects the layout, `-sidebarHeaderWidth` aligns
-/// the real split-view divider, and `-sidebarHeaderUpdateVersion` exercises the
-/// same visible state Sparkle enters after an update has downloaded. Vertical
+/// the real split-view divider. Vertical
 /// layouts are expanded through the View menu when needed, matching the product
 /// path for reopening a collapsed sidebar.
 final class SidebarHeaderViewTests: XCTestCase {
     private enum HeaderID {
         static let sidebarButton = "sidebarHeader.sidebarButton"
         static let searchTabsButton = "sidebarHeader.searchTabsButton"
-        static let upgradeButton = "sidebarHeader.upgradeButton"
         static let backButton = "sidebarHeader.backButton"
         static let forwardButton = "sidebarHeader.forwardButton"
         static let refreshButton = "sidebarHeader.refreshButton"
@@ -46,7 +44,7 @@ final class SidebarHeaderViewTests: XCTestCase {
     }
 
     @MainActor
-    func test_performanceLayoutWithoutUpdateShowsSidebarNavigation() throws {
+    func test_performanceLayoutShowsSidebarNavigation() throws {
         try launch(layoutMode: .performance, sidebarWidth: 260)
 
         assertVisible(HeaderID.sidebarButton)
@@ -54,65 +52,18 @@ final class SidebarHeaderViewTests: XCTestCase {
         assertVisible(HeaderID.forwardButton)
         assertVisible(HeaderID.refreshButton)
         assertVisible(HeaderID.addressView)
-        assertNotVisible(HeaderID.upgradeButton)
         assertNotVisible(HeaderID.searchTabsButton)
-    }
-
-    @MainActor
-    func test_performanceLayoutWithUpdateShowsUpgradeWhenWideEnough() throws {
-        try launch(layoutMode: .performance, sidebarWidth: 260, updateVersion: "1.2.3")
-
-        assertVisible(HeaderID.upgradeButton)
-        assertVisible(HeaderID.backButton)
-        assertVisible(HeaderID.forwardButton)
-        assertVisible(HeaderID.refreshButton)
-        assertVisible(HeaderID.addressView)
-        assertNotVisible(HeaderID.sidebarButton)
-        assertNotVisible(HeaderID.searchTabsButton)
-    }
-
-    @MainActor
-    func test_performanceLayoutWithUpdateKeepsSidebarButtonWhenNarrow() throws {
-        try launch(layoutMode: .performance, sidebarWidth: 193, updateVersion: "1.2.3")
-
-        assertVisible(HeaderID.sidebarButton)
-        assertVisible(HeaderID.backButton)
-        assertVisible(HeaderID.forwardButton)
-        assertVisible(HeaderID.refreshButton)
-        assertVisible(HeaderID.addressView)
-        assertNotVisible(HeaderID.upgradeButton)
-        assertNotVisible(HeaderID.searchTabsButton)
-    }
-
-    @MainActor
-    func test_balancedLayoutWithUpdateShowsHeaderActionsWithoutSidebarNavigation() throws {
-        try launch(layoutMode: .balanced, sidebarWidth: 260, updateVersion: "1.2.3")
-
-        assertVisible(HeaderID.sidebarButton)
-        assertVisible(HeaderID.searchTabsButton)
-        assertVisible(HeaderID.upgradeButton)
-        assertNotVisible(HeaderID.backButton)
-        assertNotVisible(HeaderID.forwardButton)
-        assertNotVisible(HeaderID.refreshButton)
-        assertNotVisible(HeaderID.addressView)
-
-        let sidebarButton = element(matching: HeaderID.sidebarButton)
-        let searchTabsButton = element(matching: HeaderID.searchTabsButton)
-        let upgradeButton = element(matching: HeaderID.upgradeButton)
-        XCTAssertEqual(upgradeButton.frame.midY, sidebarButton.frame.midY, accuracy: 0.5)
-        XCTAssertEqual(upgradeButton.frame.midY, searchTabsButton.frame.midY, accuracy: 0.5)
     }
 
     @MainActor
     func test_comfortableLayoutDoesNotExposeSidebarHeaderControls() throws {
-        try launch(layoutMode: .comfortable, sidebarWidth: 260, updateVersion: "1.2.3")
+        try launch(layoutMode: .comfortable, sidebarWidth: 260)
 
         let stripTab = app.windows.firstMatch.buttons.matching(identifier: "tabStripTab").firstMatch
         XCTAssertTrue(stripTab.waitForExistence(timeout: 30),
                       "Horizontal tab strip never appeared; Comfortable layout may not be active")
         assertNotVisible(HeaderID.sidebarButton)
         assertNotVisible(HeaderID.searchTabsButton)
-        assertNotVisible(HeaderID.upgradeButton)
         assertNotVisible(HeaderID.backButton)
         assertNotVisible(HeaderID.forwardButton)
         assertNotVisible(HeaderID.refreshButton)
@@ -122,8 +73,7 @@ final class SidebarHeaderViewTests: XCTestCase {
     @MainActor
     private func launch(
         layoutMode: LayoutMode,
-        sidebarWidth: CGFloat,
-        updateVersion: String? = nil
+        sidebarWidth: CGFloat
     ) throws {
         let app = XCUIApplication()
         app.launchArguments += [
@@ -133,10 +83,6 @@ final class SidebarHeaderViewTests: XCTestCase {
             "-sidebarHeaderWidth", "\(Int(sidebarWidth))",
             "--user-data-dir=\(NSTemporaryDirectory())PhiUITest-\(ProcessInfo.processInfo.globallyUniqueString)",
         ]
-
-        if let updateVersion {
-            app.launchArguments += ["-sidebarHeaderUpdateVersion", updateVersion]
-        }
 
         app.launch()
         self.app = app

@@ -7,45 +7,41 @@ import Foundation
 
 /// Account-scoped preferences persisted to a plist under `account.userDataStorage/defaults`.
 ///
-/// Memory must never lead disk (R-M3-4a-83). All six write APIs snapshot `storage` and restore it on
+/// Memory must never lead disk (R-M3-4a-83). Both `set(_:forKey:)` overloads snapshot `storage` and restore it on
 /// persistence failure within the same `queue.sync` block. A failed write must not leave an in-memory value
 /// that causes the next read-modify-write to skip persistence (§2.7, second round after plist write failure).
 ///
-/// Only four APIs own a `queue.sync` block: both `set(_:forKey:)` overloads, CAS, and `removeAll()`.
-/// `removeObject(forKey:)` and `set(_:forCodableKey:)` delegate snapshot and rollback to those blocks. A
-/// separate block could interleave with another writer and roll back its changes.
-///
-/// The first five APIs return whether persistence succeeded and use `@discardableResult` for existing callers.
-/// CAS (`ifCurrentDataEquals:`) returns whether the value changed AND persisted.
+/// Each overload owns its `queue.sync` block and returns whether persistence succeeded. Snapshot and
+/// rollback must stay in that block so another writer's changes cannot be rolled back.
 final class AccountUserDefaults {
     private let account: Account
     private let storeURL: URL
     private let queue: DispatchQueue
     private var storage: [String: Any]
-    
+
     init(account: Account, storeURL overrideStoreURL: URL? = nil) {
         self.account = account
         let fileURL = overrideStoreURL ?? Self.storeURL(for: account)
         let defaultsDir = fileURL.deletingLastPathComponent()
         self.storeURL = fileURL
         self.queue = DispatchQueue(label: "com.phibrowser.accountDefaults.\(account.userID)")
-        
+
         do {
             try FileManager.default.createDirectory(at: defaultsDir, withIntermediateDirectories: true)
         } catch {
             AppLogError("Failed to create defaults directory: \(error.localizedDescription)")
         }
-        
+
         self.storage = AccountUserDefaults.loadStore(from: fileURL)
     }
-    
+
     // MARK: - Public API (UserDefaults-like)
     func object(forKey key: String) -> Any? {
         queue.sync {
             storage[key]
         }
     }
-    
+
     /// Returns true after persistence; restores the previous `storage` on failure (R-M3-4a-83).
     @discardableResult
     func set(_ value: Any?, forKey key: String) -> Bool {
@@ -83,109 +79,14 @@ final class AccountUserDefaults {
         }
     }
 
-    /// Delegates snapshot and rollback to `set(_:forKey:)` within its `queue.sync` block and forwards the
-    /// result.
-    @discardableResult
-    func removeObject(forKey key: String) -> Bool {
-        set(nil, forKey: key)
-    }
-
-    func bool(forKey key: String) -> Bool {
-        object(forKey: key) as? Bool ?? false
-    }
-    
-    func integer(forKey key: String) -> Int {
-        object(forKey: key) as? Int ?? 0
-    }
-    
     func double(forKey key: String) -> Double {
         object(forKey: key) as? Double ?? 0
     }
-    
+
     func string(forKey key: String) -> String? {
         object(forKey: key) as? String
     }
-    
-    func data(forKey key: String) -> Data? {
-        object(forKey: key) as? Data
-    }
-    
-    func date(forKey key: String) -> Date? {
-        object(forKey: key) as? Date
-    }
-    
-    /// After encoding, delegates persistence and rollback to `set(_:forKey:)`. Encoding failure writes nothing
-    /// and returns false.
-    @discardableResult
-    func set<T: Encodable>(_ value: T?, forCodableKey key: String) -> Bool {
-        guard let value = value else {
-            return removeObject(forKey: key)
-        }
-        do {
-            let data = try JSONEncoder().encode(value)
-            return set(data, forKey: key)
-        } catch {
-            AppLogError("Failed to encode value for key \(key): \(error.localizedDescription)")
-            return false
-        }
-    }
 
-    /// Atomically writes an encoded value only when the stored data has not changed since the caller captured
-    /// `expectedData`.
-    ///
-    /// Here true means changed AND persisted (R-M3-4a-83). A mismatch returns false without writing;
-    /// persistence failure also returns false and restores `storage`, avoiding an in-memory-only success.
-    @discardableResult
-    func set<T: Encodable>(
-        _ value: T,
-        forCodableKey key: String,
-        ifCurrentDataEquals expectedData: Data?
-    ) -> Bool {
-        let data: Data
-        do {
-            data = try JSONEncoder().encode(value)
-        } catch {
-            AppLogError("Failed to encode value for key \(key): \(error.localizedDescription)")
-            return false
-        }
-
-        return queue.sync {
-            let previous = storage
-            guard (storage[key] as? Data) == expectedData else { return false }
-            storage[key] = data
-            guard persistLocked() else {
-                storage = previous
-                return false
-            }
-            return true
-        }
-    }
-    
-    func codableValue<T: Decodable>(forKey key: String) -> T? {
-        guard let data = data(forKey: key) else { return nil }
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            AppLogError("Failed to decode value for key \(key): \(error.localizedDescription)")
-            return nil
-        }
-    }
-    
-    /// Restore the entire dictionary on failure; otherwise all account preferences would disappear from
-    /// memory.
-    @discardableResult
-    func removeAll() -> Bool {
-        queue.sync {
-            let previous = storage
-            storage.removeAll()
-            guard persistLocked() else {
-                storage = previous
-                return false
-            }
-            return true
-        }
-    }
-    
     // MARK: - Helpers
     /// Where `account`'s defaults plist lives.
     static func storeURL(for account: Account) -> URL {
@@ -219,7 +120,7 @@ final class AccountUserDefaults {
             return [:]
         }
     }
-    
+
     /// The caller must hold `queue` and handle false: all six write APIs use it to trigger rollback.
     private func persistLocked() -> Bool {
         do {
@@ -232,91 +133,13 @@ final class AccountUserDefaults {
         }
     }
 
-    /// Merges only the Space-scoped visual preferences that belong to Guest
-    /// data. Target values win so an account's existing appearance is never
-    /// overwritten by a Guest Space that mapped onto the same identifier.
-    ///
-    /// Unlike the UserDefaults-like setters above, this operation reports
-    /// persistence failures. Guest migration must not write its receipt until
-    /// both the SwiftData transaction and these selected defaults are durable.
-    func mergeGuestSpaceThemes(
-        _ guestThemes: GuestDataMigrationThemeSnapshot,
-        spaceIDMappings: [String: String]
-    ) throws {
-        try queue.sync {
-            var updatedStorage = storage
-            var themeIDs = (updatedStorage[DefaultsKey.spaceThemeIds.rawValue] as? [String: String]) ?? [:]
-            var saturations = (updatedStorage[DefaultsKey.spaceThemeSaturations.rawValue] as? [String: [String: Double]]) ?? [:]
-            var pureValues = (updatedStorage[DefaultsKey.spacePureThemeSliderValues.rawValue] as? [String: Double]) ?? [:]
-
-            for sourceSpaceID in spaceIDMappings.keys.sorted() {
-                guard let targetSpaceID = spaceIDMappings[sourceSpaceID] else { continue }
-                if themeIDs[targetSpaceID] == nil,
-                   let value = guestThemes.themeIDs[sourceSpaceID] {
-                    themeIDs[targetSpaceID] = value
-                }
-                if saturations[targetSpaceID] == nil,
-                   let value = guestThemes.saturations[sourceSpaceID] {
-                    saturations[targetSpaceID] = value
-                }
-                if pureValues[targetSpaceID] == nil,
-                   let value = guestThemes.pureSliderValues[sourceSpaceID] {
-                    pureValues[targetSpaceID] = value
-                }
-            }
-
-            updatedStorage[DefaultsKey.spaceThemeIds.rawValue] = themeIDs
-            updatedStorage[DefaultsKey.spaceThemeSaturations.rawValue] = saturations
-            updatedStorage[DefaultsKey.spacePureThemeSliderValues.rawValue] = pureValues
-            try persistLocked(updatedStorage)
-            storage = updatedStorage
-        }
-    }
-
-    private func persistLocked(_ updatedStorage: [String: Any]) throws {
-        let data = try PropertyListSerialization.data(
-            fromPropertyList: updatedStorage,
-            format: .xml,
-            options: 0
-        )
-        try data.write(to: storeURL, options: .atomic)
-    }
-
-    /// Reads every Guest-migrated preference under one queue lock so cleanup
-    /// cannot compare a mixture of values from different writes.
-    func guestDataMigrationThemeSnapshot()
-        -> GuestDataMigrationThemeSnapshot {
-        queue.sync {
-            GuestDataMigrationThemeSnapshot(
-                themeIDs: (
-                    storage[DefaultsKey.spaceThemeIds.rawValue]
-                        as? [String: String]
-                ) ?? [:],
-                saturations: (
-                    storage[DefaultsKey.spaceThemeSaturations.rawValue]
-                        as? [String: [String: Double]]
-                ) ?? [:],
-                pureSliderValues: (
-                    storage[DefaultsKey.spacePureThemeSliderValues.rawValue]
-                        as? [String: Double]
-                ) ?? [:]
-            )
-        }
-    }
 }
 
 extension AccountUserDefaults {
     enum DefaultsKey: String {
-        case loginPhase
-        case cachedUserName
-        case cachedProfile
-        case cachedUserConnectors
         /// Controls whether notification cards auto-popup. Default is popup enabled.
         case notificationPopupMode
         case lastKnownSidebarWidth
-        case authReauthenticationReason
-        case authReauthenticationFirstDetectedAt
-        case authReauthenticationIncidentID
         case activeSpaceId
         /// The Space currently holding the "default" role (see
         /// `SpaceManager.currentDefaultSpaceId`). Absent until the user
@@ -350,22 +173,17 @@ extension AccountUserDefaults {
         /// (`SpaceManager.slotsRestoreSnapshotKey`): the ids it maps belong
         /// to one Chromium data directory only.
         case slotsRestoreSnapshot
-        /// The Migration Sources this account has already completed a
-        /// Migration from, held as their source identifiers. A source listed
-        /// here makes a second Migration from it warn before it starts.
-        case migratedBrowserSources
     }
-    
+
     /// Notification popup behavior mode.
     enum NotificationPopupMode: String {
         /// Cards automatically appear when new notifications arrive.
         case popup
         /// Cards stay hidden until the user opens them manually.
         case mute
-        
-        static var defaultValue: NotificationPopupMode { .popup }
+
     }
-    
+
     /// Current notification popup mode.
     var notificationPopupMode: NotificationPopupMode {
         guard let rawValue = string(forKey: DefaultsKey.notificationPopupMode.rawValue),
@@ -374,7 +192,7 @@ extension AccountUserDefaults {
         }
         return mode
     }
-    
+
     /// Persists the notification popup mode and broadcasts the change.
     func setNotificationPopupMode(_ mode: NotificationPopupMode) {
         set(mode.rawValue, forKey: DefaultsKey.notificationPopupMode.rawValue)
@@ -440,21 +258,6 @@ extension AccountUserDefaults {
         set(map, forKey: DefaultsKey.spacePureThemeSliderValues.rawValue)
     }
 
-    /// The Migration Sources this account has completed a Migration from.
-    /// Empty until the first Migration finishes.
-    func migratedBrowserSources() -> [String] {
-        (object(forKey: DefaultsKey.migratedBrowserSources.rawValue) as? [String]) ?? []
-    }
-
-    /// Records that a Migration from `source` completed, leaving every other
-    /// source's record alone. Idempotent: a third Migration from the same
-    /// source leaves the list as the second one left it.
-    func addMigratedBrowserSource(_ source: String) {
-        var sources = migratedBrowserSources()
-        guard !sources.contains(source) else { return }
-        sources.append(source)
-        set(sources, forKey: DefaultsKey.migratedBrowserSources.rawValue)
-    }
 }
 
 extension Notification.Name {

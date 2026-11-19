@@ -47,7 +47,7 @@ final class SidebarMediaUITests: XCTestCase {
         app.activate()
         try ensureSidebarExpanded(in: app)
         let originalPreferences = try setMediaPreferences(in: app, mode: nil)
-        defer { try? setMediaPreferences(in: app, mode: originalPreferences) }
+        defer { _ = try? setMediaPreferences(in: app, mode: originalPreferences) }
         try setMediaPreferences(in: app, mode: .alwaysExpanded)
         let muteFixtureURL = fixtureURL + (fixtureURL.contains("?") ? "&" : "?") + "tracks=1"
         try navigateToFixture(muteFixtureURL, in: app)
@@ -114,7 +114,7 @@ final class SidebarMediaUITests: XCTestCase {
         var preferencesRestored = false
         defer {
             if !preferencesRestored {
-                try? setMediaPreferences(in: app, mode: originalPreferences)
+                _ = try? setMediaPreferences(in: app, mode: originalPreferences)
             }
         }
         try setMediaPreferences(in: app, mode: .dynamic)
@@ -523,7 +523,7 @@ final class SidebarMediaUITests: XCTestCase {
         app.activate()
         try ensureSidebarExpanded(in: app)
         let original = try setMediaPreferences(in: app, mode: nil)
-        defer { try? setMediaPreferences(in: app, mode: original) }
+        defer { _ = try? setMediaPreferences(in: app, mode: original) }
         try setMediaPreferences(in: app, mode: .dynamic)
         for label in ["Media A", "Media B", "Media C"] {
             if label != "Media A" { app.typeKey("t", modifierFlags: .command) }

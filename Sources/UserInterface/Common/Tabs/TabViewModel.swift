@@ -8,22 +8,10 @@ import Combine
 import AppKit
 
 enum TabCornerBadgeStatus: Int, CaseIterable {
-    case chat
-    case inputting
     case agent
 
-    static func resolve(
-        isAgentActive: Bool,
-        isChatGenerating: Bool,
-        hasPairedChat: Bool,
-        hasStartedChatGeneration: Bool,
-        isChatCollapsed: Bool
-    ) -> TabCornerBadgeStatus? {
-        if isAgentActive { return .agent }
-        guard isChatGenerating || hasPairedChat else { return nil }
-        if isChatGenerating { return .inputting }
-        if hasPairedChat && hasStartedChatGeneration && !isChatCollapsed { return .chat }
-        return nil
+    static func resolve(isAgentActive: Bool) -> TabCornerBadgeStatus? {
+        isAgentActive ? .agent : nil
     }
 
     static func highestPriority(_ statuses: [TabCornerBadgeStatus?]) -> TabCornerBadgeStatus? {
@@ -36,39 +24,24 @@ final class TabStatusModel: ObservableObject {
     @Published private(set) var isDiscarded = false
     @Published private(set) var isUnloaded = false
     @Published private(set) var isAgentActive = false
-    @Published private(set) var hasPairedChat = false
-    @Published private(set) var hasStartedChatGeneration = false
-    @Published private(set) var isChatGenerating = false
-    @Published private(set) var isChatCollapsed = true
 
     var cornerBadgeStatus: TabCornerBadgeStatus? {
-        TabCornerBadgeStatus.resolve(
-            isAgentActive: isAgentActive,
-            isChatGenerating: isChatGenerating,
-            hasPairedChat: hasPairedChat,
-            hasStartedChatGeneration: hasStartedChatGeneration,
-            isChatCollapsed: isChatCollapsed
-        )
+        TabCornerBadgeStatus.resolve(isAgentActive: isAgentActive)
     }
 
     private var configuredTabGuid: Int?
     private var configurationGeneration: UInt64 = 0
     private var cancellables = Set<AnyCancellable>()
 
-    func configure(with tab: Tab, in browserState: BrowserState? = nil) {
+    func configure(with tab: Tab) {
         cancelSubscriptions()
 
         let expectedGuid = tab.guid
         let expectedGeneration = configurationGeneration
-        let chatStateTab = browserState?.resolveTab(expectedGuid) ?? tab
         configuredTabGuid = expectedGuid
         isDiscarded = tab.isDiscarded
         isUnloaded = tab.isUnloaded
         isAgentActive = AgentAnimationManager.shared.isActive(for: expectedGuid)
-        hasPairedChat = chatStateTab.hasPairedChat
-        hasStartedChatGeneration = chatStateTab.hasStartedChatGeneration
-        isChatGenerating = chatStateTab.isPairedChatGenerating
-        isChatCollapsed = chatStateTab.aiChatCollapsed
 
         tab.$isDiscarded
             .removeDuplicates()
@@ -93,58 +66,6 @@ final class TabStatusModel: ObservableObject {
                         expectedGeneration: expectedGeneration
                       ) else { return }
                 self.isUnloaded = isUnloaded
-            }
-            .store(in: &cancellables)
-
-        chatStateTab.$hasPairedChat
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] hasPairedChat in
-                guard let self,
-                      self.isCurrentConfiguration(
-                        expectedGuid: expectedGuid,
-                        expectedGeneration: expectedGeneration
-                      ) else { return }
-                self.hasPairedChat = hasPairedChat
-            }
-            .store(in: &cancellables)
-
-        chatStateTab.$isPairedChatGenerating
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isGenerating in
-                guard let self,
-                      self.isCurrentConfiguration(
-                        expectedGuid: expectedGuid,
-                        expectedGeneration: expectedGeneration
-                      ) else { return }
-                self.isChatGenerating = isGenerating
-            }
-            .store(in: &cancellables)
-
-        chatStateTab.$hasStartedChatGeneration
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] hasStartedGeneration in
-                guard let self,
-                      self.isCurrentConfiguration(
-                        expectedGuid: expectedGuid,
-                        expectedGeneration: expectedGeneration
-                      ) else { return }
-                self.hasStartedChatGeneration = hasStartedGeneration
-            }
-            .store(in: &cancellables)
-
-        chatStateTab.$aiChatCollapsed
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isCollapsed in
-                guard let self,
-                      self.isCurrentConfiguration(
-                        expectedGuid: expectedGuid,
-                        expectedGeneration: expectedGeneration
-                      ) else { return }
-                self.isChatCollapsed = isCollapsed
             }
             .store(in: &cancellables)
 
@@ -173,10 +94,6 @@ final class TabStatusModel: ObservableObject {
         isDiscarded = false
         isUnloaded = false
         isAgentActive = false
-        hasPairedChat = false
-        hasStartedChatGeneration = false
-        isChatGenerating = false
-        isChatCollapsed = true
     }
 
     private func isCurrentConfiguration(expectedGuid: Int, expectedGeneration: UInt64) -> Bool {
@@ -187,8 +104,12 @@ final class TabStatusModel: ObservableObject {
 @Observable
 @MainActor
 final class TabViewModel {
+    var agentSidebarStatus: AgentSidebarStatus = .none
+    var isEndedAgentChat = false
     var title: String = ""
+    var isRenaming = false
     var url: String?
+    var appIcon: MistAppIcon?
     var faviconUrl: String?
     var liveFaviconImage: NSImage?
     var profileFaviconImage: NSImage?
@@ -197,7 +118,6 @@ final class TabViewModel {
     /// when viewModel is briefly reconfigured with a nil-url tab during layout.
     private(set) var faviconLoadURL: String?
     var isActive: Bool = false
-    var isActiveSuppressed: Bool = false
     /// True when this tab is part of the temporary multi-selection (the active
     /// tab is implicitly included but never carries this flag).
     var isMultiSelected: Bool = false
@@ -272,12 +192,12 @@ final class TabViewModel {
         title = ""
         url = nil
         faviconUrl = nil
+        appIcon = nil
         faviconLoadURL = nil
         liveFaviconImage = nil
         profileFaviconImage = nil
         liveFaviconRevision = 0
         isActive = false
-        isActiveSuppressed = false
         isMultiSelected = false
         isHovered = false
         isHoverSuppressed = false
@@ -290,6 +210,8 @@ final class TabViewModel {
         isCurrentlyAudible = false
         isMuted = false
         isCapturingMedia = false
+        agentSidebarStatus = .none
+        isEndedAgentChat = false
         groupColor = nil
         status.prepareForReuse()
         faviconRevision &+= 1
@@ -308,11 +230,6 @@ final class TabViewModel {
         }
     }
 
-    func setActiveSuppressed(_ suppressed: Bool, activeValue: Bool? = nil) {
-        isActiveSuppressed = suppressed
-        isActive = (activeValue ?? isActive) && !suppressed
-    }
-
     private var configuredTabGuid: Int?
     private var configurationGeneration: UInt64 = 0
 
@@ -327,10 +244,25 @@ final class TabViewModel {
         let expectedGuid = tab.guid
         let expectedGeneration = configurationGeneration
         configuredTabGuid = expectedGuid
-        status.configure(with: tab, in: browserState)
+        status.configure(with: tab)
+        bindAgentSidebarStatus(to: tab, expectedGeneration: expectedGeneration)
 
         self.title = tab.title
+        self.isRenaming = tab.isRenaming
+        tab.$isRenaming.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] isRenaming in
+                guard let self, self.isCurrentConfiguration(expectedGuid: expectedGuid, expectedGeneration: expectedGeneration) else { return }
+                self.isRenaming = isRenaming
+            }
+            .store(in: &cancellables)
         self.url = tab.url
+        self.appIcon = tab.appAddress.flatMap { MistApps.app($0.app)?.icon($0.instance) }
+        AgentChatStore.shared.objectWillChange.receive(on: DispatchQueue.main)
+            .sink { [weak self, weak tab] in
+                guard let self, let address = tab?.appAddress, address.app == .drifter else { return }
+                let icon = MistApps.app(address.app)?.icon(address.instance)
+                if self.appIcon != icon { self.appIcon = icon }
+            }.store(in: &cancellables)
         self.faviconLoadURL = Self.faviconPageURLString(for: tab)
         self.faviconUrl = tab.faviconUrl
         updateLiveFavicon(data: tab.liveFaviconData, revision: tab.liveFaviconRevision)
@@ -344,7 +276,7 @@ final class TabViewModel {
             "tabCachedBytes=\(tab.cachedFaviconData?.count ?? 0) " +
             "liveImage=\(liveFaviconImage != nil) profileImage=\(profileFaviconImage != nil)"
         )
-        self.isActive = tab.isActive && !isActiveSuppressed
+        self.isActive = tab.isActive
         self.rawIsLoading = tab.isLoading
         self.loadingProgress = Double(tab.loadingProgress)
         updateVisualLoading()
@@ -370,6 +302,7 @@ final class TabViewModel {
             .sink { [weak self] newUrl in
                 guard let self, self.isCurrentConfiguration(expectedGuid: expectedGuid, expectedGeneration: expectedGeneration) else { return }
                 self.url = newUrl
+                self.appIcon = tab.appAddress.flatMap { MistApps.app($0.app)?.icon($0.instance) }
                 // Intentionally keep faviconLoadURL when newUrl is nil/empty.
                 // During navigation the URL briefly becomes nil before the new
                 // page URL arrives; clearing faviconLoadURL here would cause a
@@ -438,7 +371,7 @@ final class TabViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in
                 guard let self, self.isCurrentConfiguration(expectedGuid: expectedGuid, expectedGeneration: expectedGeneration) else { return }
-                self.isActive = $0 && !self.isActiveSuppressed
+                self.isActive = $0
             }
             .store(in: &cancellables)
             
@@ -544,6 +477,44 @@ final class TabViewModel {
         } else {
             self.isMultiSelected = false
         }
+    }
+
+    private func bindAgentSidebarStatus(to tab: Tab, expectedGeneration: UInt64) {
+        Self.agentSidebarStatusPublisher(for: tab)
+            .sink { [weak self] marker, ended in
+                guard let self, self.isCurrentConfiguration(expectedGuid: tab.guid, expectedGeneration: expectedGeneration) else { return }
+                self.agentSidebarStatus = marker
+                self.isEndedAgentChat = ended
+            }
+            .store(in: &cancellables)
+    }
+
+    static func agentSidebarStatusPublisher(for tab: Tab, store: AgentChatStore? = nil) -> AnyPublisher<(AgentSidebarStatus, Bool), Never> {
+        let store = store ?? AgentChatStore.shared
+        return tab.$url.combineLatest(store.objectWillChange.prepend(()))
+            .receive(on: DispatchQueue.main)
+            .map { url, _ -> AnyPublisher<(AgentSidebarStatus, Bool), Never> in
+                guard let id = store.route.conversationId(for: url) else {
+                    return Just((.none, false)).eraseToAnyPublisher()
+                }
+                guard let conversation = store.conversation(for: id) else {
+                    return Just((.none, !store.canRestore(id))).eraseToAnyPublisher()
+                }
+                return conversation.$status.combineLatest(store.$unseenCompletions,
+                                                          conversation.$backgroundTasks.map { !$0.isEmpty }.removeDuplicates(),
+                                                          conversation.$handOff.map { $0 != nil }.removeDuplicates())
+                    .map { status, unseen, background, waiting in
+                        (AgentSidebarStatus.marker(for: status, isUnseenCompletion: unseen.contains(id), hasBackgroundTasks: background,
+                                                   waitsForUser: waiting),
+                         status == .ended)
+                    }
+                    .eraseToAnyPublisher()
+            }
+            .switchToLatest()
+            // A running chat republishes its status with every streamed update.
+            .removeDuplicates { $0 == $1 }
+            .receive(on: DispatchQueue.main)
+            .eraseToAnyPublisher()
     }
 
     private func updateLiveFavicon(data: Data?, revision: Int) {

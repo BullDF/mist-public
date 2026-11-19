@@ -14,21 +14,15 @@ enum SupportedAppLanguage: String, CaseIterable, Identifiable {
     case japanese = "ja"
     case french = "fr"
     case german = "de"
-    case dutch = "nl"
-    case spanish = "es"
-    case korean = "ko"
 
-    /// Fixed alphabetical order by English language name for the language picker.
+    /// Fixed picker order, with East Asian languages grouped first.
     static let pickerOrder: [SupportedAppLanguage] = [
         .simplifiedChinese,
         .traditionalChinese,
         .japanese,
-        .korean,
         .english,
         .french,
-        .german,
-        .dutch,
-        .spanish
+        .german
     ]
 
     var id: String { rawValue }
@@ -105,56 +99,9 @@ extension PhiPreferences.GeneralSettings {
         )
     }
 
-    /// Resolves the language Sentinel should apply. Explicit selections map
-    /// directly, while System Default honors Phi's app-specific AppleLanguages
-    /// value before falling back to the system language list.
-    static func resolvedAppLanguage(
-        for preference: AppLanguagePreference,
-        from defaults: UserDefaults = .standard,
-        applicationDomainName: String? = nil,
-        systemPreferredLanguages: [String] = Locale.preferredLanguages
-    ) -> SupportedAppLanguage {
-        if case .language(let language) = preference {
-            return language
-        }
-
-        let preferredLanguages = persistentAppleLanguages(
-            from: defaults,
-            applicationDomainName: applicationDomainName
-        ) ?? systemPreferredLanguages
-        let supportedLocalizations = SupportedAppLanguage.allCases.map(
-            \.bundleLocalizationIdentifier
-        )
-        guard let resolvedLocalization = Bundle.preferredLocalizations(
-            from: supportedLocalizations,
-            forPreferences: preferredLanguages
-        ).first else {
-            return .english
-        }
-
-        return SupportedAppLanguage.allCases.first {
-            $0.bundleLocalizationIdentifier == resolvedLocalization
-        } ?? .english
-    }
-
     /// The preference applied to the current process. This snapshot remains
     /// unchanged until Phi relaunches, even if the settings view is recreated.
     static let appLanguagePreferenceAtLaunch = loadAppLanguagePreference()
-
-    static func activeProcessAppLanguage(
-        preferredLocalizations: [String] = Bundle.main.preferredLocalizations
-    ) -> SupportedAppLanguage {
-        let supportedLocalizations = SupportedAppLanguage.allCases.map(
-            \.bundleLocalizationIdentifier
-        )
-        let resolvedLocalization = Bundle.preferredLocalizations(
-            from: supportedLocalizations,
-            forPreferences: preferredLocalizations
-        ).first
-        return SupportedAppLanguage.allCases.first {
-            $0.bundleLocalizationIdentifier == resolvedLocalization
-        } ?? .english
-    }
 
     /// Reasserts Phi's explicit language before Chromium or AppKit loads
     /// localized resources. macOS System Settings writes to the same

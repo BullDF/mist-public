@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "PhiDependencies",
     platforms: [
-        .macOS(.v14) 
+        .macOS(.v15)
     ],
     products: [
         .library(
@@ -14,35 +14,31 @@ let package = Package(
             targets: ["Dependencies"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/Alamofire/Alamofire.git", exact: "5.10.2"),
         .package(url: "https://github.com/SnapKit/SnapKit.git", exact: "5.0.1"),
         .package(url: "https://github.com/CocoaLumberjack/CocoaLumberjack.git", exact: "3.9.0"),
         .package(url: "https://github.com/onevcat/Kingfisher.git", exact: "8.5.0"),
-        .package(url: "https://github.com/auth0/Auth0.swift.git", exact: "2.18.0"),
-        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.9.3"),
         .package(url: "https://github.com/phibrowser/Settings.git", exact: "3.1.4"),
-        .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.25.0"),
         .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.5.2"),
-        .package(url: "https://github.com/PostHog/posthog-ios.git", exact: "3.53.1"),
-        .package(url: "https://github.com/apple/swift-protobuf.git", exact: "1.38.1"),
+        .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3"),
+        .package(url: "https://github.com/Cocoanetics/SwiftMail.git", revision: "d16534fbd609feab8c467f4bbd2999c0582278f9"),
 
     ],
     targets: [
          .target(
             name: "Dependencies",
             dependencies: [
-                .product(name: "Alamofire", package: "Alamofire"),
+                "MistMailCore",
                 .product(name: "SnapKit", package: "SnapKit"),
                 .product(name: "CocoaLumberjack", package: "CocoaLumberjack"),
                 .product(name: "CocoaLumberjackSwift", package: "CocoaLumberjack"),
                 .product(name: "Kingfisher", package: "Kingfisher"),
-                .product(name: "Auth0", package: "Auth0.swift"),
-                .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Settings", package: "Settings"),
-                .product(name: "Sentry", package: "sentry-cocoa"),
                 .product(name: "Lottie", package: "lottie-spm"),
-                .product(name: "PostHog", package: "posthog-ios"),
-                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
-            ])
+                .product(name: "SwiftMath", package: "SwiftMath"),
+            ], path: "Sources/PackageCollection"),
+        .target(name: "MistMailCore", dependencies: [.product(name: "SwiftMail", package: "SwiftMail")],
+                swiftSettings: [.swiftLanguageMode(.v5)]),
+        .testTarget(name: "MistMailCoreTests", dependencies: ["MistMailCore"], resources: [.copy("Fixtures")],
+                    swiftSettings: [.swiftLanguageMode(.v5)])
     ]
 )

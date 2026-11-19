@@ -50,17 +50,6 @@ struct ScreenshotAnnotation: Identifiable, Codable, Equatable, Sendable {
         return result
     }
 
-    func resized(to rect: CGRect) -> Self {
-        var result = self
-        let old = bounds
-        result.points = points.map { point in
-            CGPoint(x: rect.minX + (old.width > 0 ? (point.x - old.minX) / old.width : 0.5) * rect.width,
-                    y: rect.minY + (old.height > 0 ? (point.y - old.minY) / old.height : 0.5) * rect.height)
-        }
-        result.frame = rect
-        return result.fittingText()
-    }
-
     func fittingText() -> Self {
         guard kind == .text else { return self }
         var result = self
@@ -134,10 +123,6 @@ struct ScreenshotAnnotation: Identifiable, Codable, Equatable, Sendable {
                 (.topRight, CGPoint(x: b.maxX, y: b.minY)), (.right, CGPoint(x: b.maxX, y: b.midY)),
                 (.bottomRight, CGPoint(x: b.maxX, y: b.maxY)), (.bottom, CGPoint(x: b.midX, y: b.maxY)),
                 (.bottomLeft, CGPoint(x: b.minX, y: b.maxY)), (.left, CGPoint(x: b.minX, y: b.midY))]
-    }
-    func handle(at point: CGPoint, tolerance: CGFloat) -> Handle? {
-        handles.min(by: { hypot($0.1.x - point.x, $0.1.y - point.y) < hypot($1.1.x - point.x, $1.1.y - point.y) })
-            .flatMap { hypot($0.1.x - point.x, $0.1.y - point.y) <= tolerance ? $0.0 : nil }
     }
     func editing(handle: Handle, at point: CGPoint, mirrored: Bool = false) -> Self {
         var result = self

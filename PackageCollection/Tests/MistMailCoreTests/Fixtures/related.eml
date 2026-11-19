@@ -1,0 +1,29 @@
+From: sender@example.com
+To: me@example.com
+Subject: Inline alternative
+Message-ID: <related@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="related"
+
+--related
+Content-Type: multipart/alternative; boundary="alternative"
+
+--alternative
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+UGxhaW4gYm9keQ==
+--alternative
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<p>HTML body<img src=3D"cid:logo@example.com"></p>
+--alternative--
+--related
+Content-Type: image/png
+Content-ID: <logo@example.com>
+Content-Disposition: inline; filename="logo.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--related--

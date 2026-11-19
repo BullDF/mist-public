@@ -99,15 +99,6 @@ final class TabGroupDragController {
     /// Active drag context, or `nil` when idle.
     private(set) var context: TabGroupDragContext?
 
-    /// Whether a group drag is currently active.
-    var isDragging: Bool { context != nil }
-
-    /// Minimum horizontal mouse delta before a chip mouseDown is
-    /// promoted from click-pending to active drag. Matches the chip
-    /// view's internal threshold; declared here so callers can reason
-    /// about the value.
-    static let dragActivationThreshold: CGFloat = 4
-
     // MARK: - Lifecycle
 
     /// Capture source geometry and switch the strip into group-slice

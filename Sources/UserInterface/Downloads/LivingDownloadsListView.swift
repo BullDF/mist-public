@@ -10,11 +10,7 @@ import AppKit
 
 private enum LivingDownloadDebugTuning {
     static var autoDismissDuration: TimeInterval {
-#if DEBUG
         10.0
-#else
-        3.0
-#endif
     }
 }
 
@@ -205,10 +201,6 @@ class LivingDownloadsManager: ObservableObject {
     
     // MARK: - Actions (forwarded to DownloadsManager)
     
-    func pauseDownload(_ item: DownloadItem) {
-        downloadsManager?.pauseDownload(item)
-    }
-    
     func resumeDownload(_ item: DownloadItem) {
         downloadsManager?.resumeDownload(item)
     }
@@ -256,7 +248,6 @@ struct LivingDownloadsListView: View {
             ForEach(manager.livingItems) { livingItem in
                 LivingDownloadItemView(
                     livingItem: livingItem,
-                    onPause: { manager.pauseDownload($0) },
                     onResume: { manager.resumeDownload($0) },
                     onCancel: { manager.cancelDownload($0) },
                     onOpen: { manager.openDownload($0) },
@@ -323,7 +314,6 @@ struct LivingDownloadItemView: View {
     @State private var isHovered = false
     @State private var openAnimationTrigger = 0
     
-    var onPause: (DownloadItem) -> Void
     var onResume: (DownloadItem) -> Void
     var onCancel: (DownloadItem) -> Void
     var onOpen: (DownloadItem) -> Void
@@ -600,7 +590,6 @@ private extension View {
 
 // MARK: - Preview
 
-#if DEBUG
 struct LivingDownloadsListView_Previews: PreviewProvider {
     static var previews: some View {
         LivingDownloadsListView(manager: TestLivingDownloadsManager())
@@ -736,4 +725,3 @@ struct LivingDownloadsTestView_Previews: PreviewProvider {
             .previewDisplayName("Interactive Test")
     }
 }
-#endif

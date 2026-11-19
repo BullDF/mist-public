@@ -9,7 +9,7 @@ import XCTest
 @testable import Phi
 
 /// The favicon backfill in memory: rows seeded through the store's own
-/// Migration write paths, a fake fetch that records what it was asked and
+/// bookmark write paths, a fake fetch that records what it was asked and
 /// answers when told, and the store read back for what landed on the row.
 ///
 /// The tests are `async` and wait by suspending rather than by spinning the
@@ -27,7 +27,7 @@ final class FaviconBackfillTests: XCTestCase {
     }
 
     private let profileID = LocalStore.defaultProfileId
-    private let spaceID = "space-migrated"
+    private let spaceID = "space-backfill"
     /// Any bytes will do: the store keeps what it is given.
     private let icon = Data([0x89, 0x50, 0x4E, 0x47, 0x01])
     private let otherIcon = Data([0x89, 0x50, 0x4E, 0x47, 0x02])
@@ -151,13 +151,10 @@ final class FaviconBackfillTests: XCTestCase {
 
     func testASecondPagesAnswerReachesTheRepositoryWhenTheFirstPageTimesOut() async throws {
         let store = try makeStore()
-        let split = ArcDataParserTool.Bookmark(
-            guid: "arc-split", title: "Split", url: "https://github.com/", isFolder: false)
-        split.split = ArcSplit(secondaryTitle: "Second", secondaryURL: "https://www.baidu.com/", layout: "vertical")
-        let rows = try await seedBookmarks(in: store, leaves: [split] + (1...4).map {
-            ArcDataParserTool.Bookmark(
-                guid: "arc-\($0)", title: "Site \($0)", url: "https://site\($0).example/", isFolder: false)
-        })
+        let split = try await seedSplitBookmark(in: store, first: "https://github.com/", second: "https://www.baidu.com/")
+        let rows = [split] + (try await seedBookmarks(in: store, urls: (1...4).map {
+            "https://site\($0).example/"
+        }))
         let fetch = RecordingFetch()
         let repository = ProfileScopedFaviconRepository(fetcher: fetch)
         let backfill = makeBackfill(fetch: fetch, store: store, repository: repository, requestDeadline: 0.2)
@@ -410,41 +407,30 @@ final class FaviconBackfillTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         tempDirectories.append(directory)
         let store = LocalStore(account: Account(userID: UUID().uuidString), storeDirectoryURL: directory)
-        // A migrated Space is a non-default one, which the Arc save refuses to
-        // write into unless it exists.
+        // Bookmark writes require the target Space to exist.
         let context = try XCTUnwrap(store.getMainContext())
         context.insert(SpaceModel(
-            spaceId: spaceID, profileId: profileID, name: "Migrated",
+            spaceId: spaceID, profileId: profileID, name: "Backfill",
             colorHex: "#000000", iconName: "circle", sortOrder: 1))
         try context.save()
         return store
     }
 
-    /// Writes one Arc tree of plain links through the Migration's own save
-    /// and returns the rows' identifiers in sidebar order.
     private func seedBookmarks(in store: LocalStore, urls: [String]) async throws -> [String] {
-        try await seedBookmarks(in: store, leaves: urls.enumerated().map { index, url in
-            ArcDataParserTool.Bookmark(guid: "arc-\(index)", title: url, url: url, isFolder: false)
-        })
+        var guids: [String] = []
+        for url in urls {
+            guids.append(try await store.seedBookmarkFixture(
+                url: XCTUnwrap(URL(string: url)), title: url, profileId: profileID,
+                parentId: nil, spaceId: spaceID))
+        }
+        return guids
     }
 
-    /// Writes an Arc split entry — one row carrying both pages — and returns
-    /// its identifier.
     private func seedSplitBookmark(in store: LocalStore, first: String, second: String) async throws -> String {
-        let leaf = ArcDataParserTool.Bookmark(guid: "arc-split", title: "Split", url: first, isFolder: false)
-        leaf.split = ArcSplit(secondaryTitle: "Second", secondaryURL: second, layout: "vertical")
-        return try await seedBookmarks(in: store, leaves: [leaf])[0]
-    }
-
-    private func seedBookmarks(in store: LocalStore, leaves: [ArcDataParserTool.Bookmark]) async throws -> [String] {
-        let root = ArcDataParserTool.Bookmark(guid: "root", title: "Space", url: nil, isFolder: true)
-        root.children = leaves
-        let written = await store.saveArcBookmarksToLocalStore(
-            root, profileId: profileID, spaceId: spaceID, landingFolder: false)
-        XCTAssertEqual(written, leaves.count)
-        let rows = store.fetchBookmarks(parentId: nil, profileId: profileID, spaceId: spaceID)
-        XCTAssertEqual(rows.count, leaves.count)
-        return rows.map(\.guid)
+        try await store.seedBookmarkFixture(
+            url: XCTUnwrap(URL(string: first)), title: "Split", profileId: profileID,
+            parentId: nil, spaceId: spaceID, secondaryUrl: XCTUnwrap(URL(string: second)),
+            secondaryTitle: "Second")
     }
 
     private func seedPinnedTab(in store: LocalStore, guid: String, url: String) async throws -> String {
@@ -454,22 +440,20 @@ final class FaviconBackfillTests: XCTestCase {
         return guid
     }
 
-    /// A Space holding a Bookmark, a folder with one inside, and another
-    /// Bookmark, written through the Migration's own save.
+    /// A Space holding a bookmark, a folder with one inside, and another bookmark.
     private func makeStoreWithWalkedTree() async throws -> LocalStore {
         let store = try makeStore()
-        let folder = ArcDataParserTool.Bookmark(guid: "folder", title: "Reading", url: nil, isFolder: true)
-        folder.children = [ArcDataParserTool.Bookmark(
-            guid: "nested", title: "Nested", url: "https://nested.example/", isFolder: false)]
-        let root = ArcDataParserTool.Bookmark(guid: "root", title: "Space", url: nil, isFolder: true)
-        root.children = [
-            ArcDataParserTool.Bookmark(guid: "first", title: "First", url: "https://first.example/", isFolder: false),
-            folder,
-            ArcDataParserTool.Bookmark(guid: "last", title: "Last", url: "https://last.example/", isFolder: false),
-        ]
-        let written = await store.saveArcBookmarksToLocalStore(
-            root, profileId: profileID, spaceId: spaceID, landingFolder: false)
-        XCTAssertEqual(written, 3)
+        _ = try await store.seedBookmarkFixture(
+            url: XCTUnwrap(URL(string: "https://first.example/")), title: "First",
+            profileId: profileID, parentId: nil, spaceId: spaceID)
+        let folder = try await store.seedFolderFixture(
+            title: "Reading", profileId: profileID, parentId: nil, spaceId: spaceID)
+        _ = try await store.seedBookmarkFixture(
+            url: XCTUnwrap(URL(string: "https://nested.example/")), title: "Nested",
+            profileId: profileID, parentId: folder, spaceId: spaceID)
+        _ = try await store.seedBookmarkFixture(
+            url: XCTUnwrap(URL(string: "https://last.example/")), title: "Last",
+            profileId: profileID, parentId: nil, spaceId: spaceID)
         return store
     }
 
@@ -494,5 +478,28 @@ final class FaviconBackfillTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Condition was not met before timeout.", file: file, line: line)
+    }
+}
+
+@MainActor
+private extension LocalStore {
+    func seedBookmarkFixture(url: URL, title: String, profileId: String, parentId: String?,
+                             spaceId: String, secondaryUrl: URL? = nil,
+                             secondaryTitle: String? = nil) async throws -> String {
+        let guid = UUID().uuidString
+        createBookmark(url: url.absoluteString, title: title, profileId: profileId, parentId: parentId,
+                       guid: guid, spaceId: spaceId, secondaryUrl: secondaryUrl?.absoluteString,
+                       secondaryTitle: secondaryTitle)
+        await performBackgroundWriteAndWait { _ in }
+        _ = try XCTUnwrap(fetchBookmark(with: guid))
+        return guid
+    }
+
+    func seedFolderFixture(title: String, profileId: String, parentId: String?, spaceId: String) async throws -> String {
+        let guid = UUID().uuidString
+        createDirectory(title: title, profileId: profileId, parentId: parentId, guid: guid, spaceId: spaceId)
+        await performBackgroundWriteAndWait { _ in }
+        _ = try XCTUnwrap(fetchBookmark(with: guid))
+        return guid
     }
 }

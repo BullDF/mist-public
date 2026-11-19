@@ -55,6 +55,7 @@ final class AgentDriverSessionRegistry {
     private let lock = NSLock()
     private var sessionsByCapability: [String: AgentDriverSession] = [:]
     private var capabilityByProcessAnchor: [String: String] = [:]
+    private var activeBrowserTurns: Set<String> = []
     private var sweepTimer: DispatchSourceTimer?
 
     private static let sweepInterval: TimeInterval = 60
@@ -68,6 +69,61 @@ final class AgentDriverSessionRegistry {
     func session(forCapability capability: String) -> AgentDriverSession? {
         lock.lock(); defer { lock.unlock() }
         return sessionsByCapability[capability]
+    }
+
+    func mintBrowserAgent() -> AgentDriverSession {
+        lock.lock(); defer { lock.unlock() }
+        let session = AgentDriverSession(principalId: UUID().uuidString, capability: Self.makeCapability(),
+            identity: .mistBrowserAgent(pid: nil), processAnchor: nil, createdAt: Date())
+        sessionsByCapability[session.capability] = session
+        return session
+    }
+
+    func isLiveBrowserAgent(principalId: String?) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return sessionsByCapability.values.contains {
+            $0.principalId == principalId && $0.identity.key == "mist:browser-agent"
+                && $0.processAnchor != nil && Self.ownerProcessAlive($0)
+        }
+    }
+
+    /// A chat whose resumed session is gone relaunches its CLI, so the capability moves to
+    /// the new process once the one it was bound to has exited.
+    func bindBrowserAgent(capability: String, pid: pid_t) {
+        lock.lock(); defer { lock.unlock() }
+        guard let session = sessionsByCapability[capability], session.identity.key == "mist:browser-agent",
+              session.identity.pid == nil || !Self.ownerProcessAlive(session),
+              AgentPeerIdentity.parentPID(pid) == getpid() else { return }
+        let identity = AgentIdentity.mistBrowserAgent(pid: pid)
+        sessionsByCapability[capability] = AgentDriverSession(principalId: session.principalId,
+            capability: capability, identity: identity,
+            processAnchor: AgentPeerIdentity.processSessionAnchor(for: identity), createdAt: session.createdAt)
+    }
+
+    func invalidateBrowserAgent(capability: String) {
+        lock.lock(); defer { lock.unlock() }
+        guard let session = sessionsByCapability[capability], session.identity.key == "mist:browser-agent" else { return }
+        activeBrowserTurns.remove(session.principalId)
+        sessionsByCapability[capability] = nil
+    }
+
+    func setBrowserTurnActive(_ active: Bool, principalId: String) {
+        lock.lock(); defer { lock.unlock() }
+        if active { activeBrowserTurns.insert(principalId) }
+        else { activeBrowserTurns.remove(principalId) }
+    }
+
+    func isBrowserTurnActive(principalId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return activeBrowserTurns.contains(principalId)
+    }
+
+    func browserAgentAdmission(_ session: AgentDriverSession, socketFD: Int32) -> BrowserAgentAdmission {
+        guard BrowserAgentCapability.admits(peer: AgentPeerIdentity.peerProcessID(socketFD: socketFD),
+            cli: session.identity.pid, mist: getpid(),
+            sameLaunch: session.processAnchor != nil && Self.ownerProcessAlive(session),
+            parent: AgentPeerIdentity.parentPID) else { return .refused }
+        return isBrowserTurnActive(principalId: session.principalId) ? .turn : .outsideTurn
     }
 
     func session(for identity: AgentIdentity) -> AgentDriverSession {
@@ -106,6 +162,7 @@ final class AgentDriverSessionRegistry {
                   !retainedPrincipals.contains(session.principalId),
                   !Self.ownerProcessAlive(session) else { continue }
             sessionsByCapability[capability] = nil
+            activeBrowserTurns.remove(session.principalId)
             if let anchor = session.processAnchor,
                capabilityByProcessAnchor[anchor] == capability {
                 capabilityByProcessAnchor[anchor] = nil
@@ -189,11 +246,6 @@ final class AgentDirectChannelRegistry {
     private var pending: [String: Pending] = [:]
 
     private init() {}
-
-    var hasConnections: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return !connections.isEmpty
-    }
 
     /// Principals with at least one live `/phi-agent` connection — retained
     /// by the driver-session registry's prune sweep.
@@ -305,6 +357,8 @@ final class AgentDirectConnection {
     /// `ps` needs). The skill records it for its detached daemon and
     /// watchers to claim on later connections.
     private let agentPid: pid_t?
+    /// The only request types served, or nil for all (a Drifter chat admitted outside a turn).
+    private let servedTypes: Set<String>?
     private let queue: DispatchQueue
     private var readSource: DispatchSourceRead?
     private var buffer = Data()
@@ -323,12 +377,13 @@ final class AgentDirectConnection {
     private static let writeStallTimeoutMs = 15_000
 
     init(fd: Int32, agentName: String = "", agentPid: pid_t? = nil,
-         driverPrincipalId: String, agentCapability: String) {
+         driverPrincipalId: String, agentCapability: String, servedTypes: Set<String>? = nil) {
         self.fd = fd
         self.agentName = agentName
         self.agentPid = agentPid
         self.driverPrincipalId = driverPrincipalId
         self.agentCapability = agentCapability
+        self.servedTypes = servedTypes
         self.queue = DispatchQueue(label: "com.phibrowser.cdp.direct.\(fd)")
     }
 
@@ -475,14 +530,15 @@ final class AgentDirectConnection {
     /// Main-thread: run the request through the same router the CDP tunnel uses,
     /// then reply synchronously or await the async app response.
     private func route(clientId: Int, type: String, payloadJson: String) {
+        if let servedTypes, !servedTypes.contains(type) {
+            AppLogInfo("[AgentCDP] refused \(type) from \(agentName): no turn is running")
+            sendError(clientId: clientId, error: "Mist serves this request only while a turn runs.")
+            return
+        }
         let requestId = "agentdirect:\(id):\(clientId)"
-        // Credential requests can legitimately sit behind the 60s approval
-        // prompt AND a 60s in-flow unlock prompt; don't let the transport kill
-        // them under the user's nose. Everything else keeps the tight timeout.
-        let timeout: TimeInterval = type.hasPrefix("credentials.") ? 180 : 60
         AgentDirectChannelRegistry.shared.registerPending(
             requestId: requestId, connectionId: id, clientId: clientId,
-            timeoutSeconds: timeout)
+            timeoutSeconds: 60)
         let sync = ExtensionMessageRouter.shared.handle(
             type: type, payload: payloadJson, requestId: requestId, senderId: "cdp",
             agentName: agentName, driverPrincipalId: driverPrincipalId)

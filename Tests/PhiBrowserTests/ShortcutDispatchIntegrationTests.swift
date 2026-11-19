@@ -14,14 +14,13 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
     private var accountDirectory: URL!
     private var store: LocalStore!
     private var previousDefaults: [String: Any] = [:]
-    private let defaultKeys = ["FolioFeatureFlag", "spacesFeatureEnabled", "NSWindow Frame KioskBrowserWindow"]
+    private let defaultKeys = ["spacesFeatureEnabled"]
     private let inspectKey = ShortcutsKey(characters: "c", modifiers: [.command, .option])
     private let copyKey = ShortcutsKey(characters: "c", modifiers: [.command, .shift])
 
     override func setUp() async throws {
         previousConfiguration = Shortcuts.configuration
         for key in defaultKeys { previousDefaults[key] = UserDefaults.standard.object(forKey: key) }
-        UserDefaults.standard.set(true, forKey: "FolioFeatureFlag")
         configure([:])
         ChromiumLauncher.sharedInstance().bridge?.requestRebuildMainMenu()
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -48,15 +47,53 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
         }
     }
 
+    func testAlternateNewTabResolvesOptionCommandTAndReleasesDisabledOrReboundKey() throws {
+        let key = ShortcutsKey(characters: "t", modifiers: [.command, .option])
+        let window = makeWindow()
+        defer { window.close() }
+        let original = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: key.modifiers, timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            characters: "†", charactersIgnoringModifiers: "t", isARepeat: false, keyCode: 17))
+        XCTAssertEqual(CommandDispatcher.interceptedPhiCommand(for: original,
+            inputSourceIdentifier: "com.apple.keylayout.US"), .PHI_ALTERNATE_NEW_TAB)
+        XCTAssertFalse(CommandDispatcher.handleKeyEquivalent(original, window: window))
+        configure([.PHI_ALTERNATE_NEW_TAB: .disabled])
+        XCTAssertNil(CommandDispatcher.interceptedPhiCommand(for: original))
+        configure([.PHI_ALTERNATE_NEW_TAB: .custom(inspectKey)])
+        XCTAssertNil(CommandDispatcher.interceptedPhiCommand(for: original))
+        XCTAssertEqual(CommandDispatcher.interceptedPhiCommand(for: try event(inspectKey, in: window)),
+                       .PHI_ALTERNATE_NEW_TAB)
+    }
+
+    func testPickerKeysAreUnhandledWithoutComposerFocus() throws {
+        try withController { _, window in
+            for command in [CommandWrapper.PHI_DRIFTER_MODEL_MENU, .PHI_DRIFTER_EFFORT_MENU] {
+                let key = try XCTUnwrap(Shortcuts.DefaultShortcuts[command])
+                XCTAssertFalse(CommandDispatcher.handleKeyEquivalent(try event(key, in: window), window: window))
+            }
+        }
+    }
+
+    func testAlternateNewTabRepeatIsConsumedWithoutOpeningOmnibox() throws {
+        let preference = PhiPreferences.GeneralSettings.openNewTabPageOnCmdT
+        let previousValue = UserDefaults.standard.object(forKey: preference.rawValue)
+        defer { UserDefaults.standard.set(previousValue, forKey: preference.rawValue) }
+        UserDefaults.standard.set(true, forKey: preference.rawValue)
+        try withController { controller, window in
+            XCTAssertNil(controller.omniBoxContainerViewController)
+            let repeated = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                modifierFlags: [.command, .option], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                characters: "†", charactersIgnoringModifiers: "t", isARepeat: true, keyCode: 17))
+            XCTAssertTrue(CommandDispatcher.handleKeyEquivalent(repeated, window: window))
+            XCTAssertNil(controller.omniBoxContainerViewController)
+        }
+    }
+
     func testUnavailableNativeActionsConsumeTheirKeyBeforeHiddenInspect() throws {
-        XCTAssertTrue(Shortcuts.additionalBindings().contains {
-            $0.commandID == CommandWrapper.IDC_DEV_TOOLS_INSPECT.rawValue
-                && $0.source == .hidden && $0.key.menuKeyEquivalent == inspectKey.menuKeyEquivalent
-        }, "The paired Framework must still expose the conflicting Inspect alias")
+        XCTAssertFalse(Shortcuts.additionalBindings().contains { $0.commandID == CommandWrapper.IDC_DEV_TOOLS_INSPECT.rawValue })
         try withController { controller, window in
             XCTAssertNil(controller.browserState.focusingTab)
-            for command in [CommandWrapper.PHI_COPY_URL, .PHI_SHARE_PAGE, .PHI_TOGGLE_READER,
-                            .PHI_SAVE_FOR_LATER, .PHI_FARRINGDON_TOGGLE,
+            for command in [CommandWrapper.PHI_COPY_URL,
                             .PHI_CAPTURE_FULL_PAGE, .PHI_CAPTURE_AREA] {
                 assignInspectKey(to: command)
                 XCTAssertEqual(CommandDispatcher.interceptedPhiCommand(for: try event(inspectKey, in: window)), command)
@@ -69,7 +106,7 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
         }
     }
 
-    func testBookmarkBarCommandUsesPhiVisibilityAndDoesNotFallBackInKiosk() throws {
+    func testBookmarkBarCommandUsesPhiVisibility() throws {
         let defaults = UserDefaults.standard
         let layoutKey = PhiPreferences.GeneralSettings.layoutModeKey
         let visibilityKey = PhiPreferences.GeneralSettings.alwaysShowBookmarkBar.rawValue
@@ -85,10 +122,6 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
         try withController { _, window in
             XCTAssertTrue(CommandDispatcher.dispatchCommand(command, window: window))
             XCTAssertTrue(PhiPreferences.GeneralSettings.alwaysShowBookmarkBar.loadValue())
-            XCTAssertTrue(CommandDispatcher.dispatchCommand(command, window: window))
-            XCTAssertFalse(PhiPreferences.GeneralSettings.alwaysShowBookmarkBar.loadValue())
-        }
-        try withController(kiosk: true) { _, window in
             XCTAssertTrue(CommandDispatcher.dispatchCommand(command, window: window))
             XCTAssertFalse(PhiPreferences.GeneralSettings.alwaysShowBookmarkBar.loadValue())
         }
@@ -138,31 +171,14 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
         let window = makeWindow()
         defer { window.close() }
         XCTAssertNil(SpaceSessionControllersManager.shared.findControllerWith(window: window))
-        for command in [CommandWrapper.PHI_COPY_URL, .PHI_SHARE_PAGE, .PHI_TOGGLE_READER, .PHI_SAVE_FOR_LATER,
-                        .PHI_CAPTURE_FULL_PAGE, .PHI_CAPTURE_AREA] {
+        for command in [CommandWrapper.PHI_COPY_URL,
+                        .PHI_CAPTURE_FULL_PAGE, .PHI_CAPTURE_AREA, .PHI_ALTERNATE_NEW_TAB] {
             assignInspectKey(to: command)
             XCTAssertFalse(CommandDispatcher.handleKeyEquivalent(try event(inspectKey, in: window), window: window))
         }
     }
 
-    func testKioskSharedPageActionsOwnUnavailableBindingsWithoutClaimingBrowserOnlyActions() throws {
-        try withController(kiosk: true) { _, window in
-            for command in [CommandWrapper.PHI_COPY_URL, .PHI_SHARE_PAGE, .PHI_TOGGLE_READER, .PHI_SAVE_FOR_LATER,
-                            .PHI_CAPTURE_FULL_PAGE, .PHI_CAPTURE_AREA] {
-                assignInspectKey(to: command)
-                XCTAssertTrue(command.shortcutScope.contains(.kiosk))
-                XCTAssertTrue(CommandDispatcher.handleKeyEquivalent(try event(inspectKey, in: window), window: window))
-            }
-            for command in [CommandWrapper.PHI_FARRINGDON_TOGGLE, .PHI_TAB_SWITCHER_FORWARD,
-                            .PHI_SELECT_NEXT_SPACE, .PHI_SELECT_SPACE_1] {
-                assignInspectKey(to: command)
-                XCTAssertFalse(command.shortcutScope.contains(.kiosk))
-                XCTAssertFalse(CommandDispatcher.handleKeyEquivalent(try event(inspectKey, in: window), window: window))
-            }
-        }
-    }
-
-    func testCopyURLStillExecutesInOrdinaryAndKioskWindows() throws {
+    func testCopyURLStillExecutesInOrdinaryWindows() throws {
         let pasteboard = NSPasteboard.general
         let previousItems = (pasteboard.pasteboardItems ?? []).map { item -> NSPasteboardItem in
             let copy = NSPasteboardItem()
@@ -176,34 +192,16 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
                 if !previousItems.isEmpty { pasteboard.writeObjects(previousItems) }
             }
         }
-        for kiosk in [false, true] {
-            try withController(kiosk: kiosk) { controller, window in
-                let url = "https://example.test/shortcut-copy-\(kiosk)"
-                let tab = Tab(guid: 1001, url: url, isActive: true, index: 0)
-                controller.browserState.tabs = [tab]
-                controller.browserState.focusingTab = tab
-                XCTAssertTrue(controller.browserState.hasCopyableSelectedTabURLs)
-                configure([:])
-                XCTAssertTrue(CommandDispatcher.handleKeyEquivalent(try event(copyKey, in: window), window: window))
-                ownedChangeCount = pasteboard.changeCount
-                XCTAssertEqual(pasteboard.string(forType: .string), url)
-            }
-        }
-    }
-
-    func testUnavailableFeaturesAndMissingIndexedSpaceRemainUnhandled() throws {
-        try withController { _, window in
-            UserDefaults.standard.set(false, forKey: "FolioFeatureFlag")
-            assignInspectKey(to: .PHI_SAVE_FOR_LATER)
-            XCTAssertFalse(CommandDispatcher.handleKeyEquivalent(try event(inspectKey, in: window), window: window))
-            UserDefaults.standard.set(false, forKey: "spacesFeatureEnabled")
-            for command in [CommandWrapper.PHI_NEW_INCOGNITO_SPACE, .PHI_SELECT_NEXT_SPACE, .PHI_SELECT_PREVIOUS_SPACE] {
-                assignInspectKey(to: command)
-                XCTAssertFalse(CommandDispatcher.handleKeyEquivalent(try event(inspectKey, in: window), window: window))
-            }
-            UserDefaults.standard.set(true, forKey: "spacesFeatureEnabled")
-            assignInspectKey(to: .PHI_SELECT_SPACE_1)
-            XCTAssertFalse(CommandDispatcher.handleKeyEquivalent(try event(inspectKey, in: window), window: window))
+        try withController { controller, window in
+            let url = "https://example.test/shortcut-copy"
+            let tab = Tab(guid: 1001, url: url, isActive: true, index: 0)
+            controller.browserState.tabs = [tab]
+            controller.browserState.focusingTab = tab
+            XCTAssertTrue(controller.browserState.hasCopyableSelectedTabURLs)
+            configure([:])
+            XCTAssertTrue(CommandDispatcher.handleKeyEquivalent(try event(copyKey, in: window), window: window))
+            ownedChangeCount = pasteboard.changeCount
+            XCTAssertEqual(pasteboard.string(forType: .string), url)
         }
     }
 
@@ -219,23 +217,17 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
         CommandDispatcher.reloadPhiShortcutMap()
     }
 
-    private func withController(kiosk: Bool = false,
-                                _ body: (SpaceSessionController, NSWindow) throws -> Void) throws {
+    private func withController(_ body: (SpaceSessionController, NSWindow) throws -> Void) throws {
         let window = makeWindow()
         let controller: SpaceSessionController
-        if kiosk {
-            controller = KioskBrowserWindowController(window: window, windowId: 987654322,
-                browserType: .kiosk, profileId: LocalStore.defaultProfileId, account: store.account)
-        } else {
-            let state = BrowserState(windowId: 987654322, localStore: store,
-                                     profileId: LocalStore.defaultProfileId, spaceId: UUID().uuidString)
-            controller = SpaceSessionController(window: window, windowId: state.windowId,
-                profileId: state.profileId, spaceId: state.spaceId, account: store.account,
-                browserState: state, dormant: true)
-        }
+        let state = BrowserState(windowId: 987654322, localStore: store,
+                                 profileId: LocalStore.defaultProfileId, spaceId: UUID().uuidString)
+        controller = SpaceSessionController(window: window, windowId: state.windowId,
+            profileId: state.profileId, spaceId: state.spaceId, account: store.account,
+            browserState: state, dormant: true)
         defer {
             OverlayToastCenter.shared.clearWindow(windowId: controller.windowId)
-            if !kiosk { controller.discardDormant() }
+            controller.discardDormant()
             window.close()
             withExtendedLifetime(controller) {}
         }

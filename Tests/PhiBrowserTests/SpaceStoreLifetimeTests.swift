@@ -45,8 +45,8 @@ final class SpaceStoreLifetimeTests: XCTestCase {
         XCTAssertEqual(space.profileId, "Guest-profile")
         layout(CGRect(x: 1, y: 2, width: 24, height: 24))
         XCTAssertEqual(geometry.pipFrames[LocalStore.defaultSpaceId]?.width, 24)
-        XCTAssertEqual(URLRouter.resolve(url: URL(string: "https://guest.example")!, rules: rules),
-                       LocalStore.defaultSpaceId)
+        XCTAssertEqual(rules.first?.host, "guest.example")
+        XCTAssertEqual(rules.first?.spaceId, LocalStore.defaultSpaceId)
     }
 
     func testSameStoreUpdatesObservableObjectAndTargetStoreReplacesIt() async throws {

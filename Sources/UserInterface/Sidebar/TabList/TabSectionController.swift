@@ -50,6 +50,7 @@ struct TabSectionChange {
     }
 }
 
+@MainActor
 class TabSectionController: NSObject {
     private var cancellables = Set<AnyCancellable>()
     /// Per-group inner subscriptions. Refreshed whenever `browserState.groups`
@@ -57,6 +58,7 @@ class TabSectionController: NSObject {
     /// edits and membership-mutation `objectWillChange.send()` calls
     /// (kJoined/kLeft/pending-claim drain) trigger tab-section reconciliation.
     private var groupContentsCancellables = Set<AnyCancellable>()
+    private var agentMembershipCancellables = Set<AnyCancellable>()
 
     private(set) var tabItems: [SidebarItem] = []
     private let newTabButton = NewTabButtonItem()
@@ -121,6 +123,7 @@ class TabSectionController: NSObject {
         cancellables.removeAll()
         groupContentsCancellables.forEach { $0.cancel() }
         groupContentsCancellables.removeAll()
+        agentMembershipCancellables.removeAll()
 
         guard let browserState else {
             tabItems = []
@@ -140,6 +143,7 @@ class TabSectionController: NSObject {
         tabItems = initialItems
         previousGroupMembers = Self.computeGroupMembers(tabs: currentTabs)
         previousSplitMembers = Self.computeSplitMembers(items: initialItems)
+        subscribeToAgentMembership()
 
         // dropFirst() skips the initial synchronous delivery we already handled
         // above. receive(on: .main) defers until after @Published's willSet
@@ -151,6 +155,7 @@ class TabSectionController: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] tabs in
                 guard let self else { return }
+                self.subscribeToAgentMembership()
                 if let handled = self.syncHandledNormalTabs {
                     self.syncHandledNormalTabs = nil
                     if handled.count == tabs.count,
@@ -195,6 +200,7 @@ class TabSectionController: NSObject {
 
         browserState.$focusingTab
             .dropFirst()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] focusingTab in
                 self?.delegate?.focusingTabChanged(focusingTab)
             }
@@ -212,6 +218,24 @@ class TabSectionController: NSObject {
                 self.refreshTabItems(self.browserState?.normalTabs ?? [])
             }
             .store(in: &cancellables)
+    }
+
+    /// Chat creation changes a blank tab's URL without publishing normalTabs.
+    /// Group membership can likewise change before the next tab-order echo.
+    private func subscribeToAgentMembership() {
+        agentMembershipCancellables.removeAll()
+        for tab in browserState?.normalTabs ?? [] {
+            tab.$url.map { MistApps.address($0)?.chatId }
+                .combineLatest(tab.$groupToken)
+                .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self else { return }
+                    self.refreshTabItems(self.browserState?.normalTabs ?? [])
+                }
+                .store(in: &agentMembershipCancellables)
+        }
     }
 
     /// (Re)subscribes to every current `WebContentGroupInfo`'s
@@ -271,8 +295,13 @@ class TabSectionController: NSObject {
         // iterate to the second pane of a split we skip it so the pair
         // collapses into one row in the sidebar.
         var consumedSplitTabIds = Set<Int>()
+        let agentFolderTokens = MistSidebarAgentSections.folderTokens(in: state)
 
         for tab in tabs {
+            if tab.groupToken.map(agentFolderTokens.contains) == true { continue }
+            if MistSidebarAgentSections.isMember(tab, splits: state.splits, isIncognito: state.isIncognito) {
+                continue
+            }
             if consumedSplitTabIds.contains(tab.guid) {
                 continue
             }
@@ -478,51 +507,15 @@ class TabSectionController: NSObject {
         return ids
     }
 
-    func activateTab(_ tab: Tab) {
-        tab.makeSelfActive()
-    }
-    
     func closeTab(_ tab: Tab) {
         tab.close()
     }
     
-    func moveTab(_ tab: Tab, to newIndex: Int) {
-        ensureBrowsersState()?.move(tab: tab, to: newIndex, selectAfterMove: tab.isActive)
-    }
-    
-    private func ensureBrowsersState() -> BrowserState? {
-        guard let browserState else {
-            AppLogWarn("browser state is nil!")
-            return nil
-        }
-        return browserState
-    }
-    
     // MARK: - Drag and Drop Support
     
-    func canReorderTabs() -> Bool {
-        return true
-    }
-    
-    func handleTabDrop(draggedTab: Tab, destinationIndex: Int) -> Bool {
-        guard let currentIndex = browserState?.normalTabs.firstIndex(of: draggedTab) else {
-            return false
-        }
-        
-        // Don't move if dropping at the same position
-        if currentIndex == destinationIndex {
-            return false
-        }
-        
-        browserState?.moveNormalTabLocally(from: currentIndex, to: destinationIndex)
-        return true
-    }
-    
-    func canAcceptTabForBookmarkCreation(_ tab: Tab) -> Bool {
-        return tab.url != nil
-    }
 }
 
+@MainActor
 protocol TabSectionDelegate: AnyObject {
     func tabSectionDidUpdate(with change: TabSectionChange)
     func focusingTabChanged(_ tab: Tab?)

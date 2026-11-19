@@ -42,57 +42,40 @@ final class NativeTabDecisionEngineTests: XCTestCase {
         XCTAssertEqual(snapshot?.allTabIds, [10, 11, 12])
         XCTAssertEqual(snapshot?.tabsWithExplicitNilOpener, [11])
         XCTAssertEqual(snapshot?.openerByTabId[10], 1)
-        XCTAssertNil(snapshot?.openerByTabId[11])
+        XCTAssertNil(snapshot?.openerByTabId[11] as Any?)
         XCTAssertEqual(snapshot?.openerByTabId[12], 10)
         XCTAssertEqual(snapshot?.resetOnActiveChangeTabIds, [12, 13])
     }
 
-    func testForegroundLinkInsertionUsesOpenerRightNeighbor() {
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: true,
-            creationKind: .linkForeground,
-            openerTabId: 1,
-            insertAfterTabId: nil,
-            sourceTabId: 1,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
-
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [1, 2, 3],
-            context: context,
-            relationGraph: .empty
-        )
-
-        XCTAssertEqual(index, 1)
-    }
-
-    func testBackgroundLinkInsertionUsesLastVisibleDescendant() {
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: false,
-            creationKind: .linkBackground,
-            openerTabId: 1,
-            insertAfterTabId: nil,
-            sourceTabId: 1,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
+    func testLinkInsertionAppendsRegardlessOfOpenerOrHint() {
+        let visibleTabIds = [1, 11, 12, 2, 3]
         let relationGraph = NativeTabRelationGraph(
-            openerByTabId: [
-                11: 1,
-                12: 11,
-            ],
+            openerByTabId: [11: 1, 12: 11],
             resetOnActiveChangeTabIds: [],
             version: 3
         )
 
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [1, 11, 12, 2],
-            context: context,
-            relationGraph: relationGraph
-        )
+        for kind in [NativeTabCreationKind.linkForeground, .linkBackground] {
+            for (openerTabId, insertAfterTabId) in [(1, nil), (9, nil), (1, Optional(11))] {
+                let context = NativeTabCreationContext(
+                    isActiveAtCreation: kind == .linkForeground,
+                    creationKind: kind,
+                    openerTabId: openerTabId,
+                    insertAfterTabId: insertAfterTabId,
+                    sourceTabId: openerTabId
+                )
 
-        XCTAssertEqual(index, 3)
+                XCTAssertEqual(
+                    NativeTabDecisionEngine.insertionIndex(
+                        visibleNormalTabIds: visibleTabIds,
+                        context: context,
+                        relationGraph: relationGraph
+                    ),
+                    visibleTabIds.count,
+                    "kind=\(kind), opener=\(openerTabId), hint=\(String(describing: insertAfterTabId))"
+                )
+            }
+        }
     }
 
     func testRestoreWithoutAnchorPrependsAtHead() {
@@ -126,174 +109,6 @@ final class NativeTabDecisionEngineTests: XCTestCase {
         )
 
         XCTAssertNil(index)
-    }
-
-    func testForegroundLinkFromSplitOpenerLandsAfterSplitPartner() {
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: true,
-            creationKind: .linkForeground,
-            openerTabId: 1,
-            insertAfterTabId: nil,
-            sourceTabId: 1,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
-
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [0, 1, 2, 3],
-            context: context,
-            relationGraph: .empty,
-            splitPartnerByTabId: [1: 2, 2: 1]
-        )
-
-        XCTAssertEqual(index, 3)
-    }
-
-    func testBackgroundLinkFromSplitOpenerLandsAfterSplitPartner() {
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: false,
-            creationKind: .linkBackground,
-            openerTabId: 1,
-            insertAfterTabId: nil,
-            sourceTabId: 1,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
-
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [0, 1, 2, 3],
-            context: context,
-            relationGraph: .empty,
-            splitPartnerByTabId: [1: 2, 2: 1]
-        )
-
-        XCTAssertEqual(index, 3)
-    }
-
-    func testForegroundLinkFromSecondSplitTabLandsImmediatelyAfterOpener() {
-        // Opener is the higher-indexed half of the split; partner is to the left,
-        // so the partner-anchor shortcut must NOT pull the insertion back.
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: true,
-            creationKind: .linkForeground,
-            openerTabId: 2,
-            insertAfterTabId: nil,
-            sourceTabId: 2,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
-
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [0, 1, 2, 3],
-            context: context,
-            relationGraph: .empty,
-            splitPartnerByTabId: [1: 2, 2: 1]
-        )
-
-        XCTAssertEqual(index, 3)
-    }
-
-    func testBackgroundLinkFromSplitOpenerLandsPastDescendantsBeyondPartner() {
-        // Split opener at index 1 with partner at index 2. A descendant of the
-        // opener lives at index 4 (past the partner). The split-anchor shortcut
-        // bumps the anchor to the partner, but the descendant-walk must still
-        // discover the deeper descendant and insert after it (index 5), not
-        // immediately after the partner (index 3).
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: false,
-            creationKind: .linkBackground,
-            openerTabId: 1,
-            insertAfterTabId: nil,
-            sourceTabId: 1,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
-        let relationGraph = NativeTabRelationGraph(
-            openerByTabId: [
-                4: 1,
-            ],
-            resetOnActiveChangeTabIds: [],
-            version: 1
-        )
-
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [0, 1, 2, 3, 4],
-            context: context,
-            relationGraph: relationGraph,
-            splitPartnerByTabId: [1: 2, 2: 1]
-        )
-
-        XCTAssertEqual(index, 5)
-    }
-
-    func testBackgroundLinkInsertionPrefersOpenerChainOverInsertAfterHint() {
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: false,
-            creationKind: .linkBackground,
-            openerTabId: 1,
-            insertAfterTabId: 11,
-            sourceTabId: 1,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
-
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [1, 11],
-            context: context,
-            relationGraph: .empty
-        )
-
-        XCTAssertEqual(index, 1)
-    }
-
-    func testHiddenForegroundOpenerIgnoresChromiumInsertAfterHint() {
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: true,
-            creationKind: .linkForeground,
-            openerTabId: 9,
-            insertAfterTabId: 3,
-            sourceTabId: 9,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
-
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [1, 2, 3],
-            context: context,
-            relationGraph: .empty,
-            hiddenOpenerTabIds: [9]
-        )
-
-        XCTAssertEqual(index, 0)
-    }
-
-    func testHiddenBackgroundOpenerLandsAfterVisibleDescendants() {
-        let context = NativeTabCreationContext(
-            isActiveAtCreation: false,
-            creationKind: .linkBackground,
-            openerTabId: 9,
-            insertAfterTabId: 3,
-            sourceTabId: 9,
-            resetOpenerOnActiveTabChange: false,
-            didForgetAllOpenersBeforeCreate: false
-        )
-        let relationGraph = NativeTabRelationGraph(
-            openerByTabId: [
-                10: 9,
-                11: 10,
-            ],
-            resetOnActiveChangeTabIds: [],
-            version: 1
-        )
-
-        let index = NativeTabDecisionEngine.insertionIndex(
-            visibleNormalTabIds: [10, 11, 1, 2, 3],
-            context: context,
-            relationGraph: relationGraph,
-            hiddenOpenerTabIds: [9]
-        )
-
-        XCTAssertEqual(index, 2)
     }
 
     func testTypedNewTabFallsBackToAppend() {
@@ -698,5 +513,29 @@ final class NativeTabDecisionEngineTests: XCTestCase {
         graph.fixOpenersAfterMovingSlice([2, 3])
 
         XCTAssertNil(graph.openerByTabId[4])
+    }
+
+    func testReopenedGroupMemberReturnsToItsOldIndexClampedIntoTheGroup() {
+        // [A, G1, G2, G3, B] = [1, 11, 12, 13, 2]; G2 closed at index 2.
+        let members: Set<Int> = [11, 13]
+        func index(_ closedAt: Int, _ order: [Int]) -> Int? {
+            NativeTabDecisionEngine.reopenedGroupMemberIndex(
+                closedAtIndex: closedAt,
+                visibleNormalTabIds: order,
+                isGroupMember: members.contains)
+        }
+
+        // The middle member comes back to the middle, not the group's end.
+        XCTAssertEqual(index(2, [1, 11, 13, 2]), 2)
+        // Its first and last slots stay first and last.
+        XCTAssertEqual(index(1, [1, 11, 13, 2]), 1)
+        XCTAssertEqual(index(3, [1, 11, 13, 2]), 3)
+        // An index that now falls outside the group snaps to its nearer edge.
+        XCTAssertEqual(index(0, [1, 11, 13, 2]), 1)
+        XCTAssertEqual(index(4, [1, 11, 13, 2]), 3)
+        // The group moved to the list's end since the tab closed.
+        XCTAssertEqual(index(2, [1, 2, 3, 11, 13]), 3)
+        // No member left to place it among.
+        XCTAssertNil(index(2, [1, 2, 3]))
     }
 }

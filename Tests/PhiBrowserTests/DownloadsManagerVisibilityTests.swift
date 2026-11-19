@@ -110,6 +110,24 @@ final class DownloadsManagerVisibilityTests: XCTestCase {
         XCTAssertEqual(Set(manager.downloads.map(\.id)), expectedIDs)
     }
 
+    func testClearableDownloadsIncludeOnlyFinishedSafeItems() {
+        let manager = DownloadsManager()
+        let wrappers = [DownloadState.complete, .cancelled, .interrupted, .inProgress, .complete, .inProgress].map { state in
+            let wrapper = DownloadVisibilityTestWrapper()
+            wrapper.url = "https://example.com/file.zip"
+            wrapper.state = state.rawValue
+            return wrapper
+        }
+        wrappers[4].isDangerous = true
+        wrappers[4].dangerType = 1
+        wrappers[5].isPaused = true
+
+        manager.applyDownloadSnapshot(wrappers)
+
+        XCTAssertEqual(Set(manager.clearableDownloads.map(\.id)), Set(wrappers.prefix(3).map(\.guid)))
+        XCTAssertEqual(manager.clearableDownloads.count, 3)
+    }
+
     func testFilteredUpdateRemovesExistingNativeAndFloatingItems() async {
         await assertExistingItemIsRemoved(useSnapshot: false)
     }

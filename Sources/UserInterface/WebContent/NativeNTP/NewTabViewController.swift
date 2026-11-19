@@ -11,17 +11,32 @@ final class NewTabViewController: NSViewController {
     private let browserState: BrowserState
     private var cancellables = Set<AnyCancellable>()
 
-    private let iconSize = NSSize(width: 64, height: 64)
-    private let contentSpacing: CGFloat = 40
-    private let collapsedOmniBoxHeight: CGFloat = 57
+    private let logoSide: CGFloat = 72
+    private let logoGap: CGFloat = 36
+    /// The tiles' frame sits this far under the composer, so the tiles themselves sit 32 under it: their hover fill
+    /// takes the rest.
+    private let appsGap: CGFloat = 32 - MistLauncherTile.padding
+    private let collapsedOmniBoxHeight = MistNewTabComposerViewController.collapsedHeight
     private var areControlsHidden = false
     private var keyDownMonitor: Any?
+    private weak var currentTab: Tab?
+    var appOpener: ((MistAppID, Tab?) -> Void)?
 
-    private lazy var omniBoxController: OmniBoxViewController = {
-        let controller = OmniBoxViewController(viewModel: .init(windowState: browserState), state: browserState)
-        controller.setActionDelegate(self)
+    private(set) lazy var appsWidget: MistAppsWidgetHostingView = {
+        let host = MistAppsWidgetHostingView(rootView: MistAppsWidget(apps: MistApps.all) { [weak self] id in
+            self?.openApp(id)
+        }, themeSource: browserState.themeContext)
+        host.sizingOptions = []
+        return host
+    }()
+
+    private lazy var composerController: MistNewTabComposerViewController = {
+        let controller = MistNewTabComposerViewController(state: browserState)
+        controller.omnibox.setActionDelegate(self)
         return controller
     }()
+    private var omniBoxController: OmniBoxViewController { composerController.omnibox }
+    var composer: MistNewTabComposerViewController { composerController }
 
     private lazy var scrollView: NSScrollView = {
         let scrollView = NSScrollView()
@@ -37,34 +52,13 @@ final class NewTabViewController: NSViewController {
 
     private let contentView = NSView()
 
-    private lazy var iconImageView: NSImageView = {
-        let imageView = NSImageView()
-        if browserState.isIncognito {
-            imageView.image = .nativeNTPIncognito
-        } else {
-            imageView.image = .nativeNTPIcon
-        }
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.imageAlignment = .alignCenter
-        return imageView
-    }()
-    
-    private lazy var incognitoLabel: NSTextField = {
-        let tf = NSTextField()
-        let label = NSLocalizedString("browser.newTabPage.incognitoLabel", value: "Incognito", comment: "Incognito label in the native new tab page")
-        tf.stringValue = label
-        tf.font = .brandDisplay("IvyPrestoHeadline-Light", size: 21, renders: label, weight: .light)
-        tf.isEditable = false
-        tf.isBordered = false
-        tf.drawsBackground = false
-        tf.alignment = .center
-        tf.usesSingleLineMode = true
-        tf.lineBreakMode = .byClipping
-        tf.maximumNumberOfLines = 1
-        tf.textColor = .primaryLabel
-        tf.allowsDefaultTighteningForTruncation = false
-        return tf
-    }()
+    /// The kit's page header: Mist's logo, titled only in an incognito window.
+    private(set) lazy var header = MistPageHeaderView(
+        glyph: .image("native-NTP-icon"),
+        title: browserState.isIncognito
+            ? NSLocalizedString("browser.newTabPage.incognitoLabel", value: "Incognito", comment: "Incognito label in the native new tab page")
+            : "",
+        subtitle: nil, glyphSide: logoSide)
 
     init(state: BrowserState) {
         self.browserState = state
@@ -95,7 +89,7 @@ final class NewTabViewController: NSViewController {
     override func viewDidAppear() {
         super.viewDidAppear()
         startKeyboardMonitoring()
-        omniBoxController.focusTextField()
+        composerController.focusInput()
     }
 
     override func viewDidDisappear() {
@@ -108,7 +102,9 @@ final class NewTabViewController: NSViewController {
         updateContentLayout()
     }
 
+    /// Runs on every show, including tab switches.
     func updateForTab(_ tab: Tab?) {
+        currentTab = tab
         setNativeControlsHidden(false)
         omniBoxController.setCurrentTabForNavigation(tab)
     }
@@ -119,21 +115,22 @@ final class NewTabViewController: NSViewController {
     /// (`omniBoxDidClear`) and can leave the typed text behind; this brings the
     /// clean new-tab page back. `updateForTab` alone does NOT clear the omnibox.
     func resetToInitialState(for tab: Tab?) {
+        currentTab = tab
         omniBoxController.reset()
         setNativeControlsHidden(false)
         omniBoxController.setCurrentTabForNavigation(tab)
     }
 
     func focusOmnibox() {
-        omniBoxController.focusTextField()
+        composerController.focusInput()
     }
     
     private func setNativeControlsHidden(_ hidden: Bool) {
         guard areControlsHidden != hidden else { return }
         areControlsHidden = hidden
-        iconImageView.isHidden = hidden
-        omniBoxController.view.isHidden = hidden
-        incognitoLabel.isHidden = hidden
+        header.isHidden = hidden
+        composerController.view.isHidden = hidden
+        updateWidgetVisibility(height: composerController.contentSize.height)
     }
 
     private func setupViews() {
@@ -144,22 +141,47 @@ final class NewTabViewController: NSViewController {
             make.edges.equalToSuperview()
         }
 
-        addChild(omniBoxController)
-        contentView.addSubview(iconImageView)
-        contentView.addSubview(incognitoLabel)
-        contentView.addSubview(omniBoxController.view)
+        addChild(composerController)
+        contentView.addSubview(header)
+        contentView.addSubview(composerController.view)
+        contentView.addSubview(appsWidget)
+        appsWidget.isHidden = browserState.isIncognito
 
-        omniBoxController.view.translatesAutoresizingMaskIntoConstraints = true
-        omniBoxController.view.autoresizingMask = []
+        composerController.view.translatesAutoresizingMaskIntoConstraints = true
+        composerController.view.autoresizingMask = []
     }
 
     private func setupObservers() {
-        omniBoxController.$contentSize
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.updateContentLayout()
+        composerController.$contentSize
+            .sink { [weak self] size in
+                self?.updateWidgetVisibility(height: size.height)
+                self?.updateContentLayout(composerSize: size)
             }
             .store(in: &cancellables)
+    }
+
+    func openApp(_ id: MistAppID) {
+        let replacing = composerController.hasDraft() ? nil : currentTab
+        if let appOpener { appOpener(id, replacing) }
+        else { browserState.openApp(id, replacing: replacing) }
+    }
+
+    private func updateWidgetVisibility(height: CGFloat) {
+        let show = !browserState.isIncognito && !areControlsHidden && height <= collapsedOmniBoxHeight
+        guard appsWidget.isHidden == show else { return }
+        if !show {
+            appsWidget.isHidden = true
+            appsWidget.alphaValue = 0
+        } else {
+            appsWidget.isHidden = false
+            let animate = view.window != nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            if animate {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.15
+                    appsWidget.animator().alphaValue = 1
+                }
+            } else { appsWidget.alphaValue = 1 }
+        }
     }
 
     private func startKeyboardMonitoring() {
@@ -183,9 +205,16 @@ final class NewTabViewController: NSViewController {
             .contains(.command)
         let isReturnKey = event.keyCode == 36 || event.keyCode == 76
 
+
         guard isCommandKeyPressed && isReturnKey else { return event }
 
-        omniBoxController.confirmSelection(commandKeyPressed: true)
+        // Only intercept the composer's field editor, never a floating Cmd+L panel.
+        guard let editor = view.window?.firstResponder as? NSTextView,
+              editor.isFieldEditor,
+              !editor.hasMarkedText(),
+              let field = editor.delegate as? NSView,
+              field.isDescendant(of: composerController.view) else { return event }
+        composerController.submit(commandKeyPressed: true)
         return nil
     }
 
@@ -199,67 +228,56 @@ final class NewTabViewController: NSViewController {
         return true
     }
 
-    private func updateContentLayout() {
+    /// `composerSize` is the value `$contentSize` is about to store; reading the property from its
+    /// sink would still see the old one.
+    private func updateContentLayout(composerSize: NSSize? = nil) {
         guard isViewLoaded else { return }
         let clipSize = scrollView.contentView.bounds.size
         guard clipSize.width > 0, clipSize.height > 0 else { return }
-        // Fit the omnibox to the visible clip. Its natural width (the Cmd+L
-        // panel's 680) overflows narrow surfaces — an NTP rendering inside a
-        // splitview pane — which pushed the content column wider than the
-        // clip: the icon then centered off into the hidden overflow and the
-        // box ran edge-to-edge. Capping the width keeps the column within
-        // the clip, so everything re-centers as the pane is resized.
-        let omniNatural = omniBoxController.contentSize
+        // Fit the composer to the visible clip. Its natural width (the
+        // kit's readable width) overflows narrow surfaces — an NTP
+        // rendering inside a splitview pane — which pushed the content
+        // column wider than the clip: the logo then centered off into the
+        // hidden overflow and the box ran edge-to-edge. Capping the width
+        // keeps the column within the clip, so everything re-centers as the
+        // pane is resized.
+        let omniNatural = composerSize ?? composerController.contentSize
         let omniHorizontalInset: CGFloat = 24
         let fittedOmniWidth = min(omniNatural.width,
                                   max(clipSize.width - omniHorizontalInset * 2, 240))
         let omniSize = NSSize(width: fittedOmniWidth, height: omniNatural.height)
-        
-        // Measure incognito label size using the cell to include internal padding
-        var labelSize: NSSize
-        if let cell = incognitoLabel.cell {
-            labelSize = cell.cellSize
-        } else {
-            labelSize = incognitoLabel.attributedStringValue.size()
-        }
-        // Ceil to whole pixels and add 2pt padding to avoid last character clipping
-        labelSize.width = ceil(labelSize.width) + 2
-        labelSize.height = ceil(labelSize.height)
-        let labelHeight = labelSize.height
+        let headerSize = header.fittingSize
 
-        // Content size includes icon, label (6pt below icon), and omni (48pt below label)
-        let contentWidth = max(omniSize.width, iconSize.width, labelSize.width)
-        let contentHeight = iconSize.height + 6 + labelHeight + 48 + omniSize.height
-        let collapsedContentHeight = iconSize.height + 6 + labelHeight + 48 + collapsedOmniBoxHeight
+        let contentWidth = max(omniSize.width, headerSize.width, MistAppsWidget.width)
+        let headerHeight = headerSize.height + logoGap
+        // Center the collapsed card itself. Growing suggestions keeps its top fixed.
+        let anchorTop = max((clipSize.height + collapsedOmniBoxHeight) / 2, headerHeight + collapsedOmniBoxHeight)
+        let widgetHeight: CGFloat = appsWidget.isHidden ? 0 : appsGap + MistAppsWidget.height
+        let overflow = max(0, omniSize.height + widgetHeight - anchorTop)
 
         let documentWidth = max(contentWidth, clipSize.width)
-        let documentHeight = max(contentHeight, clipSize.height)
+        let documentHeight = max(clipSize.height, anchorTop + headerHeight) + overflow
+        let scrollY = scrollView.contentView.bounds.minY + documentHeight - contentView.frame.height
         contentView.frame = NSRect(x: 0, y: 0, width: documentWidth, height: documentHeight)
 
         let originX = (documentWidth - contentWidth) / 2
-        let anchorTop = (clipSize.height + collapsedContentHeight) / 2
-        let originY: CGFloat
-        if contentHeight <= clipSize.height {
-            originY = max(anchorTop - contentHeight, 0)
-        } else {
-            originY = 0
-        }
+        let cardTop = anchorTop + overflow
 
-        // Position icon at the top of our content column
-        let iconX = originX + (contentWidth - iconSize.width) / 2
-        let iconY = originY + (iconSize.height + 6 + labelHeight + 48 + omniSize.height) - iconSize.height
-        iconImageView.frame = NSRect(x: iconX, y: iconY, width: iconSize.width, height: iconSize.height)
+        // The header sits logoGap above the card, centered on the column.
+        header.frame = NSRect(x: originX + (contentWidth - headerSize.width) / 2, y: cardTop + logoGap,
+                              width: headerSize.width, height: headerSize.height)
 
-        // Position label 6pt below the icon, centered horizontally
-        let labelX = originX + (contentWidth - labelSize.width) / 2
-        let labelY = iconImageView.frame.minY - 6 - labelHeight
-        incognitoLabel.frame = NSRect(x: labelX, y: labelY, width: labelSize.width, height: labelHeight)
-
-        // Position omnibox 48pt below the label
+        // Suggestions expand down from the fixed card top.
         let omniX = originX + (contentWidth - omniSize.width) / 2
-        let omniY = incognitoLabel.frame.minY - 48 - omniSize.height
-        omniBoxController.view.frame = NSRect(x: omniX, y: omniY, width: omniSize.width, height: omniSize.height)
+        let omniY = cardTop - omniSize.height
+        composerController.view.frame = NSRect(x: omniX, y: omniY, width: omniSize.width, height: omniSize.height)
+        appsWidget.frame = NSRect(x: originX + (contentWidth - MistAppsWidget.width) / 2,
+                                  y: omniY - appsGap - MistAppsWidget.height,
+                                  width: MistAppsWidget.width, height: MistAppsWidget.height)
 
+        // Preserve the visible top when downward growth needs a taller document.
+        scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.minX,
+                                                  y: min(max(0, scrollY), max(0, documentHeight - clipSize.height))))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 }

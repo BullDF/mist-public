@@ -136,10 +136,15 @@ final class ExtensionBadgeTests: XCTestCase {
             return XCTFail("variant not drawable")
         }
         let rep = NSBitmapImageRep(cgImage: cg)
+        guard let cgSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB),
+              let linearSpace = NSColorSpace(cgColorSpace: cgSpace) else {
+            return XCTFail("linear sRGB color space unavailable")
+        }
         guard let pixel = rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?
-            .usingColorSpace(.sRGB) else {
+            .usingColorSpace(linearSpace) else {
             return XCTFail("center pixel unreadable")
         }
+        // Measure Core Image's linear-light result, before the sRGB transfer curve.
         // Desaturated: channels converge. Lightened ~20% toward white
         // (Chrome's HSL {-1, 0, 0.6}): red's luma ≈ 0.21 → ≈ 0.37. Alpha is
         // untouched (Chrome does not dim disabled icons).

@@ -21,8 +21,6 @@ enum LottieAnimationTrigger: Equatable {
     case onClick
     /// Play animation manually via external trigger (playCount increment)
     case manual
-    /// No automatic animation trigger
-    case none
 }
 
 // MARK: - Configuration
@@ -50,8 +48,6 @@ struct LottieAnimationViewConfig {
     var animationTrigger: LottieAnimationTrigger
     /// Optional themed tint color for the animation (supports light/dark mode)
     var themedTintColor: ThemedColor?
-    /// Animation speed multiplier
-    var animationSpeed: Double?
     /// Playback behavior for the forward animation
     var loopMode: LottieLoopMode
     /// Whether to enable hover scale effect
@@ -93,7 +89,6 @@ struct LottieAnimationViewConfig {
         self.edgeInsets = edgeInsets
         self.animationTrigger = animationTrigger
         self.themedTintColor = themedTintColor
-        self.animationSpeed = animationSpeed
         self.loopMode = loopMode
         self.enableHoverScale = enableHoverScale
         self.hoverScale = hoverScale
@@ -224,7 +219,6 @@ struct LottieAnimationView: View {
             LottieView(animation: .named(config.animationName, bundle: config.bundle, subdirectory: config.subdirectory))
                 .configuration(LottieConfiguration(renderingEngine: .mainThread))
                 .playbackMode(playbackMode)
-//                .animationSpeed(config.animationSpeed ?? -1)
                 .animationDidFinish { completed in
                     AppLogDebug("🎬 [\(config.animationName)] animationDidFinish - completed: \(completed), isPlayingReverse: \(isPlayingReverse), isAtEndFrame: \(isAtEndFrame)")
                     guard completed else { return }
@@ -367,7 +361,6 @@ class LottieAnimationNSView: NSView {
     private var hostingView: LottieAnimationHostingView?
     private let viewState: LottieAnimationViewState
     private var config: LottieAnimationViewConfig
-    private var action: (() -> Void)?
     private var themeObserver = ThemeObserver.shared
     
     /// Enable/disable the button
@@ -381,7 +374,6 @@ class LottieAnimationNSView: NSView {
     init(config: LottieAnimationViewConfig, isEnabled: Bool = true, action: (() -> Void)? = nil) {
         self.config = config
         self.viewState = LottieAnimationViewState(isEnabled: isEnabled)
-        self.action = action
         super.init(frame: .zero)
         
         let view = LottieAnimationView(config: config, state: viewState, action: action)
@@ -515,7 +507,6 @@ class LottieAnimationNSView: NSView {
 
 // MARK: - Preview
 
-#if DEBUG
 struct LottieAnimationView_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 20) {
@@ -592,13 +583,7 @@ struct LottieAnimationView_Previews: PreviewProvider {
         .padding(40)
     }
 }
-#endif
 
-extension LottieColor {
-    init(nsColor: NSColor) {
-        self.init(r: nsColor.redComponent, g: nsColor.greenComponent, b: nsColor.blueComponent, a: nsColor.alphaComponent)
-    }
-}
 
 extension NSColor {
     var lottieColor: LottieColor {

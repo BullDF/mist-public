@@ -231,8 +231,8 @@ class PinnedSplitItem: NSCollectionViewItem, NSMenuDelegate {
         leftFaviconHandle = nil
         rightFaviconHandle?.cancel()
         rightFaviconHandle = nil
-        leftStatusModel.configure(with: leftTab, in: browserState)
-        rightStatusModel.configure(with: rightTab, in: browserState)
+        leftStatusModel.configure(with: leftTab)
+        rightStatusModel.configure(with: rightTab)
 
         Publishers.CombineLatest(leftTab.$hasWebContent, rightTab.$hasWebContent)
         .map { $0 || $1 }

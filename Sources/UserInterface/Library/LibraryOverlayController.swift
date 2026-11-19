@@ -93,7 +93,6 @@ final class LibraryOverlayController {
         card.shadow = shadow
         overlay.dismiss = { [weak self] in self?.dismiss() }
         overlay.layoutCard = { [weak self] in self?.layoutContent() }
-        module.onDismiss = { [weak self] in self?.dismiss() }
         panel.dismiss = { [weak self] in self?.dismiss() }
         focusedTabSubscription = browserState.$focusingTab
             .map { $0?.guid }

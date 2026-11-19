@@ -34,7 +34,7 @@ struct ProfilesSettingsView: View {
             if selectedProfileId == nil { selectInitialProfile() }
         }
         // Keep the selection valid as the profile list changes (create/delete).
-        .onChange(of: profileManager.profiles.map(\.profileId)) { ids in
+        .onChange(of: profileManager.profiles.map(\.profileId)) { _, ids in
             if let sel = selectedProfileId, ids.contains(sel) { return }
             selectInitialProfile()
         }
@@ -168,11 +168,7 @@ struct ProfilesSettingsView: View {
     private var canDeleteSelected: Bool {
         guard let profile = selectedProfile,
               profile.profileId != LocalStore.defaultProfileId else { return false }
-        // Local references AND account references: once Spaces sync, a Profile
-        // referenced only by a Space that lives on another Mac would look
-        // deletable (§9.4).
-        guard !spaceManager.isProfileInUse(profile.profileId) else { return false }
-        return !PhiSpaceSyncState.shared.blocksProfileDeletion(localProfileId: profile.profileId)
+        return !spaceManager.isProfileInUse(profile.profileId)
     }
 
     private func selectInitialProfile() {

@@ -5,6 +5,15 @@
 
 import AppKit
 import Combine
+import os
+
+/// Immutable resolution inputs safe to read from any thread. A `Theme` is never
+/// mutated once registered or made current: edits, ramps, and adjustments build
+/// a new instance through `duplicating()` or `Theme(id:name:)`.
+public struct ThemeResolutionState: @unchecked Sendable {
+    public let theme: Theme
+    public let appearance: Appearance
+}
 
 /// Theme change notifications.
 public extension Notification.Name {
@@ -41,6 +50,19 @@ public final class ThemeManager: NSObject, ThemeSource {
     @MainActor
     public static let shared = ThemeManager()
 
+    private static let publishedResolutionState = OSAllocatedUnfairLock<ThemeResolutionState?>(initialState: nil)
+
+    /// Main-thread resolution keeps live values; other threads use the latest publication.
+    public static var resolutionState: ThemeResolutionState {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated {
+                ThemeResolutionState(theme: shared.currentTheme, appearance: shared.currentAppearance)
+            }
+        }
+        return publishedResolutionState.withLock { $0 }
+            ?? ThemeResolutionState(theme: .default, appearance: .light)
+    }
+
     /// Immutable-at-runtime source copies for matching persisted IDs. Every
     /// restore starts from one of these copies rather than from the mutable
     /// registry or the public built-in singleton instances.
@@ -62,6 +84,7 @@ public final class ThemeManager: NSObject, ThemeSource {
         didSet {
             if currentTheme !== oldValue {
                 UserDefaults.standard.set(currentTheme.id, forKey: PhiPreferences.ThemeSettings.currentThemeId.rawValue)
+                publishResolutionState()
                 notifyThemeChange()
             }
         }
@@ -120,12 +143,6 @@ public final class ThemeManager: NSObject, ThemeSource {
     /// Observation token for system appearance changes.
     private var appearanceObservation: NSKeyValueObservation?
 
-    /// Observer for settings pulled by the Phi sync engine (M3-1). Both theme preferences are
-    /// cached in memory here and written back from the `didSet`s above, so a value the engine
-    /// writes straight into `UserDefaults` would otherwise not reach the UI until the next
-    /// launch — and could then be overwritten by this stale cache.
-    private var syncedSettingsObservation: NSObjectProtocol?
-
     // MARK: - Combine Publishers
     
     /// Publishes theme changes.
@@ -155,27 +172,7 @@ public final class ThemeManager: NSObject, ThemeSource {
         restoreUserPreferences()
 
         setupAppearanceObservation()
-        setupSyncedSettingsObservation()
-    }
-
-    /// Re-reads the two synced theme preferences when the Phi sync engine applies a pulled
-    /// value for them.
-    ///
-    /// `restoreUserPreferences()` is idempotent and both setters below it are guarded by
-    /// `!= oldValue`, so a notification that changed nothing writes nothing back — and a write
-    /// that does happen re-persists the value the engine just stored, whose sidecars
-    /// `SyncableSettings.apply` has already refreshed, so it is not detected as a local edit
-    /// and not echoed back to the account.
-    private func setupSyncedSettingsObservation() {
-        syncedSettingsObservation = NotificationCenter.default.addObserver(
-            forName: .phiSyncedSettingsDidApply, object: nil, queue: .main
-        ) { [weak self] notification in
-            guard let self else { return }
-            let applied = notification.userInfo?[SyncableSettings.appliedKeysUserInfoKey] as? [String] ?? []
-            guard applied.contains(PhiPreferences.ThemeSettings.userAppearanceChoice.rawValue)
-                    || applied.contains(PhiPreferences.ThemeSettings.currentThemeId.rawValue) else { return }
-            self.restoreUserPreferences()
-        }
+        publishResolutionState()
     }
 
     /// Restores saved theme and appearance preferences from `UserDefaults`.
@@ -254,18 +251,6 @@ public final class ThemeManager: NSObject, ThemeSource {
         }
     }
 
-    private func persistThemeSnapshots() {
-        guard !hasUnsupportedThemeSnapshots else {
-            AppLogWarn("[ThemeSnapshot] Keeping newer snapshot data unchanged")
-            return
-        }
-        let currentSnapshots = persistedThemeIDs
-            .sorted()
-            .compactMap { registeredThemes[$0]?.makeSnapshot() }
-
-        writeThemeSnapshots(currentSnapshots)
-    }
-
     private func writeThemeSnapshots(_ snapshots: [ThemeSnapshot]) {
         let encoder = JSONEncoder()
         guard let data = try? encoder.encode(snapshots) else { return }
@@ -285,6 +270,9 @@ public final class ThemeManager: NSObject, ThemeSource {
             appearanceMode = .manual(.dark)
             NSApp.appearance = NSAppearance(named: .darkAqua)
         }
+        // After `NSApp.appearance`: in `.system` mode the published appearance
+        // is the app's effective one, which changes only once that's set.
+        publishResolutionState()
     }
     
     // MARK: - Theme Registration
@@ -300,77 +288,11 @@ public final class ThemeManager: NSObject, ThemeSource {
         }
     }
     
-    /// Unregisters a non-default theme.
-    public func unregisterTheme(id: String) {
-        guard id != Theme.default.id else { return }
-        registeredThemes.removeValue(forKey: id)
-    }
-    
-    /// Switches to a registered theme.
-    public func switchTheme(to themeId: String) {
-        guard let theme = registeredThemes[themeId] else { return }
-        currentTheme = theme
-    }
-
-    @MainActor
-    func applyThemeSnapshot(_ snapshot: ThemeSnapshot) {
-        let canonicalTheme = Self.canonicalBuiltInTheme(matching: snapshot.id)
-        guard let migratedSnapshot = snapshot.migratedToCurrentVersion(
-            matching: canonicalTheme
-        ) else {
-            AppLogWarn("[ThemeSnapshot] Ignoring unsupported version \(snapshot.version) for \(snapshot.id)")
-            return
-        }
-        let theme = migratedSnapshot.makeTheme(matching: canonicalTheme)
-        AppLogDebug("[ThemeAlpha] applyThemeSnapshot id=\(theme.id) lightAlpha=\(theme.windowOverlayOpacity(for: .light)) darkAlpha=\(theme.windowOverlayOpacity(for: .dark))")
-        registeredThemes[theme.id] = theme
-        persistedThemeIDs.insert(theme.id)
-        persistThemeSnapshots()
-        currentTheme = theme
-    }
-
-    @MainActor
-    @available(*, deprecated, message: "Theme overlay alpha is fixed at 0.8 in ThemeSnapshot V2.")
-    public func updateCurrentThemeOverlayOpacity(_ opacity: CGFloat, for appearance: Appearance? = nil) {
-        // Retain the old entry point for source compatibility, but V2 no longer
-        // accepts user-defined alpha. Normalize every registered theme instead
-        // of applying the requested value or appearance.
-        var refreshedCurrent: Theme?
-        for (themeId, theme) in registeredThemes {
-            let updatedTheme = ThemeColorAdjustment.applyingStandardAlpha(to: theme)
-            registeredThemes[themeId] = updatedTheme
-            persistedThemeIDs.insert(themeId)
-            if themeId == currentTheme.id {
-                refreshedCurrent = updatedTheme
-            }
-        }
-        persistThemeSnapshots()
-        AppLogDebug("[ThemeAlpha] ignored legacy opacity=\(opacity) appearance=\(String(describing: appearance)) themes=\(registeredThemes.count)")
-        if let refreshedCurrent {
-            currentTheme = refreshedCurrent
-        }
-    }
-    
     // MARK: - Appearance
     
     /// Sets the user appearance preference.
     public func setUserAppearanceChoice(_ choice: UserAppearanceChoice) {
         userAppearanceChoice = choice
-    }
-    
-    /// Switches appearance handling back to the system setting.
-    public func followSystemAppearance() {
-        userAppearanceChoice = .system
-    }
-    
-    /// Forces a specific appearance.
-    public func setAppearance(_ appearance: Appearance) {
-        switch appearance {
-        case .light:
-            userAppearanceChoice = .light
-        case .dark:
-            userAppearanceChoice = .dark
-        }
     }
     
     // MARK: - ThemeSource Protocol
@@ -383,25 +305,29 @@ public final class ThemeManager: NSObject, ThemeSource {
             action(self.currentTheme, self.currentAppearance)
         }
         
-        let notificationObserver = NotificationCenter.default.addObserver(
-            forName: .appearanceDidChange,
-            object: self,
-            queue: .main
-        ) { [weak self] _ in
+        // A cancellable ends with its owner. A block observer's token doesn't: released without
+        // `removeObserver`, it stayed registered, and every theme binding ever made slowed each later removal.
+        let appearanceObservation = appearancePublisher.sink { [weak self] _ in
             guard let self = self else { return }
             action(self.currentTheme, self.currentAppearance)
         }
-        
-        return CompoundObservation([themeObservation, notificationObserver as AnyObject])
+
+        return CompoundObservation([themeObservation, appearanceObservation as AnyObject])
     }
     
     // MARK: - Private Methods
     
+    private func publishResolutionState() {
+        let state = ThemeResolutionState(theme: currentTheme, appearance: currentAppearance)
+        Self.publishedResolutionState.withLock { $0 = state }
+    }
+
     private func setupAppearanceObservation() {
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.old, .new]) { [weak self] _, change in
             guard let self = self else { return }
             guard change.oldValue != change.newValue else { return }
             
+            self.publishResolutionState()
             if case .system = self.appearanceMode {
                 self.notifyAppearanceChange()
             }
@@ -440,13 +366,3 @@ public final class CompoundObservation {
         self.observations = observations
     }
 }
-
-/// Placeholder subscription used when no teardown is required.
-public let emptySubscription: AnyObject = {
-    class EmptySubscription: CustomStringConvertible {
-        var description: String {
-            "EmptySubscription - nothing to tear down"
-        }
-    }
-    return EmptySubscription()
-}()

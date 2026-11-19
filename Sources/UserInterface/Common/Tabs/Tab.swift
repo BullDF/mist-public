@@ -60,6 +60,7 @@ struct TabSecurityInfo {
 class Tab: WebContentRepresentable {
     private(set) var index: Int = 0
     @Published var isActive: Bool = false
+    @Published var isRenaming = false
     @Published private(set) var faviconUrl: String?
     @Published private(set) var cachedFaviconData: Data?
     @Published private(set) var liveFaviconData: Data?
@@ -97,24 +98,56 @@ class Tab: WebContentRepresentable {
     /// the tab is ungrouped. Mirrors `chrome.tabGroups` membership; updated
     /// by `BrowserState.handleTabJoinedGroup` / `handleTabLeftGroup`.
     @Published var groupToken: String?
+    @Published private(set) var groupStartPage: String?
+    private var startPage = GroupedTabStartPage()
     @Published var title: String = ""
-    @Published var url: String?
+    @Published var url: String? {
+        didSet {
+            if oldValue.flatMap(AgentChatLink.matchKey) != url.flatMap(AgentChatLink.matchKey) { remoteMarkdown = nil }
+            updateMistNativeNTPForURL()
+            if groupToken != nil, groupStartPage == nil, !isPinned, MistApps.address(url) == nil {
+                startPage.pageChanged(to: url)
+                publishGroupStartPage()
+            }
+        }
+    }
+
+    /// The shared membership update for eager, optimistic and confirmed joins.
+    func updateGroupMembership(_ token: String?, title: String? = nil, kind: GroupedTabStartPage.TabKind = .regular) {
+        if groupToken != token { groupToken = token }
+        startPage.updateMembership(token: token, title: title, kind: kind, currentURL: url)
+        publishGroupStartPage()
+    }
+
+    var canHaveGroupStartPage: Bool {
+        groupToken != nil && startPage.isEligible && !isPinned && MistApps.address(url) == nil
+    }
+
+    var canSetGroupStartPage: Bool { canHaveGroupStartPage && startPage.canSetCurrentPage(url) }
+
+    var canReturnToGroupStartPage: Bool { canHaveGroupStartPage && startPage.hasDrifted(from: url) }
+
+    @objc func setCurrentPageAsGroupStartPage() {
+        guard canSetGroupStartPage else { return }
+        startPage.setCurrentPage(url)
+        publishGroupStartPage()
+    }
+
+    private func publishGroupStartPage() {
+        if groupStartPage != startPage.url { groupStartPage = startPage.url }
+    }
+    @Published private(set) var remoteMarkdown: String?
+    var showsMarkdownReader: Bool {
+        if remoteMarkdown != nil { return true }
+        guard let file = MarkdownDocumentRoute.localFile(for: url),
+              let values = try? file.resourceValues(forKeys: [.isRegularFileKey]), values.isRegularFile == true else { return false }
+        return FileManager.default.isReadableFile(atPath: file.path)
+    }
     @Published private(set) var securityInfo: TabSecurityInfo = .empty
     
     /// Per-tab AI Chat sidebar collapsed state.
     @Published var aiChatCollapsed: Bool = true
     @Published var aiChatEnabled: Bool = false
-    /// The AI Chat panel this tab had when it was closed, handed back with the
-    /// tab undo close restored; consumed when the tab arrives.
-    var restoredAIChatPanel: AIChatPanelRecord?
-
-    /// Whether Sidecar has completed at least one response for this tab.
-    @Published var hasPairedChat: Bool = false
-    /// Whether Sidecar has submitted or streamed a response for the current chat.
-    @Published var hasStartedChatGeneration: Bool = false
-    /// Whether Sidecar is submitting or streaming a response for this tab.
-    @Published var isPairedChatGenerating: Bool = false
-
     /// Native renderer crash-page state, set by `PhiChromiumCoordinator` from
     /// the `showCrashPage` bridge event and cleared on teardown. Non-nil drives
     /// the content host to show the crash view in place of the dead web content
@@ -160,8 +193,8 @@ class Tab: WebContentRepresentable {
     }
 
     /// Use native NTP rendering when the tab URL is an NTP URL.
-    /// Only ever set for off-the-record tabs (see
-    /// `BrowserState.consumePendingNativeNTP`). The flag is set after the
+    /// Set for normal NTP URLs by Mist and for queued off-the-record tabs.
+    /// The flag is set after the
     /// title binding's initial emission, so re-derive the placeholder title
     /// on the flip — without this the sidebar keeps the raw
     /// "chrome://newtab/" Chromium reported before the mark arrived.
@@ -171,6 +204,9 @@ class Tab: WebContentRepresentable {
             applyIncognitoNTPTitleIfUntitled()
         }
     }
+
+    /// Nil until the owning window configures the tab's native NTP policy.
+    var nativeNTPIsIncognito: Bool?
 
     /// Whether this tab is currently rendered by the native NTP view (rather
     /// than Chromium's WebContents). Mirrored from `WebContentViewController.contentMode`
@@ -198,7 +234,6 @@ class Tab: WebContentRepresentable {
     var onFocusGained: (() -> Void)?
     
     @Published private(set) var webContentWrapper: (WebContentWrapper & NSObject)?
-    let parent: Tab? = nil
     let subTabs: [Tab] = []
     var guid: Int
     var guidInLocalDB: String? = nil
@@ -219,6 +254,8 @@ class Tab: WebContentRepresentable {
     var isOpenned = true
     /// DB-persisted title that bypasses title KVO from `webContentWrapper`.
     var storedTitle: String?
+    /// Chromium's latest title for the page, shown again when a stored name is cleared.
+    private(set) var pageTitle: String?
     /// Original URL persisted in the database for pinned tabs, immune to navigation KVO.
     var pinnedUrl: String?
     /// Creation date persisted on the pinned-tab record, exported as
@@ -243,7 +280,7 @@ class Tab: WebContentRepresentable {
     /// on every wrapper swap; this pipeline watches the tab's own published
     /// state and must outlive the wrapper bindings.
     private var readerOfferabilityTrigger: AnyCancellable?
-    private var aiOutputNavigationTrigger: AnyCancellable?
+    private var markdownTrigger: AnyCancellable?
     private static let isUnloadedSelector = NSSelectorFromString("isUnloaded")
     private static let pageColorSelector = NSSelectorFromString("pageColor")
     
@@ -267,9 +304,25 @@ class Tab: WebContentRepresentable {
         self.windowId = windowId
         self.profileId = profileId
         self.cachedFaviconData = faviconData
+        self.title = nativeAppTitle() ?? title ?? ""
         setupObservers(for: webContentView)
         setupReaderOfferabilityTrigger()
-        setupAIOutputNavigationTrigger()
+        markdownTrigger = Publishers.Merge($isLoading.removeDuplicates().filter { !$0 }.map { _ in () }, $url.removeDuplicates().map { _ in () })
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] in self?.refreshRemoteMarkdown() }
+    }
+
+    private func refreshRemoteMarkdown() {
+        guard !isLoading, let url, MarkdownDocumentRoute.isRemoteCandidate(url), let key = AgentChatLink.matchKey(url),
+              let target = webContentWrapper?.devToolsTargetId, !target.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            guard let self, let result = try? await self.pageCommand("Runtime.evaluate", params: ["expression": "(() => { const pre = document.body && document.body.querySelector(':scope > pre'); return { type: document.contentType, charset: document.characterSet, text: pre ? pre.textContent : null }; })()", "returnByValue": true], targetId: target),
+                  self.url.flatMap(AgentChatLink.matchKey) == key else { return }
+            let value = (result["result"] as? [String: Any])?["value"] as? [String: Any]
+            if let type = value?["type"] as? String, MarkdownDocumentRoute.acceptsRemote(contentType: type), let text = value?["text"] as? String {
+                self.remoteMarkdown = MarkdownDocumentRoute.decodedText(text, characterSet: value?["charset"] as? String ?? "")
+            } else { self.remoteMarkdown = nil }
+        }
     }
 
     /// Re-judges the reader button whenever the page plausibly changed: a
@@ -284,31 +337,6 @@ class Tab: WebContentRepresentable {
         .sink { [weak self] in
             self?.refreshReaderOfferability()
         }
-    }
-
-    /// NTP hosts Sidecar in the content tab itself. Navigating away destroys
-    /// that Sidecar without closing a hidden AI Chat tab, so clear its badge
-    /// state when the tab leaves the NTP document.
-    private func setupAIOutputNavigationTrigger() {
-        aiOutputNavigationTrigger = $url
-            .removeDuplicates()
-            .scan((previous: String?.none, current: String?.none)) { transition, current in
-                (previous: transition.current, current: current)
-            }
-            .dropFirst()
-            .sink { [weak self] transition in
-                guard let self,
-                      transition.previous?.isNTP == true,
-                      transition.current?.isNTP != true else { return }
-                let tabId = self.guid
-                let windowId = self.windowId
-                Task { @MainActor in
-                    SidecarAIOutputStateStore.shared.removeConversation(
-                        boundTo: tabId,
-                        windowId: windowId
-                    )
-                }
-            }
     }
 
     /// Re-judges the button from the signals in hand: the URL gate and
@@ -475,20 +503,7 @@ class Tab: WebContentRepresentable {
             .replaceNil(with: "")
             .sink { [weak self] title in
                 guard let self else { return }
-                if let localTitle = self.storedTitle, !localTitle.isEmpty {
-                    self.title = localTitle
-                } else if BookmarkManagerRoute.matches(self.url) {
-                    self.title = BookmarkManagerRoute.tabTitle
-                } else if self.usesNativeNTP, Self.isUntitledNTPTitle(title, url: self.url) {
-                    // A blank off-the-record chrome://newtab has no page
-                    // title, so Chromium reports the raw URL — e.g. in an
-                    // Incognito Space's dedicated OTR profile, whose NTP
-                    // WebUI does not load. Show the incognito NTP name the
-                    // primary OTR profile's real NTP would carry.
-                    self.title = Self.incognitoNewTabTitle
-                } else {
-                    self.title = title
-                }
+                self.applyPageTitle(title)
             }
             .store(in: &cancellables)
         
@@ -526,6 +541,7 @@ class Tab: WebContentRepresentable {
         guard let urlString else { return false }
         return !urlString.hasPrefix("phi://")
             && !urlString.hasPrefix("chrome://")
+            && MistApps.address(urlString).map(\.app.hostsChatPanel) ?? true
     }
     
     func setWebContentsWrapper(wrapper: (WebContentWrapper & NSObject)?) {
@@ -616,6 +632,36 @@ class Tab: WebContentRepresentable {
         self.title = title
     }
 
+    func clearStoredTitle() {
+        storedTitle = nil
+        applyPageTitle(pageTitle ?? webContentWrapper?.title ?? "")
+    }
+
+    /// Shows Chromium's title for the page, unless a stored name or a Mist page title wins.
+    /// Both of Chromium's title channels (the wrapper's KVO and `tabTitleUpdated`) come here.
+    func applyPageTitle(_ pageTitle: String) {
+        // The wrapper's `title` can lag `tabTitleUpdated`, so clearing a name uses the newest.
+        self.pageTitle = pageTitle
+        let resolved: String
+        if let storedTitle, !storedTitle.isEmpty {
+            resolved = storedTitle
+        } else if BookmarkManagerRoute.matches(url) {
+            resolved = BookmarkManagerRoute.tabTitle
+        } else if let chatTitle = nativeAppTitle() {
+            resolved = chatTitle
+        } else if usesNativeNTP, nativeNTPIsIncognito == true,
+                  Self.isUntitledNTPTitle(pageTitle, url: url) {
+            // A blank off-the-record chrome://newtab has no page title, so
+            // Chromium reports the raw URL — e.g. in an Incognito Space's
+            // dedicated OTR profile, whose NTP WebUI does not load. Show the
+            // incognito NTP name the primary OTR profile's real NTP would carry.
+            resolved = Self.incognitoNewTabTitle
+        } else {
+            resolved = pageTitle
+        }
+        if title != resolved { title = resolved }
+    }
+
     /// Placeholder title for native-NTP (off-the-record) new-tab pages.
     static let incognitoNewTabTitle = NSLocalizedString("common.newTabPage.incognitoTitle", value: "New Incognito Tab",
         comment: "Tab title shown for an incognito new-tab page rendered by the native NTP")
@@ -625,7 +671,7 @@ class Tab: WebContentRepresentable {
     /// before the mark; later Chromium title updates go through the same
     /// check in the title binding.
     private func applyIncognitoNTPTitleIfUntitled() {
-        guard storedTitle?.isEmpty != false,
+        guard nativeNTPIsIncognito == true, storedTitle?.isEmpty != false,
               Self.isUntitledNTPTitle(title, url: url) else { return }
         title = Self.incognitoNewTabTitle
     }
@@ -637,7 +683,16 @@ class Tab: WebContentRepresentable {
         guard url == nil || url?.isEmpty == true || url?.isNTP == true else { return false }
         return chromiumTitle.isEmpty || chromiumTitle.isNTP
     }
-    
+
+    /// A restored chat tab carries its first load's title, so the chat file's title wins.
+    private func nativeAppTitle() -> String? {
+        if let title = MainActor.assumeIsolated({ () -> String? in
+            guard let address = appAddress, let app = MistApps.app(address.app) else { return nil }
+            return app.title(address.instance)
+        }) { return title }
+        return nil
+    }
+
     func setActive(_ active: Bool) {
         self.isActive = active
     }
@@ -645,6 +700,7 @@ class Tab: WebContentRepresentable {
     func setIndex(_ index: Int) {
         if index != self.index {
             self.index = index
+            MainActor.assumeIsolated { TabNameStore.shared.reordered(self) }
         }
     }
     
@@ -660,22 +716,23 @@ class Tab: WebContentRepresentable {
         if isActive, windowId != 0 {
             let manager = SpaceSessionControllersManager.shared
             let state = manager.getBrowserState(for: windowId)
-            // Closing the last tab in the active Space via the UI X button:
-            // tag the slot so the resulting browser auto-close falls into
-            // the switch-to-sibling branch (mirrors the old
-            // CommandDispatcher.IDC_CLOSE_TAB behavior). In an Incognito
-            // Space the close ends the Space itself, so route it into the
-            // confirmed teardown instead of dispatching the tab close — on
+            // In an Incognito Space the close ends the Space itself, so
+            // route it into the confirmed teardown instead of dispatching
+            // the tab close — on
             // confirm the Space's window close takes this tab with it, on
             // cancel nothing must close.
             if let state, state.tabs.count <= 1,
                let controller = manager.controller(for: windowId) {
                 if state.isIncognitoSpace {
-                    MainActor.assumeIsolated {
+                    _ = MainActor.assumeIsolated {
                         SpaceManager.shared.requestCloseIncognitoSpace(spaceId: controller.spaceId)
                     }
                     return
                 }
+            }
+            if let state, state.applyLastTabClosePolicy(to: [self], intent: .tabDriven) { return }
+            if let state, state.tabs.count <= 1,
+               let controller = manager.controller(for: windowId) {
                 controller.slot?.markTabDrivenClose(for: controller.spaceId)
             }
             state?.prepareForActiveTabClose(tabId: guid)
@@ -767,16 +824,53 @@ class Tab: WebContentRepresentable {
         webContentWrapper?.goForward()
     }
     
+    /// The wrapper's reload, force reload and stop run Chromium's browser-level
+    /// commands, which act on the window's active page (or presented peek),
+    /// not on this tab. Use them only for the focused page; `reloadPage`
+    /// works on any tab. Back and forward act on this tab's own contents.
     func reload() {
         webContentWrapper?.reload()
     }
 
-    func reloadBypassingCache() {
-        webContentWrapper?.reloadBypassingCache()
+    /// Reloads this tab's own page without activating it, by sending
+    /// `Page.reload` to its DevTools target over the app's CDP session.
+    /// Returns false when the tab has no page target; the reload itself
+    /// runs asynchronously.
+    @MainActor
+    @discardableResult
+    func reloadPage(bypassingCache: Bool = false) -> Bool {
+        sendPageCommand("Page.reload", params: ["ignoreCache": bypassingCache])
     }
-    
+
     func stopLoading() {
         webContentWrapper?.stopLoading()
+    }
+
+    /// Stops this tab's own page loading, like `reloadPage`, with CDP
+    /// `Page.stopLoading`.
+    @MainActor
+    @discardableResult
+    func stopLoadingPage() -> Bool {
+        sendPageCommand("Page.stopLoading")
+    }
+
+    @MainActor
+    private func sendPageCommand(_ method: String, params: [String: Any] = [:]) -> Bool {
+        guard let targetId = webContentWrapper?.devToolsTargetId, !targetId.isEmpty else {
+            return false
+        }
+        Task { @MainActor in
+            _ = try? await pageCommand(method, params: params, targetId: targetId)
+        }
+        return true
+    }
+
+    @MainActor
+    private func pageCommand(_ method: String, params: [String: Any], targetId: String) async throws -> [String: Any] {
+        let session = try await AppDevToolsPageSession.open(targetId: targetId)
+        defer { session.close() }
+        AgentUserSpaceDriveRegistry.shared.appWillSendPageCommand(toTab: guid)
+        return try await session.command(method, params: params)
     }
 
     func toggleAudioMuted() {
@@ -788,25 +882,8 @@ class Tab: WebContentRepresentable {
         }
     }
 
-    func setAudioMuted(_ muted: Bool) {
-        webContentWrapper?.setAudioMuted(muted)
-    }
-
-    func muteAudio() {
-        webContentWrapper?.muteAudio()
-    }
-
-    func unmuteAudio() {
-        webContentWrapper?.unmuteAudio()
-    }
-    
     /// Toggles the AI Chat sidebar for this tab.
     func toggleAIChat(_ collapse: Bool? = nil) {
-        guard collapse == true
-                || PhiPreferences.AISettings.phiAIEnabled.loadValue() else {
-            aiChatCollapsed = true
-            return
-        }
         if let collapse {
             aiChatCollapsed = collapse
         } else {
@@ -819,10 +896,6 @@ class Tab: WebContentRepresentable {
         lastFocusTarget = target
     }
     
-    func tearDown() {
-        cancellables.forEach { $0.cancel() }
-        cancellables.removeAll()
-    }
 }
 
 /// Resolves the command an Option-click should dispatch without entangling
@@ -849,11 +922,6 @@ enum TabSplitActionRoute: Equatable {
     }
 }
 
-extension Tab {
-    enum `Type` {
-        case normal, parent, sub
-    }
-}
 
 extension Tab: Equatable {
     static func == (lhs: Tab, rhs: Tab) -> Bool {
@@ -875,11 +943,12 @@ extension Tab: CustomStringConvertible {
 
 extension Tab {
     convenience init(with dbModel: TabDataModel) {
+        let pinnedName = dbModel.overrideTitle.flatMap { $0.isEmpty ? nil : $0 }
         self.init(guid: -1,
                   url: dbModel.url.absoluteString,
                   isActive: false,
                   index: dbModel.index,
-                  title: dbModel.title,
+                  title: dbModel.dataType == .pinnedTab ? (pinnedName ?? dbModel.title) : dbModel.title,
                   webContentView: nil,
                   customGuid: dbModel.guid,
                   profileId: dbModel.profile?.profileId ?? dbModel.profileId,
@@ -888,7 +957,9 @@ extension Tab {
         self.isPinned = (dbModel.dataType == .pinnedTab)
         self.allowsProfileScopedFaviconPersistence =
             dbModel.profile != nil || dbModel.profileId?.isEmpty == false
-        self.storedTitle = dbModel.title
+        self.storedTitle = dbModel.dataType == .pinnedTab
+            ? pinnedName
+            : dbModel.title
         if dbModel.dataType == .pinnedTab {
             self.pinnedLineageId = dbModel.pinLineageId ?? dbModel.guid
             self.pinnedUrl = dbModel.url.absoluteString
@@ -902,11 +973,6 @@ extension Tab {
     }
 }
 
-extension Tab {
-    var isPinnedOrInDB: Bool {
-        return isPinned || guidInLocalDB?.isEmpty ?? true == false
-    }
-}
 
 extension Tab {
     var isNTP: Bool {

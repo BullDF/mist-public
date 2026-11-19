@@ -19,7 +19,7 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    func testNavigatesOpenBookmarkBackToStoredURLInPlace() throws {
+    func testDetachedBookmarkTabKeepsCurrentURL() throws {
         let state = try makeState()
         let bookmark = try createBookmark(
             in: state,
@@ -42,13 +42,10 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
 
         state.navigateBookmarkTabToOriginalURL(tab, bookmark: bookmark)
 
-        XCTAssertTrue(waitUntil {
-            wrapper.navigatedURLs == ["https://bookmark.example/original"]
-        })
-        XCTAssertEqual(wrapper.customValues.first, "")
-        XCTAssertTrue(waitUntil {
-            wrapper.customValues.last == bookmark.guid
-        })
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertEqual(wrapper.customValues, [""])
+        XCTAssertNil(tab.guidInLocalDB)
     }
 
     func testDoesNotNavigateWhenBookmarkAlreadyShowsStoredURL() throws {
@@ -77,7 +74,7 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
-        XCTAssertTrue(wrapper.customValues.isEmpty)
+        XCTAssertEqual(wrapper.customValues, [""])
         XCTAssertTrue(state.createTabRequests.isEmpty)
     }
 
@@ -107,11 +104,11 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
-        XCTAssertTrue(wrapper.customValues.isEmpty)
+        XCTAssertEqual(wrapper.customValues, [""])
         XCTAssertTrue(state.createTabRequests.isEmpty)
     }
 
-    func testSeparatesCurrentURLInBackgroundBeforeReturningBookmarkToStoredURL() throws {
+    func testDetachedBookmarkTabDoesNotSeparateOrReturnToStoredURL() throws {
         let state = try makeState()
         let bookmark = try createBookmark(
             in: state,
@@ -142,35 +139,16 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
 
         state.separateBookmarkTabFromCurrentURL(tab, bookmark: bookmark)
 
-        XCTAssertEqual(
-            state.createTabRequests,
-            [
-                .init(
-                    url: "https://other.example/current",
-                    customGuid: nil,
-                    focusAfterCreate: false
-                )
-            ]
-        )
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertTrue(state.createTabRequests.isEmpty)
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
         XCTAssertEqual(state.focusingTab?.guid, tab.guid)
-        XCTAssertTrue(waitUntil {
-            wrapper.navigatedURLs == ["https://bookmark.example/original"]
-        })
-        XCTAssertEqual(state.focusingTab?.guid, tab.guid)
-        XCTAssertEqual(
-            events,
-            [
-                "create:https://other.example/current",
-                "navigate:https://bookmark.example/original"
-            ]
-        )
-        XCTAssertEqual(wrapper.customValues.first, "")
-        XCTAssertTrue(waitUntil {
-            wrapper.customValues.last == bookmark.guid
-        })
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(wrapper.customValues, [""])
+        XCTAssertNil(tab.guidInLocalDB)
     }
 
-    func testNavigatesSelectedSplitBookmarkPaneToItsStoredURL() throws {
+    func testDetachedSplitBookmarkPaneKeepsCurrentURL() throws {
         let state = try makeState()
         let bookmark = try createBookmark(
             in: state,
@@ -207,18 +185,15 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
         state.tabs = [primary, secondary]
         state.splits = [split]
         state.splitBookmarkBindings[bookmark.guid] = split.id
-        state.syncSplitBookmarkOpenedState(bookmarkGuid: bookmark.guid)
+        state.syncAllBookmarksOpenedState()
 
         state.navigateBookmarkTabToOriginalURL(secondary, bookmark: bookmark)
 
-        XCTAssertTrue(waitUntil {
-            secondaryWrapper.navigatedURLs == ["https://secondary.example/original"]
-        })
-        XCTAssertEqual(secondaryWrapper.customValues.first, "")
-        XCTAssertTrue(waitUntil {
-            secondaryWrapper.customValues.count == 2
-        })
-        XCTAssertEqual(secondaryWrapper.customValues.last, "")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertTrue(secondaryWrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(secondaryWrapper.customValues.isEmpty)
+        XCTAssertNil(state.splitBookmarkBindings[bookmark.guid])
+        XCTAssertEqual(state.splits, [split])
     }
 
     private func makeState() throws -> BookmarkOriginRecordingBrowserState {

@@ -1,4 +1,5 @@
 build
+PackageCollection/.build/
 xcuserdata
 *.xcuserdata/
 *.xcuserdatad/
@@ -24,9 +25,10 @@ Podfile.lock
 Default Apps/
 Chromium Framework.framework
 Phi Framework.framework
+Frameworks/PhiFrameworkRelease
 my-chroma
-Sparkle-bin
-.claude
+.claude/*
+!.claude/skills/
 .vscode
 .derivedData
 .worktrees

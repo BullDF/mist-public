@@ -14,11 +14,6 @@ public struct Mapper<V> {
         transform(theme, appearance)
     }
     
-    /// Returns the value for a specific appearance using the current theme.
-    public subscript(_ appearance: Appearance) -> V {
-        transform(ThemeManager.shared.currentTheme, appearance)
-    }
-    
     // MARK: - Initializers
     
     /// Creates a mapper from a custom transform.
@@ -47,42 +42,11 @@ public struct Mapper<V> {
         }
     }
     
-    /// Runs a side effect when the mapper resolves.
-    public func `do`(_ action: @escaping (Theme, Appearance) -> Void) -> Mapper<V> {
-        Mapper { theme, appearance in
-            action(theme, appearance)
-            return self.transform(theme, appearance)
-        }
-    }
-    
-    /// Logs resolved values in debug builds.
-    public func debug(_ identifier: Any = #function) -> Mapper<V> {
-        #if DEBUG
-        return `do` { theme, appearance in
-            AppLogDebug("\(identifier) - Theme: \(theme.id), Appearance: \(appearance) -> \(self[theme, appearance])")
-        }
-        #else
-        return self
-        #endif
-    }
-    
     /// Wraps the resolved value in an optional.
     public var optional: Mapper<V?> {
         map { .some($0) }
     }
     
-    /// Precomputes light and dark values for the current theme.
-    public func evaluated() -> Mapper<V> {
-        let light = transform(ThemeManager.shared.currentTheme, .light)
-        let dark = transform(ThemeManager.shared.currentTheme, .dark)
-        return Mapper(light, dark)
-    }
-    
-    /// Returns the value for the current theme manager state.
-    public var currentValue: V {
-        let manager = ThemeManager.shared
-        return transform(manager.currentTheme, manager.currentAppearance)
-    }
 }
 
 // MARK: - <> Operator
@@ -99,34 +63,12 @@ public func <> <V>(light: V, dark: V) -> Mapper<V> {
 
 /// Builds color mappers from `ColorConvertible` values.
 public extension ColorConvertible {
-    static func <> <D: ColorConvertible>(lhs: Self, rhs: D) -> Mapper<NSColor> {
-        Mapper(lhs.asColor(), rhs.asColor())
-    }
-    
     static func <> <D: ColorConvertible>(lhs: Self, rhs: D) -> Mapper<NSColor?> {
         Mapper(lhs.asColor(), rhs.asColor()).optional
     }
     
-    static func <> <D: ColorConvertible>(lhs: Self, rhs: D) -> Mapper<CGColor> {
-        Mapper(lhs.asColor(), rhs.asColor()).map { $0.cgColor }
-    }
-    
     static func <> <D: ColorConvertible>(lhs: Self, rhs: D) -> Mapper<CGColor?> {
         Mapper(lhs.asColor(), rhs.asColor()).map { $0.cgColor }.optional
-    }
-}
-
-// MARK: - CGColor Extension
-
-public extension Mapper where V: ColorConvertible {
-    var cgColor: Mapper<CGColor> {
-        map { $0.asColor().cgColor }
-    }
-}
-
-public extension Mapper where V == NSColor? {
-    var cgColor: Mapper<CGColor?> {
-        map { $0?.cgColor }
     }
 }
 
@@ -140,17 +82,3 @@ public extension ThemedColor {
         }
     }
 }
-
-// MARK: - Mapper Convertible
-
-public protocol MapperConvertible {}
-
-extension MapperConvertible {
-    public func asMapper() -> Mapper<Self> {
-        Mapper(self)
-    }
-}
-
-extension NSObject: MapperConvertible {}
-
-extension CGColor: MapperConvertible {}
