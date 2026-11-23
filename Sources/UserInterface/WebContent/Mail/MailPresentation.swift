@@ -23,6 +23,7 @@ enum MailPresentation {
         case .offline: MailStrings.offline
         case .serverRejected: MailStrings.serverRejected
         case .invalidConfiguration: MailStrings.invalidConfiguration
+        case .signatureTooLong: MailStrings.signatureTooLong
         case .unsupported: MailStrings.unsupported
         case .notFound: MailStrings.missingItem
         case .missingCredentials: MailStrings.missingCredentials

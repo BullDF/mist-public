@@ -22,6 +22,47 @@ struct CodexTranscript {
 
     mutating func ready() { status = .idle }
 
+    mutating func assistantDelta(id: String, text: String) {
+        guard !text.isEmpty, !settledMessages.contains(id) else { return }
+        let old = items.first { $0.id == id }.flatMap { item -> String? in
+            if case let .assistantText(text, _) = item.kind { return text }
+            return nil
+        } ?? ""
+        upsert(id: id, kind: .assistantText(text: old + text, isStreaming: true))
+    }
+
+    mutating func endAssistant(id: String) {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              case let .assistantText(text, _) = items[index].kind else { return }
+        items[index].kind = .assistantText(text: text, isStreaming: false)
+    }
+
+    mutating func updateTool(_ tool: AgentChatItem.ToolCall, backgroundTaskId: String? = nil) {
+        var tool = tool
+        if let backgroundTaskId {
+            backgroundToolIds[backgroundTaskId] = tool.toolUseId
+            tool.background = .running
+            tool.status = .running
+            if let end = backgroundEnds[backgroundTaskId] { finishBackground(&tool, end: end) }
+        }
+        upsert(id: tool.toolUseId, kind: .toolCall(tool))
+    }
+
+    mutating func finishTurn(stopped: Bool, duration: Int? = nil, output: Int? = nil, error: String? = nil) {
+        settle()
+        let elapsed = startedAt.map { max(0, Int(clock().timeIntervalSince($0) * 1000)) } ?? 0
+        append(.turnEnd(durationMilliseconds: duration ?? elapsed, finishedAt: clock(), stopped: stopped))
+        if let error { append(.notice(text: error, level: .error)) }
+        if let output { outputTokens = output }
+        startedAt = nil
+        status = .idle
+    }
+
+    mutating func endSession() {
+        settle(includingBackground: true)
+        status = .ended
+    }
+
     mutating func backgroundTaskEnded(taskId: String, summary: String, status: AgentChatItem.TaskNotificationStatus) {
         backgroundEnds[taskId] = (summary, status)
         if let id = backgroundToolIds[taskId], let index = items.firstIndex(where: { $0.id == id }),
@@ -95,11 +136,8 @@ struct CodexTranscript {
                 outputTokens = max(0, lastOutputTokens - outputBaseline)
             }
         case "item/agentMessage/delta":
-            guard let id = params["itemId"].string, !settledMessages.contains(id) else { return }
-            let old = items.first { $0.id == id }.flatMap { item -> String? in
-                if case let .assistantText(text, _) = item.kind { return text }; return nil
-            } ?? ""
-            upsert(id: id, kind: .assistantText(text: old + (params["delta"].string ?? ""), isStreaming: true))
+            guard let id = params["itemId"].string else { return }
+            assistantDelta(id: id, text: params["delta"].string ?? "")
         case "item/started", "item/completed":
             let item = params["item"]
             guard let id = item["id"].string else { return }
@@ -128,13 +166,8 @@ struct CodexTranscript {
                               let result = try? JSONDecoder().decode(CodexJSON.self, from: data) else { return nil }
                         return result["taskId"].string
                     }.first ?? backgroundToolIds.first(where: { $0.value == id })?.key
-                    if let taskId {
-                        backgroundToolIds[taskId] = id
-                        tool.background = .running; tool.status = .running
-                        if let end = backgroundEnds[taskId] { finishBackground(&tool, end: end) }
-                    }
-                }
-                upsert(id: id, kind: .toolCall(tool))
+                    updateTool(tool, backgroundTaskId: taskId)
+                } else { updateTool(tool) }
             case "commandExecution":
                 let input = CodexJSON.object(["command": item["command"], "cwd": item["cwd"]])
                 let failed = ["failed", "declined"].contains(item["status"].string ?? "") ||
@@ -217,22 +250,15 @@ struct CodexTranscript {
         case "turn/completed":
             let turn = params["turn"]
             guard let id = turn["id"].string, completedTurns.insert(id).inserted else { return }
-            settle()
-            let elapsed = startedAt.map { max(0, Int(clock().timeIntervalSince($0) * 1000)) } ?? 0
-            append(.turnEnd(durationMilliseconds: turn["durationMs"] == .null ? elapsed : turn["durationMs"].integer,
-                            finishedAt: clock(), stopped: turn["status"].string == "interrupted"))
-            if turn["status"].string == "failed" {
-                append(.notice(text: turn["error"]["message"].string ?? CodexStrings.turnFailed, level: .error))
-            }
-            startedAt = nil
-            status = .idle
+            finishTurn(stopped: turn["status"].string == "interrupted",
+                duration: turn["durationMs"] == .null ? nil : turn["durationMs"].integer,
+                error: turn["status"].string == "failed" ? turn["error"]["message"].string ?? CodexStrings.turnFailed : nil)
         default: break
         }
     }
 
     mutating func processExited(expected: Bool, stderr: String) {
-        settle(includingBackground: true)
-        if expected { status = .ended }
+        if expected { endSession() }
         else { fail(CodexStrings.exited + (stderr.isEmpty ? "" : "\n" + stderr)) }
     }
 

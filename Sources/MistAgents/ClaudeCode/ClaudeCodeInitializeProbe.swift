@@ -25,7 +25,7 @@ enum ClaudeCodeInitializeProbe {
         let finished = DispatchSemaphore(value: 0)
         process.executableURL = executable
         process.arguments = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
-        process.environment = connectors ? environment.variables.filter { !$0.key.hasPrefix("ANTHROPIC_") && $0.key != "OPENAI_API_KEY" } : environment.variables
+        process.environment = connectors ? ClaudeCodeEnvironment.subscriptionVariables(environment.variables) : environment.variables
         process.currentDirectoryURL = folder
         process.standardInput = input
         process.standardOutput = output

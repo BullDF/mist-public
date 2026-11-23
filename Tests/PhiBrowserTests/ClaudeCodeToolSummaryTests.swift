@@ -340,6 +340,29 @@ final class ClaudeCodeToolSummaryTests: XCTestCase {
         XCTAssertEqual(read.summary.first?.text, "Read 2 lines")
     }
 
+    func testWholeFileDiffShowsOnlyChangedHunks() {
+        // A saved Gemini row: the whole file as one hunk, with two changes 12 lines apart.
+        var lines = (1...40).map { " line \($0)" }
+        lines[9] = "-line 10"
+        lines.insert("+line ten", at: 10)
+        lines[23] = "+line 23b"
+        let patch: ClaudeCodeJSON = .object(["oldStart": .number(1), "newStart": .number(1), "lines": .array(lines.map { .string($0) })])
+        let formatted = ClaudeCodeToolSummary.format(tool: "Edit", input: .object(["file_path": .string("/tmp/mist-fixture/file")]),
+                                                     result: .object(["structuredPatch": .array([patch])]), folder: folder)
+        XCTAssertEqual(formatted.preview.map(\.text), [" line 7", " line 8", " line 9", "-line 10", "+line ten", " line 11", " line 12", " line 13",
+                                                       " line 20", " line 21", " line 22", "+line 23b", " line 24", " line 25", " line 26"])
+        XCTAssertEqual(formatted.preview.map(\.number), [7, 8, 9, 10, 10, 11, 12, 13, 20, 21, 22, 23, 24, 25, 26])
+        XCTAssertEqual(formatted.summary.first?.text, "Updated file with 2 additions and 1 removal")
+        // Changes six unchanged lines apart stay one hunk, as `diff -U3` keeps them.
+        let near = ClaudeCodeToolSummary.hunks(["+a"] + (1...6).map { " \($0)" } + ["-b"], oldStart: 5, newStart: 5)
+        XCTAssertEqual(near.count, 1)
+        // A hunk already cut this way, starting mid-file, comes back unchanged.
+        let claude = [" one", " two", " three", "-old", "+new", " four", " five", " six"]
+        XCTAssertEqual(ClaudeCodeToolSummary.hunks(claude, oldStart: 12, newStart: 14),
+                       [ClaudeCodeToolSummary.Hunk(oldStart: 12, newStart: 14, lines: claude)])
+        XCTAssertTrue(ClaudeCodeToolSummary.hunks([" same", " lines"], oldStart: 1, newStart: 1).isEmpty)
+    }
+
     func testRelativeAndHomePathsRespectDirectoryBoundaries() {
         XCTAssertEqual(ClaudeCodeToolSummary.path("/tmp/mist-fixture/a/b.txt", folder: folder), "a/b.txt")
         XCTAssertEqual(ClaudeCodeToolSummary.path("/tmp/mist-fixture/../outside.txt", folder: folder), "/tmp/outside.txt")

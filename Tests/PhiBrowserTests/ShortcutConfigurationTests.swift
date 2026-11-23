@@ -45,8 +45,8 @@ final class ShortcutConfigurationTests: XCTestCase {
                        .init(characters: "v", modifiers: [.command, .shift, .option]))
     }
 
-    func testAlternateNewTabDefaultUsesOptionCommandTWithoutChangingOtherDefaults() {
-        let key = ShortcutsKey(characters: "t", modifiers: [.command, .option])
+    func testAlternateNewTabDefaultUsesShiftCommandLWithoutChangingOtherDefaults() {
+        let key = ShortcutsKey(characters: "l", modifiers: [.command, .shift])
         XCTAssertEqual(CommandWrapper.PHI_ALTERNATE_NEW_TAB.rawValue, 90030)
         XCTAssertEqual(Shortcuts.DefaultShortcuts[.PHI_ALTERNATE_NEW_TAB], key)
         XCTAssertEqual(Shortcuts.DefaultShortcuts.filter { $0.value == key }.map(\.key), [.PHI_ALTERNATE_NEW_TAB])

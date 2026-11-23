@@ -233,6 +233,23 @@ class WebContentViewController: NSViewController {
     /// WebContents over CDP is polluted by native-NTP shell tabs.
     var webPanelSize: CGSize { hostView.bounds.size }
 
+    /// The size a tab without a Chat panel, such as an agent folder tab,
+    /// renders at in this window.
+    var webPanelSizeWithoutChatPanel: CGSize {
+        guard aiChatSplitViewItem?.isCollapsed == false
+            || isAnimatingAIChatExpansion || isAnimatingAIChatCollapse else { return webPanelSize }
+
+        // Use the full split bounds so the result stays steady while the
+        // Chat divider moves. Keep the inset if the extension panel holds it.
+        let splitSize = contentSplitViewController.splitView.bounds.size
+        let keepsInset = pageCardShouldBeSeparated(chatHoldsCard: false,
+                                                   panelDocked: browserState?.extensionSidePanel != nil)
+        let inset = keepsInset ? CGFloat(WebContentConstant.contentEdgeSpacing) : 0
+        return CGSize(width: max(0, splitSize.width - 2 * inset),
+                      height: max(0, splitSize.height - 2 * inset
+                                  - headerView.frame.height - bookmarkBarSlotView.frame.height))
+    }
+
     private var headerHeightConstraint: Constraint?
 
     private var bookmarkBarHeightConstraint: Constraint?
@@ -527,6 +544,7 @@ class WebContentViewController: NSViewController {
 
     func newPanelChat() { embeddedChatViewController?.newChat() }
     func openPanelChatAsTab() { embeddedChatViewController?.openAsTab() }
+    func closePanelChat() { embeddedChatViewController?.closeChat() }
 
     func focusChatPanel() { embeddedChatViewController?.focusAIChat() }
     
@@ -2851,14 +2869,19 @@ class WebContentViewController: NSViewController {
     /// only re-runs the styling when this actually changes.
     private var lastStyledLayoutMode: LayoutMode?
 
+    private func pageCardShouldBeSeparated(chatHoldsCard: Bool, panelDocked: Bool) -> Bool {
+        let isPerformanceSplitContent =
+            PhiPreferences.GeneralSettings.loadLayoutMode() == .performance &&
+            isSplitContentMounted
+        // A closing panel holds the card separated until its slide ends.
+        return (chatHoldsCard || panelDocked || isAnimatingPanelSlide) && !isPerformanceSplitContent
+    }
+
     /// Updates the page card's (left container) border/inset separation and
     /// splitViewContainer's corner masking for the AI Chat and extension
     /// side panel states.
     /// - Parameter isAIChatExpanded: Whether the AI Chat sidebar is expanded.
     private func updateLeftContainerStyle(isAIChatExpanded: Bool) {
-        let isPerformanceSplitContent =
-            PhiPreferences.GeneralSettings.loadLayoutMode() == .performance &&
-            isSplitContentMounted
         // A docked extension side panel separates the page card the same
         // way an expanded chat does — one frame holding two inset cards —
         // with the same performance-split exception.
@@ -2875,10 +2898,7 @@ class WebContentViewController: NSViewController {
         // on the browser color, until its animation ends: the chat still
         // shows beside the page meanwhile.
         let chatHoldsCard = isAIChatExpanded || isAnimatingAIChatCollapse
-        // A closing panel holds it until its slide ends, for the same reason.
-        let panelHoldsCard = panelDocked || isAnimatingPanelSlide
-        let shouldSeparatePageCard =
-            (chatHoldsCard || panelHoldsCard) && !isPerformanceSplitContent
+        let shouldSeparatePageCard = pageCardShouldBeSeparated(chatHoldsCard: chatHoldsCard, panelDocked: panelDocked)
 
         guard shouldSeparatePageCard != appliedPageCardSeparated
             || panelDocked != appliedPanelDockedCorners else { return }

@@ -116,6 +116,7 @@ enum MistClipboardPasteboard {
         }
     }
 
+    /// Text and images drag; the page offers no drag for files, which download instead.
     static func drag(_ item: MistClipboardItem, source: MistClipboardSyncSource) throws -> NSItemProvider {
         let data = try source.data(for: item)
         if item.type == .text {
@@ -124,6 +125,9 @@ enum MistClipboardPasteboard {
         }
         let url = try source.cachedFileURL(for: item)
         guard let provider = NSItemProvider(contentsOf: url) else { throw MistClipboardError.nothing }
+        // Without it, Finder names the dropped file after its type ("PNG image.png"). Finder appends the type's
+        // extension itself, so a full name dropped as "Image.png.png".
+        provider.suggestedName = (url.lastPathComponent as NSString).deletingPathExtension
         if item.type == .image {
             provider.registerDataRepresentation(forTypeIdentifier: item.uti ?? UTType.png.identifier, visibility: .all) { completion in
                 completion(data, nil)

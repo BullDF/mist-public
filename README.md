@@ -56,7 +56,7 @@ Shares one item, text, an image or a file up to 10 MB, between my Macs through M
 There are no prebuilt releases: Mist is built from source. Requirements: an Apple Silicon Mac on macOS 15 or later and Xcode 27.1. Drifter needs the Claude Code CLI for Claude models and the Codex CLI for GPT models, each signed in.
 
 ```sh
-./scripts/download_phi_framework.sh --version v2.17.0  # Chromium framework from Phi's releases into Frameworks/
+./scripts/download_phi_framework.sh --version v2.18.0  # Chromium framework from Phi's releases into Frameworks/
 mist/scripts/install.sh                                # build, install and launch /Applications/Mist.app
 mist/scripts/install.sh --dev                          # or a separate Mist Dev.app with its own settings and data
 ```

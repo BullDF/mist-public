@@ -211,6 +211,20 @@ import XCTest
         XCTAssertEqual(url.deletingLastPathComponent().lastPathComponent, "Drifter")
     }
 
+    func testGeminiPlaceholderAndTabUseGeminiIcon() throws {
+        let id = UUID(), store = AgentChatStore.shared
+        let chat = try store.createEmpty(config: .init(engine: .gemini, model: "gemini-3.8-flash"), tabId: -812003, id: id)
+        let url = store.route.placeholderURL(for: chat.id)
+        defer { store.closeIfTabIsGone(-812003) }
+        let html = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(html.contains("name=\"mist-agent\" content=\"drifter gemini\""))
+        XCTAssertEqual(store.route.storedAgent(for: id), .gemini)
+        XCTAssertFalse(AgentChatIcon.gemini.isTemplate)
+        let model = TabViewModel()
+        model.configure(with: tab(url), in: state())
+        XCTAssertEqual(model.appIcon?.asset, AgentChatIcon.gemini.rawValue)
+    }
+
     func testMailTitleIconAndAddressDisplay() throws {
         for url in [MistAppRoute.current.url(.mail), MistAppRoute.current.legacyURL(.mail)!] {
             let tab = tab(url)

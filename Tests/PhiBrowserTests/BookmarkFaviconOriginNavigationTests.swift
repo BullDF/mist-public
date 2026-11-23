@@ -44,6 +44,7 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
 
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.inPlaceNavigatedURLs.isEmpty)
         XCTAssertEqual(wrapper.customValues, [""])
         XCTAssertNil(tab.guidInLocalDB)
     }
@@ -74,6 +75,7 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.inPlaceNavigatedURLs.isEmpty)
         XCTAssertEqual(wrapper.customValues, [""])
         XCTAssertTrue(state.createTabRequests.isEmpty)
     }
@@ -104,6 +106,7 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.inPlaceNavigatedURLs.isEmpty)
         XCTAssertEqual(wrapper.customValues, [""])
         XCTAssertTrue(state.createTabRequests.isEmpty)
     }
@@ -142,6 +145,7 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         XCTAssertTrue(state.createTabRequests.isEmpty)
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.inPlaceNavigatedURLs.isEmpty)
         XCTAssertEqual(state.focusingTab?.guid, tab.guid)
         XCTAssertTrue(events.isEmpty)
         XCTAssertEqual(wrapper.customValues, [""])
@@ -191,6 +195,7 @@ final class BookmarkFaviconOriginNavigationTests: XCTestCase {
 
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         XCTAssertTrue(secondaryWrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(secondaryWrapper.inPlaceNavigatedURLs.isEmpty)
         XCTAssertTrue(secondaryWrapper.customValues.isEmpty)
         XCTAssertNil(state.splitBookmarkBindings[bookmark.guid])
         XCTAssertEqual(state.splits, [split])
@@ -330,6 +335,12 @@ private final class BookmarkOriginTestWebContentWrapper: NSObject, WebContentWra
     func stopLoading() {}
     func navigate(toURL urlString: String) {
         navigatedURLs.append(urlString)
+        self.urlString = urlString
+        onNavigate?(urlString)
+    }
+    private(set) var inPlaceNavigatedURLs: [String] = []
+    func navigateInPlace(toURL urlString: String) {
+        inPlaceNavigatedURLs.append(urlString)
         self.urlString = urlString
         onNavigate?(urlString)
     }

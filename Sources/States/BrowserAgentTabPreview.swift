@@ -107,6 +107,37 @@ final class BrowserAgentTabPreview {
         }
     }
 
+    func captureStill(_ tab: Tab) async {
+        do {
+            // Leave room for the session handshake and capture in the read's reply timeout.
+            let deadline = Date().addingTimeInterval(0.5)
+            while capturing {
+                guard Date() < deadline else { throw CaptureError.unavailable }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            guard Self.hasLivePage(tab), let target = tab.webContentWrapper?.devToolsTargetId,
+                  !target.isEmpty else { throw CaptureError.unavailable }
+            capturing = true
+            defer { capturing = false }
+            let session = try await AppDevToolsPageSession.open(targetId: target, timeout: 1,
+                maxMessageBytes: PageScreenshotService.maxBase64Bytes + 1024)
+            defer { session.close() }
+            guard Self.hasLivePage(tab), tab.webContentWrapper?.devToolsTargetId == target else {
+                throw CaptureError.unavailable
+            }
+            AgentUserSpaceDriveRegistry.shared.appWillSendPageCommand(toTab: tab.guid)
+            let result = try await session.command("Page.captureScreenshot",
+                params: ["format": "jpeg", "quality": 90], timeout: 5)
+            guard Self.hasLivePage(tab), tab.webContentWrapper?.devToolsTargetId == target,
+                  let encoded = result["data"] as? String, let data = Data(base64Encoded: encoded),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw CaptureError.unavailable }
+            try updateViewportStill(image, tabId: tab.guid)
+        } catch {
+            // A failed capture keeps the card's earlier still, if any.
+        }
+    }
+
     func screenshot(_ tab: Tab, region: Region, save: Bool) async throws -> [String: Any] {
         let deadline = Date().addingTimeInterval(10)
         while capturing {
@@ -234,12 +265,17 @@ final class BrowserAgentTabPreview {
             result["dataWidth"] = image.width; result["dataHeight"] = image.height
         }
         if case .viewport = region {
-            let size = CGSize(width: image.width, height: image.height)
-            let factor = min(1, 1280 / max(size.width, size.height))
-            let still = try resized(image, to: CGSize(width: size.width * factor, height: size.height * factor))
-            stills[tab.guid] = still; onFrame?(tab.guid, still)
+            try updateViewportStill(image, tabId: tab.guid)
         }
         return result
+    }
+
+    private func updateViewportStill(_ image: CGImage, tabId: Int) throws {
+        let size = CGSize(width: image.width, height: image.height)
+        let factor = min(1, 1280 / max(size.width, size.height))
+        let still = try resized(image, to: CGSize(width: size.width * factor, height: size.height * factor))
+        stills[tabId] = still
+        onFrame?(tabId, still)
     }
 
     private func resized(_ image: CGImage, to size: CGSize) throws -> CGImage {

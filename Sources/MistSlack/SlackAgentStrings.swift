@@ -18,6 +18,6 @@ enum SlackAgentStrings {
     static let failed = NSLocalizedString("mistSlack.agent.failed", value: "Drifter stopped with an error: %@", comment: "Slack reply when an agent fails; placeholder is the error message")
     static let noWindow = NSLocalizedString("mistSlack.agent.noWindow", value: "Mist has no open window, so Drifter can't start this chat. Open a Mist window and send your message again.", comment: "Slack reply when no normal browser window is open")
     static let modelSet = NSLocalizedString("mistSlack.agent.modelSet", value: "Drifter will use %@ in this thread.", comment: "Slack reply to a message that only names a model; %@ is the model and effort, like Fable 5.1 · medium")
-    static let otherEngine = NSLocalizedString("mistSlack.agent.otherEngine", value: "This chat can't switch between Claude and GPT models. Start a new thread to use %@.", comment: "Slack reply when a thread's chat can't switch to the named model; %@ is a model name, like GPT-6.1 Terra")
+    static let otherEngine = NSLocalizedString("mistSlack.agent.otherEngine", value: "This chat can't switch engines. Start a new thread to use %@.", comment: "Slack reply when a thread's chat can't switch to the named model; %@ is a model name, like GPT-6.1 Terra")
     static let notTaken = NSLocalizedString("mistSlack.agent.notTaken", value: "Drifter couldn't take this message. Send it again in a moment.", comment: "Slack reply when a message cannot be delivered")
 }

@@ -108,8 +108,18 @@ struct ClipboardPageView: View {
                     MistCountdownRing(deadline: item.expiry, duration: item.lifetime)
                 }
             }
-            if item.receiving { card } else { card.onDrag { model.drag(item) } }
+            // A file downloads with its button instead.
+            if item.receiving || item.type == .file { card } else { card.onDrag { model.drag(item) } }
             HStack(spacing: 8) {
+                if item.type == .file {
+                    if let file = model.downloadedFile(for: item) {
+                        Button(MistSyncStrings.clipboardShowInFinder) { model.showInFinder(file) }.buttonStyle(.mistSecondary)
+                    } else {
+                        Button(MistSyncStrings.clipboardDownload) { model.download(item) }
+                            .buttonStyle(.mistSecondary)
+                            .disabled(item.receiving)
+                    }
+                }
                 Button(item.receiving ? MistSyncStrings.clipboardReceiving : MistSyncStrings.clipboardCopy) { model.copy(item) }
                     .buttonStyle(.mistSecondary)
                     .disabled(item.receiving)

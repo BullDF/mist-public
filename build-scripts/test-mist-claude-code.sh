@@ -6,6 +6,7 @@ trap 'rm -rf "$task_build"' EXIT
 printf '%s\n' 'import XCTest' 'import Foundation' \
   'let suite = XCTestSuite(name: "Claude Code")' \
   'suite.addTest(ClaudeCodeLaunchTests.defaultTestSuite)' \
+  'suite.addTest(ClaudeCodeRemoteControlArchiveTests.defaultTestSuite)' \
   'suite.addTest(ClaudeCodeModelCatalogTests.defaultTestSuite)' \
   'suite.addTest(ClaudeCodeSlashCommandTests.defaultTestSuite)' \
   'suite.addTest(ClaudeCodeEngineTests.defaultTestSuite)' \
@@ -39,10 +40,15 @@ xcrun swiftc -swift-version 5 -D MIST_CLAUDE_CODE_HOSTLESS_TESTS -D MIST_MARKDOW
   "$task_root"/Sources/MistAgents/ClaudeCode/*.swift \
   "$task_root"/Sources/MistAgents/Codex/*.swift \
   "$task_root"/Sources/MistAgents/BrowserAgent/*.swift \
+  "$task_root"/Sources/MistAgents/Gemini/*.swift \
+  "$task_root/Sources/Networking/APIClient.swift" \
+  "$task_root/Sources/Networking/SearchSuggestions.swift" \
+  "$task_root/Tests/MistGemini/HostlessLog.swift" \
   "$task_root/Sources/UserInterface/Common/Markdown/MarkdownRenderer.swift" \
   "$task_root/Sources/UserInterface/Common/Markdown/MarkdownMath.swift" \
   "$task_root/Tests/PhiBrowserTests/MarkdownRendererTests.swift" \
   "$task_root/Tests/PhiBrowserTests/ClaudeCodeLaunchTests.swift" \
+  "$task_root/Tests/PhiBrowserTests/ClaudeCodeRemoteControlArchiveTests.swift" \
   "$task_root/Tests/PhiBrowserTests/ClaudeCodeModelCatalogTests.swift" \
   "$task_root/Tests/PhiBrowserTests/ClaudeCodeSlashCommandTests.swift" \
   "$task_root/Tests/PhiBrowserTests/ClaudeCodeEngineTests.swift" \

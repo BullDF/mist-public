@@ -7,6 +7,174 @@ import AppKit
 #endif
 
 final class BrowserAgentTests: XCTestCase {
+    private var scheduleCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Toronto")!
+        return calendar
+    }
+
+    private func scheduleDate(_ iso8601: String) -> Date {
+        ISO8601DateFormatter().date(from: iso8601)!
+    }
+
+    func testScheduleCronParsesNamesListsRangesAndSteps() throws {
+        let cron = try DrifterCron("*/15 9,10 1-5/2 jAn,Feb mOn-Fri")
+        XCTAssertEqual(cron.next(after: scheduleDate("2026-01-05T09:00:00-05:00"), calendar: scheduleCalendar),
+                       scheduleDate("2026-01-05T09:15:00-05:00"))
+        XCTAssertEqual(try DrifterCron("0 9 1-5/2 JAN *").next(
+            after: scheduleDate("2026-01-01T09:00:00-05:00"), calendar: scheduleCalendar),
+            scheduleDate("2026-01-03T09:00:00-05:00"))
+        for invalid in ["* * * *", "60 * * * *", "* 24 * * *", "* * 0 * *", "* * * ABC *",
+                        "* * * * 8", "* * * * MON-", "*/0 * * * *", "1,,2 * * * *", "5-1 * * * *"] {
+            XCTAssertThrowsError(try DrifterCron(invalid), invalid)
+        }
+    }
+
+    func testScheduleCronMatchesEitherRestrictedDayField() throws {
+        let cron = try DrifterCron("0 9 15 * 7")
+        let sunday = scheduleDate("2026-06-14T09:00:00-04:00")
+        XCTAssertEqual(cron.next(after: scheduleDate("2026-06-13T09:00:00-04:00"), calendar: scheduleCalendar), sunday)
+        XCTAssertEqual(cron.next(after: sunday, calendar: scheduleCalendar), scheduleDate("2026-06-15T09:00:00-04:00"))
+        XCTAssertEqual(try DrifterCron("0 9 * * 0").next(after: sunday, calendar: scheduleCalendar),
+                       scheduleDate("2026-06-21T09:00:00-04:00"))
+    }
+
+    func testScheduleCronSkipsMissingDatesAndRunsRepeatedTimesOnce() throws {
+        XCTAssertEqual(try DrifterCron("0 9 31 * *").next(
+            after: scheduleDate("2026-01-31T09:00:00-05:00"), calendar: scheduleCalendar),
+            scheduleDate("2026-03-31T09:00:00-04:00"))
+        XCTAssertNil(try DrifterCron("0 9 30 FEB *").next(
+            after: scheduleDate("2026-01-31T09:00:00-05:00"), calendar: scheduleCalendar))
+        XCTAssertEqual(try DrifterCron("30 2 * * *").next(
+            after: scheduleDate("2026-03-07T02:30:00-05:00"), calendar: scheduleCalendar),
+            scheduleDate("2026-03-09T02:30:00-04:00"))
+        let fall = try DrifterCron("30 1 * * *")
+        let first = scheduleDate("2026-11-01T01:30:00-04:00")
+        XCTAssertEqual(fall.next(after: scheduleDate("2026-11-01T00:59:00-04:00"), calendar: scheduleCalendar), first)
+        XCTAssertEqual(fall.next(after: first, calendar: scheduleCalendar), scheduleDate("2026-11-02T01:30:00-05:00"))
+        XCTAssertEqual(fall.next(after: scheduleDate("2026-11-01T01:15:00-05:00"), calendar: scheduleCalendar),
+                       scheduleDate("2026-11-02T01:30:00-05:00"))
+    }
+
+    func testScheduleResolvesOneTimeInputs() throws {
+        let now = scheduleDate("2026-11-30T09:00:00-05:00")
+        func resolve(cron: String? = nil, at: String? = nil, delay: Int? = nil) throws -> DrifterSchedule.Timing {
+            try DrifterSchedule.Timing.resolve(cron: cron, at: at, delayMinutes: delay, now: now, calendar: scheduleCalendar).timing
+        }
+        XCTAssertEqual(try resolve(delay: 7), .at(now.addingTimeInterval(420)))
+        XCTAssertEqual(try resolve(at: "2026-11-30T09:07"), try resolve(delay: 7))
+        XCTAssertEqual(try resolve(at: "2026-11-30T14:07:00Z"), try resolve(delay: 7))
+        XCTAssertEqual(try resolve(at: "2026-11-30T15:07:00+0100"), try resolve(delay: 7))
+        XCTAssertThrowsError(try resolve(at: "2026-11-30T08:59:59"))
+        XCTAssertThrowsError(try resolve(at: "2027-02-29T09:00"))
+        XCTAssertThrowsError(try resolve(at: "2027-03-14T02:30"))
+        XCTAssertThrowsError(try resolve(cron: "* * * * *", delay: 7))
+        XCTAssertThrowsError(try resolve())
+        XCTAssertThrowsError(try resolve(delay: 525601))
+    }
+
+    @MainActor func testScheduleStoreCollapsesMissedRunsAndPersistsAdvance() throws {
+        let url = try memoryHome().appendingPathComponent("Schedules.json")
+        var now = scheduleDate("2026-11-30T08:59:00-05:00")
+        let calendar = scheduleCalendar
+        let store = DrifterScheduleStore(url: url, now: { now }, calendar: { calendar })
+        let schedule = try store.create(title: "Hourly", prompt: "Check", cron: "0 * * * *", at: nil,
+                                        delayMinutes: nil, target: .thisChat, owner: UUID())
+        let once = try store.create(title: "Once", prompt: "Check", cron: nil, at: nil, delayMinutes: 1,
+                                    target: .thisChat, owner: UUID())
+        now = scheduleDate("2026-11-30T12:30:00-05:00")
+        let run = try XCTUnwrap(store.takeDue(schedule.id))
+        let next = scheduleDate("2026-11-30T13:00:00-05:00")
+        XCTAssertTrue(run.isLate)
+        XCTAssertEqual(run.nextRun, next)
+        XCTAssertEqual(run.header(label: "Hourly", timeZone: calendar.timeZone),
+                       "[Scheduled prompt Hourly, due Mon Nov 30 09:00 EST, running late because Mist was closed or the Mac was asleep]. Next run: Mon Nov 30 13:00 EST. cancel_schedule \(schedule.id) stops it.")
+        let oneRun = try XCTUnwrap(store.takeDue(once.id))
+        XCTAssertTrue(oneRun.header(label: "Once", timeZone: calendar.timeZone).hasSuffix(". This was its only run."))
+        XCTAssertNil(try store.takeDue(schedule.id))
+        let reopened = DrifterScheduleStore(url: url, now: { now }, calendar: { calendar })
+        XCTAssertEqual(try reopened.list().map(\.id), [schedule.id])
+        XCTAssertEqual(try reopened.list().first?.nextRun, next)
+        XCTAssertEqual(try reopened.list().first?.lastRun, now)
+        now = next.addingTimeInterval(120)
+        XCTAssertFalse(try XCTUnwrap(reopened.takeDue(schedule.id)).isLate)
+    }
+
+    @MainActor func testScheduleCancellationPermissions() throws {
+        let url = try memoryHome().appendingPathComponent("Schedules.json")
+        let store = DrifterScheduleStore(url: url)
+        let owner = UUID(), another = UUID()
+        let personal = try store.create(title: "Owner", prompt: "Check", cron: nil, at: nil, delayMinutes: 1,
+                                        target: .thisChat, owner: owner)
+        let independent = try store.create(title: "New", prompt: "Check", cron: nil, at: nil, delayMinutes: 1,
+                                           target: .newChat(.init()), owner: owner)
+        XCTAssertThrowsError(try store.cancel(personal.id, from: another))
+        try store.cancel(personal.id, from: owner)
+        try store.cancel(independent.id, from: another)
+        XCTAssertTrue(try store.list().isEmpty)
+    }
+
+    func testScheduleSharesSpawnModelAndEffortRestrictions() throws {
+        let opus = DrifterConfig(confirmation: .ask)
+        let gpt = try XCTUnwrap(DrifterModel.codexPicks.first)
+        let pickedModel = DrifterModel(engine: .codex, model: gpt, title: "GPT", efforts: ["medium"], defaultEffort: "medium")
+        func resolve(_ base: DrifterConfig, _ model: String? = nil, effort: String? = nil) throws -> DrifterConfig {
+            try DrifterModel.resolveSpawnConfig(from: base, models: [pickedModel], model: model, effort: effort).get()
+        }
+        let anyEngine = try resolve(opus, gpt)
+        XCTAssertEqual(anyEngine.engine, .codex)
+        XCTAssertEqual(anyEngine.effort, "medium")
+        XCTAssertEqual(anyEngine.confirmation, .ask)
+        XCTAssertThrowsError(try resolve(opus, gpt, effort: "xhigh"))
+        let astra = DrifterConfig(engine: .codex, model: "gpt-6.2-astra", effort: "medium")
+        XCTAssertEqual(try resolve(astra, gpt).model, gpt)
+        XCTAssertThrowsError(try resolve(astra, "opus")) { guard case AgentSpawnError.restricted = $0 else { return XCTFail("\($0)") } }
+        let own = DrifterConfig(model: "sonnet", effort: "medium")
+        XCTAssertEqual(try resolve(own), own)
+        XCTAssertThrowsError(try resolve(own, "opus")) { guard case AgentSpawnError.restricted = $0 else { return XCTFail("\($0)") } }
+        XCTAssertThrowsError(try resolve(own, effort: "high")) { guard case AgentSpawnError.restricted = $0 else { return XCTFail("\($0)") } }
+    }
+
+    func testScheduleToolsFollowConfirmationModes() {
+        for name in ["schedule_prompt", "cancel_schedule"] {
+            let tool = "mcp__mistbrowser__" + name
+            XCTAssertFalse(DrifterConfirmation.ask.automaticallyAllows(tool: tool, requiresInteraction: false))
+            XCTAssertTrue(DrifterConfirmation.skip.automaticallyAllows(tool: tool, requiresInteraction: false))
+            XCTAssertFalse(DrifterLaunchRequest.readOnlyTools.contains(name))
+        }
+        XCTAssertTrue(DrifterConfirmation.ask.automaticallyAllows(tool: "mcp__mistbrowser__notify", requiresInteraction: false))
+        XCTAssertTrue(DrifterConfirmation.ask.automaticallyAllows(tool: "mcp__mistbrowser__list_schedules", requiresInteraction: false))
+        XCTAssertTrue(DrifterLaunchRequest.readOnlyTools.contains("list_schedules"))
+    }
+
+    func testScheduledPromptsAppearAsPeerMessagesInEveryEngine() {
+        let header = "[Scheduled prompt abc12345 (Hourly), due Mon Nov 30 09:00 EST]. This was its only run."
+        var sender = AgentMessageSender(id: "abc12345", title: "Hourly", kind: .schedule, note: header)
+        sender.postsToSlack = true
+        XCTAssertTrue(sender.header.hasPrefix(header + " "))
+        XCTAssertTrue(sender.header.contains(AgentMessageSender.slackWakeNote))
+
+        let message = AgentQueuedMessage(text: "Check the report", sender: sender)
+        let kind = AgentChatItem.Kind.peerMessage(name: sender.label, body: message.text)
+        var claude = ClaudeCodeTranscript()
+        var codex = CodexTranscript()
+        var gemini = GeminiTranscript()
+        claude.userSent(text: message.text, attachments: [], sender: sender)
+        codex.userSent(text: message.text, attachments: [], sender: sender)
+        gemini.rows.userSent(text: message.text, attachments: [], sender: sender)
+        XCTAssertEqual(claude.items.last?.kind, kind)
+        XCTAssertEqual(codex.items.last?.kind, kind)
+        XCTAssertEqual(gemini.rows.items.last?.kind, kind)
+        claude.queuedMessageTaken(message)
+        codex.queuedMessageTaken(message)
+        gemini.rows.queuedMessageTaken(message)
+        for items in [claude.items, codex.items, gemini.rows.items] {
+            XCTAssertEqual(items.filter { $0.kind == kind }.count, 2)
+            let slack = AgentChatItem(id: "slack", kind: .peerMessage(name: "Slack", body: "Check the report"))
+            XCTAssertTrue(AgentChatTranscriptText.isSlackTurn([slack] + items))
+        }
+    }
+
     @MainActor private func taskRunner() throws -> DrifterBackgroundTasks {
         let folder = try memoryHome()
         let runner = DrifterBackgroundTasks(folder: folder, outputFolder: folder.appendingPathComponent("Tasks"),
@@ -242,9 +410,17 @@ final class BrowserAgentTests: XCTestCase {
                 XCTAssertTrue(mode.automaticallyAllows(tool: "mcp__mistbrowser__finish_task", requiresInteraction: interaction))
                 XCTAssertTrue(mode.automaticallyAllows(tool: "mcp__mistbrowser__group_tabs", requiresInteraction: interaction))
                 XCTAssertTrue(mode.automaticallyAllows(tool: "mcp__mistbrowser__hand_off", requiresInteraction: interaction))
+                XCTAssertTrue(mode.automaticallyAllows(tool: "mcp__mistbrowser__stop_recording", requiresInteraction: interaction))
+                XCTAssertTrue(mode.automaticallyAllows(tool: "mcp__mistbrowser__mount_to_tab", requiresInteraction: interaction))
+                XCTAssertTrue(mode.automaticallyAllows(tool: "mcp__mistbrowser__unmount_from_tab", requiresInteraction: interaction))
             }
         }
         XCTAssertFalse(DrifterConfirmation.ask.automaticallyAllows(tool: "mcp__mistbrowser__close_tab", requiresInteraction: false))
+        XCTAssertFalse(DrifterConfirmation.ask.automaticallyAllows(tool: "mcp__mistbrowser__start_recording", requiresInteraction: false))
+        XCTAssertTrue(DrifterConfirmation.skip.automaticallyAllows(tool: "mcp__mistbrowser__start_recording", requiresInteraction: false))
+        XCTAssertFalse(DrifterConfirmation.ask.automaticallyAllows(tool: "mcp__mistbrowser__export_bookmarks", requiresInteraction: false))
+        XCTAssertTrue(DrifterConfirmation.skip.automaticallyAllows(tool: "mcp__mistbrowser__export_bookmarks", requiresInteraction: false))
+        XCTAssertTrue(Set(DrifterLaunchRequest.readOnlyTools).isDisjoint(with: ["export_bookmarks", "mount_to_tab", "unmount_from_tab"]))
     }
 
     func testBackgroundLaunchPermissionsAndSlackWakeHeader() {
@@ -341,6 +517,12 @@ final class BrowserAgentTests: XCTestCase {
         let server = CodexMCPServer(command: "node")
         XCTAssertEqual(request.claude(folder: home.folder, server: server).sender, request.sender)
         XCTAssertEqual(request.codex(folder: home.folder, server: server).sender, request.sender)
+        let gemini = request.gemini(folder: home.folder, server: server, cliHome: home.folder.appendingPathComponent("Gemini"),
+                                    preload: home.folder.appendingPathComponent("gemini-preload.mjs"))
+        XCTAssertEqual(gemini.sender, request.sender)
+        XCTAssertEqual(gemini.server?.env["MIST_BACKGROUND_TASKS"], "1")
+        XCTAssertEqual(gemini.server?.env["MIST_FINISH_TASK"], "1")
+        XCTAssertTrue(gemini.instructions.contains("use mistbrowser's run_in_background"))
     }
 
     @MainActor func testBothEnginesReportRepoSkillPathsFromTools() async throws {
@@ -963,6 +1145,7 @@ final class BrowserAgentTests: XCTestCase {
             ("close_tab", "close a tab", nil), ("handle_dialog", "respond to a dialog", nil), ("scroll", "scroll a page", nil),
             ("drag", "drag an element", nil), ("go_back", "go back a page", nil), ("go_forward", "go forward a page", nil),
             ("evaluate", "run JavaScript on a page", "document.title"), ("save_page", "save a page", "/tmp/page.pdf"),
+            ("export_bookmarks", "export bookmarks", "/tmp/page.pdf"),
             ("future_write_tool", "use a browser tool", nil)]
         for (tool, action, detail) in expected {
             let request = AgentChatItem.PermissionRequest(requestId: "p", toolName: "mcp__mistbrowser__" + tool, summary: "raw", input: input)
@@ -1179,6 +1362,58 @@ final class BrowserAgentTests: XCTestCase {
         XCTAssertEqual(state.cards.map(\.tabId), [3, 1, 2])
     }
 
+    func testReadCardsFollowWorkingCardAndLeaveItUntouched() {
+        var state = BrowserAgentPreviewState(principalId: "p", windowId: 42)
+        let start = Date(timeIntervalSince1970: 100)
+        let later = start.addingTimeInterval(1)
+        state.report(principal: "p", tabId: 1, live: true, now: start)
+        state.setTurnActive(true, now: start)
+
+        state.touch(principal: "p", tabId: 2, reading: true, live: true, now: start)
+        state.touch(principal: "p", tabId: 2, reading: false, live: true, now: start)
+        state.touch(principal: "p", tabId: 3, reading: true, live: true, now: start)
+        XCTAssertEqual(state.cards.map(\.tabId), [1, 3, 2])
+        state.touch(principal: "p", tabId: 2, reading: true, live: true, now: later)
+        XCTAssertEqual(state.cards.map(\.tabId), [1, 2, 3])
+        XCTAssertEqual(state.cards[1].lastWorked, later)
+        XCTAssertEqual(state.mount(card: 2, chatVisible: true, tabExists: true), .still)
+        XCTAssertFalse(state.workedThisTurn)
+        let before = state
+        XCTAssertFalse(state.touch(principal: "p", tabId: 1, reading: true, live: true, now: later))
+        XCTAssertEqual(state, before)
+
+        state.report(principal: "p", tabId: nil, live: true, now: later)
+        state.touch(principal: "p", tabId: 3, reading: false, live: true, now: later)
+        XCTAssertEqual(state.cards.map(\.tabId), [3, 1, 2])
+        XCTAssertNil(state.tabId)
+        state.report(principal: "p", tabId: 3, live: true, now: later)
+        XCTAssertEqual(state.mount(card: 3, chatVisible: true, tabExists: true), .live)
+    }
+
+    func testReadCardExpiryAndReadCleanup() {
+        var state = BrowserAgentPreviewState(principalId: "p", windowId: 42)
+        let start = Date(timeIntervalSince1970: 100)
+        let end = start.addingTimeInterval(10)
+        state.setTurnActive(true, now: start)
+        for id in [1, 2, 3, 4] {
+            state.touch(principal: "p", tabId: id, reading: true, live: true, now: start)
+        }
+        state.touch(principal: "p", tabId: 1, reading: false, live: true, now: end)
+        state.removeTab(2)
+        state.dismiss(tabId: 4)
+        state.touch(principal: "p", tabId: 4, reading: false, live: true, now: end)
+        XCTAssertEqual(state.readingTabIds, [3])
+        XCTAssertEqual(state.cards.map(\.tabId), [1, 3])
+        state.setTurnActive(false, now: end)
+        XCTAssertTrue(state.readingTabIds.isEmpty)
+        XCTAssertFalse(state.touch(principal: "p", tabId: 3, reading: false, live: true, now: end))
+        let lifetime = BrowserAgentPreviewState.idleLifetime
+        XCTAssertTrue(state.expire(now: start.addingTimeInterval(lifetime)))
+        XCTAssertEqual(state.cards.map(\.tabId), [1])
+        XCTAssertFalse(state.expire(now: end.addingTimeInterval(lifetime - 1)))
+        XCTAssertTrue(state.expire(now: end.addingTimeInterval(lifetime)))
+    }
+
     func testPreviewCardExpiryAndTurnProtection() {
         var state = BrowserAgentPreviewState(principalId: "p", windowId: 42)
         let start = Date(timeIntervalSince1970: 100)
@@ -1239,6 +1474,24 @@ final class BrowserAgentTests: XCTestCase {
         XCTAssertTrue(folder.members.isEmpty)
         XCTAssertTrue(folder.dueTabIds(now: date(1000)).isEmpty)
         XCTAssertNil(folder.nextExpiry)
+    }
+
+    func testFolderReadTouchesOnlyMemberClock() {
+        let start = Date(timeIntervalSince1970: 100)
+        let read = start.addingTimeInterval(20)
+        var folder = BrowserAgentFolderState(windowId: 42, token: "folder")
+        folder.join(1, now: start)
+        folder.join(2, now: start)
+        folder.report(tabId: 1, now: start)
+        folder.setTurnActive(true, now: start)
+        folder.touch(tabId: 2, now: read)
+        folder.touch(tabId: 3, now: read)
+        XCTAssertEqual(folder.members, [1: start, 2: read])
+        XCTAssertEqual(folder.workingTabId, 1)
+        XCTAssertFalse(folder.workedThisTurn)
+        let firstDeadline = start.addingTimeInterval(BrowserAgentPreviewState.idleLifetime)
+        XCTAssertEqual(folder.dueTabIds(now: firstDeadline), [1])
+        XCTAssertEqual(folder.dueTabIds(now: firstDeadline.addingTimeInterval(20)), [1, 2])
     }
 
     func testFolderTitleMarker() {
@@ -1884,7 +2137,6 @@ final class BrowserAgentTests: XCTestCase {
         try receive(#"{"method":"thread/tokenUsage/updated","params":{"tokenUsage":{"last":{"totalTokens":1234},"modelContextWindow":200000}}}"#)
         XCTAssertEqual(conversation.contextTokens, 1234)
         XCTAssertEqual(conversation.contextWindowSize, 200000)
-        XCTAssertFalse(conversation.usesClaudePresentation)
     }
 
     @MainActor func testCodexInheritedToolsUseLiveConfirmationAndDisplayNames() throws {
@@ -1968,5 +2220,45 @@ final class BrowserAgentTests: XCTestCase {
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserUpload, count: 2), "uploaded files 2 times")
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserUpload, count: 1, running: true), "uploading files 1 time")
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserUpload, count: 2, running: true), "uploading files 2 times")
+    }
+
+    func testRecordingRowsShowTheTabTitleAndLinkTheSavedRecording() {
+        let start = "mcp__mistbrowser__start_recording"
+        let stop = "mcp__mistbrowser__stop_recording"
+        let folder = URL(fileURLWithPath: "/")
+        XCTAssertEqual(ClaudeCodeToolSummary.browserTool(start, input: .null, running: true), "Starting recording")
+        XCTAssertEqual(ClaudeCodeToolSummary.browserTool(start, input: .null, failed: true), "Couldn't start recording")
+        XCTAssertEqual(ClaudeCodeToolSummary.browserTool(stop, input: .null, running: true), "Saving recording")
+        XCTAssertEqual(ClaudeCodeToolSummary.browserTool(stop, input: .null, failed: true), "Couldn't save recording")
+        let started = ClaudeCodeToolSummary.format(tool: start, input: .null,
+            text: #"{"tab":{"title":"Example"},"recording":true}"#, folder: folder)
+        XCTAssertEqual(started.header.text, "Recording Example")
+        let saved = ClaudeCodeToolSummary.format(tool: stop, input: .null,
+            text: #"{"path":"/tmp/demo recording.mp4","stills":1}"# + "\nAt 0:00\n[Image]", folder: folder)
+        XCTAssertEqual(saved.header.text, "Saved demo recording.mp4")
+        XCTAssertEqual(saved.summary.first?.spans.first?.link, URL(fileURLWithPath: "/tmp/demo recording.mp4"))
+    }
+
+    func testBookmarkExportAndMountRowsUseTheResultAndDescribeFailures() {
+        let cases = [
+            ("export_bookmarks", #"{"path":"/tmp/Space bookmarks.html"}"#, "Exported bookmarks to Space bookmarks.html",
+             "Exporting bookmarks", "Couldn't export bookmarks"),
+            ("mount_to_tab", #"{"mountedTo":{"tabId":2,"title":"Example"}}"#, "Mounted to Example",
+             "Mounting to tab", "Couldn't mount to tab"),
+            ("unmount_from_tab", #"{"unmountedFrom":{"tabId":2,"title":"Example"}}"#, "Unmounted from Example",
+             "Unmounting from tab", "Couldn't unmount from tab"),
+        ]
+        for (name, result, succeeded, running, failed) in cases {
+            let tool = "mcp__mistbrowser__" + name
+            let formatted = ClaudeCodeToolSummary.format(tool: tool, input: .null, text: result, folder: URL(fileURLWithPath: "/"))
+            XCTAssertEqual(formatted.header.text, succeeded)
+            if name == "export_bookmarks" {
+                XCTAssertEqual(formatted.summary.first?.spans.first?.link, URL(fileURLWithPath: "/tmp/Space bookmarks.html"))
+            }
+            let call = AgentChatItem.ToolCall(toolUseId: name, name: tool, inputSummary: "", inputJSON: "{}", status: .succeeded, output: result)
+            XCTAssertEqual(AgentChatToolGroupKind.summary([call]).text, succeeded)
+            XCTAssertEqual(ClaudeCodeToolSummary.browserTool(tool, input: .null, running: true), running)
+            XCTAssertEqual(ClaudeCodeToolSummary.browserTool(tool, input: .null, failed: true), failed)
+        }
     }
 }

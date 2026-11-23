@@ -48,8 +48,6 @@ protocol MailPageDataSource: AnyObject {
     func flushDraft(_ id: UUID) async throws
     func discardDraft(_ id: UUID) async throws
     func send(_ id: UUID) async throws
-    func makeReply(to id: UUID, all: Bool) async throws -> MailDraft
-    func makeForward(_ id: UUID) async throws -> MailDraft
     func replyDraft(to id: UUID, all: Bool) async throws -> MailDraft
     func forwardDraft(_ id: UUID) async throws -> MailDraft
     func editDraft(fromMessage id: UUID) async throws -> MailDraft
@@ -110,8 +108,6 @@ final class EngineMailPageDataSource: MailPageDataSource {
     func flushDraft(_ id: UUID) async throws { try await requireEngine().flushDraft(id) }
     func discardDraft(_ id: UUID) async throws { try await requireEngine().discardDraft(id) }
     func send(_ id: UUID) async throws { try await requireEngine().send(id) }
-    func makeReply(to id: UUID, all: Bool) async throws -> MailDraft { try await requireEngine().makeReply(to: id, all: all, quoteIntro: MailStrings.quoteIntro) }
-    func makeForward(_ id: UUID) async throws -> MailDraft { try await requireEngine().makeForward(id, quoteIntro: MailStrings.quoteIntro) }
     func replyDraft(to id: UUID, all: Bool) async throws -> MailDraft { try await requireEngine().replyDraft(to: id, all: all, quoteIntro: MailStrings.quoteIntro) }
     func forwardDraft(_ id: UUID) async throws -> MailDraft { try await requireEngine().forwardDraft(id, quoteIntro: MailStrings.quoteIntro) }
     func editDraft(fromMessage id: UUID) async throws -> MailDraft { try await requireEngine().editDraft(fromMessage: id) }

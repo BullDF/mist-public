@@ -386,7 +386,7 @@ final class AgentChatDisplayRowTests: XCTestCase {
 
     func testEveryKnownToolHasItsOwnCategoryAndOthersAreNamedAfterThemselves() {
         let browser = ["list_tabs", "group_tabs", "use_tab", "open_tab", "navigate", "reload", "go_back", "go_forward", "snapshot", "read_page", "evaluate", "read_console", "read_network", "click", "drag", "fill", "type_text",
-            "upload_files", "press_key", "select_option", "select_text", "hover", "scroll", "scroll_until", "wait_for", "handle_dialog", "close_tab", "screenshot", "save_screenshot", "save_page", "list_downloads", "search_history", "list_agents", "message_agent", "hand_off"]
+            "upload_files", "press_key", "select_option", "select_text", "hover", "scroll", "scroll_until", "wait_for", "handle_dialog", "close_tab", "screenshot", "save_screenshot", "start_recording", "stop_recording", "save_page", "export_bookmarks", "mount_to_tab", "unmount_from_tab", "list_downloads", "search_history", "list_agents", "message_agent", "hand_off"]
         let builtIn = ["Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "Sleep", "ImageGeneration", "Monitor", "TaskStop", "ToolSearch",
             "Skill", "LSP", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "EnterPlanMode",
             "PushNotification", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool"]
@@ -424,6 +424,8 @@ final class AgentChatDisplayRowTests: XCTestCase {
             ("scroll", .browserScroll), ("list_tabs", .browserTabs), ("use_tab", .browserConnect), ("close_tab", .browserClose),
             ("wait_for", .browserWait), ("handle_dialog", .browserDialog),
             ("save_screenshot", .screenshotsSaved), ("upload_files", .browserUpload), ("list_agents", .agents), ("message_agent", .message),
+            ("start_recording", .recordingStarted), ("stop_recording", .recordingsSaved),
+            ("export_bookmarks", .bookmarksExported), ("mount_to_tab", .chatMounted), ("unmount_from_tab", .chatUnmounted),
             ("list_mail_accounts", .mailList), ("list_mail", .mailList), ("search_mail", .mailSearch), ("read_mail", .mailRead),
             ("write_mail_draft", .mailDraft), ("send_mail", .mailSend), ("update_mail", .mailChange)]
         for (name, kind) in kinds {
@@ -433,6 +435,9 @@ final class AgentChatDisplayRowTests: XCTestCase {
             }
         }
         XCTAssertEqual(AgentChatToolGroupKind.browserDrag.symbol, "hand.draw")
+        XCTAssertEqual(AgentChatToolGroupKind.bookmarksExported.symbol, "square.and.arrow.up")
+        XCTAssertEqual(AgentChatToolGroupKind.chatMounted.symbol, "link.badge.plus")
+        XCTAssertEqual(AgentChatToolGroupKind.chatUnmounted.symbol, "personalhotspot.slash")
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserDrag, count: 1, running: true), "dragging 1 element")
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserDrag, count: 2), "dragged 2 elements")
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserGroup, count: 1, running: true), "organizing tabs 1 time")
@@ -440,6 +445,12 @@ final class AgentChatDisplayRowTests: XCTestCase {
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserScript, count: 1), "ran JavaScript 1 time")
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserLogs, count: 2, running: true), "reading page logs 2 times")
         XCTAssertEqual(AgentChatStrings.toolGroup(.pagesSaved, count: 2), "saved 2 pages")
+        XCTAssertEqual(AgentChatToolGroupKind.recordingStarted.symbol, "record.circle")
+        XCTAssertEqual(AgentChatToolGroupKind.recordingsSaved.symbol, "record.circle")
+        XCTAssertEqual(AgentChatStrings.toolGroup(.recordingStarted, count: 1), "started 1 recording")
+        XCTAssertEqual(AgentChatStrings.toolGroup(.recordingStarted, count: 2, running: true), "starting 2 recordings")
+        XCTAssertEqual(AgentChatStrings.toolGroup(.recordingsSaved, count: 2), "saved 2 recordings")
+        XCTAssertEqual(AgentChatStrings.toolGroup(.recordingsSaved, count: 1, running: true), "saving 1 recording")
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserDownloads, count: 1, running: true), "listing downloads 1 time")
         XCTAssertEqual(AgentChatStrings.toolGroup(.browserHistory, count: 2), "searched history 2 times")
         let failedMail = ["list_mail", "search_mail", "write_mail_draft", "send_mail", "update_mail"].map { AgentChatItem.ToolCall(toolUseId: $0, name: "mcp__mistbrowser__" + $0, inputSummary: "", inputJSON: "{}", status: .failed) }

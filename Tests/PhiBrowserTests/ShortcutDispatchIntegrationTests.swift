@@ -47,13 +47,13 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
         }
     }
 
-    func testAlternateNewTabResolvesOptionCommandTAndReleasesDisabledOrReboundKey() throws {
-        let key = ShortcutsKey(characters: "t", modifiers: [.command, .option])
+    func testAlternateNewTabResolvesShiftCommandLAndReleasesDisabledOrReboundKey() throws {
+        let key = ShortcutsKey(characters: "l", modifiers: [.command, .shift])
         let window = makeWindow()
         defer { window.close() }
         let original = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
             modifierFlags: key.modifiers, timestamp: 0, windowNumber: window.windowNumber, context: nil,
-            characters: "†", charactersIgnoringModifiers: "t", isARepeat: false, keyCode: 17))
+            characters: "L", charactersIgnoringModifiers: "L", isARepeat: false, keyCode: 37))
         XCTAssertEqual(CommandDispatcher.interceptedPhiCommand(for: original,
             inputSourceIdentifier: "com.apple.keylayout.US"), .PHI_ALTERNATE_NEW_TAB)
         XCTAssertFalse(CommandDispatcher.handleKeyEquivalent(original, window: window))
@@ -82,8 +82,8 @@ final class ShortcutDispatchIntegrationTests: XCTestCase {
         try withController { controller, window in
             XCTAssertNil(controller.omniBoxContainerViewController)
             let repeated = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
-                modifierFlags: [.command, .option], timestamp: 0, windowNumber: window.windowNumber, context: nil,
-                characters: "†", charactersIgnoringModifiers: "t", isARepeat: true, keyCode: 17))
+                modifierFlags: [.command, .shift], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                characters: "L", charactersIgnoringModifiers: "L", isARepeat: true, keyCode: 37))
             XCTAssertTrue(CommandDispatcher.handleKeyEquivalent(repeated, window: window))
             XCTAssertNil(controller.omniBoxContainerViewController)
         }

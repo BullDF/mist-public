@@ -25,7 +25,7 @@ final class ClaudeCodeProcess: @unchecked Sendable {
     private var closing = false // Accessed only on control.
     private static let logger = Logger(subsystem: "com.bulldf.mist", category: "ClaudeCode")
 
-    init(executable: URL, arguments: [String], folder: URL, environment: [String: String]) throws {
+    init(executable: URL, arguments: [String], folder: URL, environment: [String: String], onTermination: (@Sendable () -> Void)? = nil) throws {
         var continuation: AsyncStream<Output>.Continuation!
         output = AsyncStream { continuation = $0 }
         self.continuation = continuation
@@ -40,7 +40,8 @@ final class ClaudeCodeProcess: @unchecked Sendable {
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         readers.enter()
         readers.enter()
-        process.terminationHandler = { [weak self] process in
+        process.terminationHandler = { [weak self, onTermination] process in
+            onTermination?()
             guard let self else { return }
             let code = process.terminationStatus
             self.readers.notify(queue: self.delivery) {
@@ -69,12 +70,12 @@ final class ClaudeCodeProcess: @unchecked Sendable {
         }
     }
 
-    func terminate() {
+    func terminate(grace: TimeInterval = 2) {
         control.async { [self] in
             guard !closing else { return }
             closing = true
             writer.async { [self] in try? input.fileHandleForWriting.close() }
-            control.asyncAfter(deadline: .now() + 2) { [self] in
+            control.asyncAfter(deadline: .now() + grace) { [self] in
                 guard process.isRunning else { return }
                 process.terminate()
                 control.asyncAfter(deadline: .now() + 2) { [self] in

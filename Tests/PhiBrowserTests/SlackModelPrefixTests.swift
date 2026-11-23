@@ -4,7 +4,7 @@ import XCTest
 @testable import Phi
 #endif
 
-/// The picker's list as `DrifterModel.merged` builds it from both catalogs' replies.
+/// The picker's list as `DrifterModel.merged` builds it from the catalogs' replies.
 enum SlackModelCatalogFixture {
     static let claude: [String: ClaudeCodeModelInfo] = [
         "opus": .init(resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5"),
@@ -19,7 +19,8 @@ enum SlackModelCatalogFixture {
         info("gpt-6-luna", "GPT-6-Luna", ultra: false, default: "medium"),
         info("gpt-6-sol", "GPT-6-Sol", ultra: true, default: "medium"),
     ]
-    static let models = DrifterModel.merged(claude: claude, codex: codex)
+    static let gemini = DrifterGeminiPicks.seed.map { GeminiModelInfo(id: $0, displayName: GeminiModelInfo.title($0)) }
+    static let models = DrifterModel.merged(claude: claude, codex: codex, gemini: gemini)
     static let claudeOnly = DrifterModel.merged(claude: claude, codex: [])
 
     private static func info(_ id: String, _ name: String, ultra: Bool, default effort: String) -> CodexModelInfo {
@@ -60,6 +61,14 @@ final class SlackModelPrefixTests: XCTestCase {
         XCTAssertPrefix("opus ultra plan", .claude, "opus", "medium", "ultra plan")
         XCTAssertPrefix("luna ultra plan", .codex, "gpt-6-luna", "medium", "ultra plan")
         XCTAssertPrefix("fable 4.0 hi", .claude, "fable", "medium", "4.0 hi")
+    }
+
+    func testGeminiFullNamesFamiliesAndEfforts() {
+        XCTAssertPrefix("gemini 4 neon xhigh do it", .gemini, "gemini-4-neon", "xhigh", "do it")
+        XCTAssertPrefix("hydrogen max go", .gemini, "gemini-4-hydrogen", "max", "go")
+        XCTAssertPrefix("flash xhigh go", .gemini, "gemini-3.8-flash", "medium", "xhigh go")
+        XCTAssertPrefix("Gemini 3.8 Flash low check", .gemini, "gemini-3.8-flash", "low", "check")
+        XCTAssertNil(parse("flash-lite do it"))
     }
 
     func testPrefixOnly() {

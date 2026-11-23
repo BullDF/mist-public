@@ -35,7 +35,7 @@ final class AgentChatMiniatureView: NSView {
     private var occlusionObserver: NSObjectProtocol?
     private var timer: Timer?
     private var lastRender = -CFTimeInterval.infinity
-    private var rendered: (key: Key, height: CGFloat, content: CGFloat)?
+    private var rendered: (key: Key, height: CGFloat)?
     private var theme = 0
     private let displayCache = AgentChatDisplayRowCache()
     private let viewState = AgentChatTranscriptViewState()
@@ -208,7 +208,7 @@ final class AgentChatMiniatureView: NSView {
             hosting.setThemedContent(page(rows, status: status, memory: memory, working: false, clock: key.clock, source: source))
         }
         picture.contents = bitmap.cgImage
-        rendered = (key, height, content)
+        rendered = (key, height)
         placePicture()
         renderCount += 1
         Self.lastAnyRender = CACurrentMediaTime()
@@ -253,7 +253,7 @@ final class AgentChatMiniatureView: NSView {
 
     private func placePicture() {
         guard let rendered else { return }
-        let frame = AgentChatMiniaturePlan.pictureFrame(rendered: rendered.height, content: rendered.content, body: bounds.size)
+        let frame = AgentChatMiniaturePlan.pictureFrame(rendered: rendered.height, body: bounds.size)
         guard picture.frame != frame else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)

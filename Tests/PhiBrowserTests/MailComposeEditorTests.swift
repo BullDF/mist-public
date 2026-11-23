@@ -6,9 +6,10 @@ import MistMailCore
 
 @MainActor
 final class MailComposeEditorTests: XCTestCase {
-    private func editor(html: String, attachments: [MailDraftAttachment] = []) async throws -> (MailComposeEditor, NSWindow) {
+    private func editor(html: String, attachments: [MailDraftAttachment] = [], automaticSignature: String? = nil) async throws -> (MailComposeEditor, NSWindow) {
         let source = FixtureMailPageDataSource(), snapshot = try await source.snapshot()
-        let model = MailComposeModel(draft: .init(accountID: snapshot.accounts[0].id, html: html, attachments: attachments), source: source)
+        let model = MailComposeModel(draft: .init(accountID: snapshot.accounts[0].id, html: html, attachments: attachments),
+                                     source: source, automaticSignature: automaticSignature)
         let editor = MailComposeEditor(model: model)
         let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 600, height: 400), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = editor
@@ -41,7 +42,7 @@ final class MailComposeEditorTests: XCTestCase {
         XCTAssertEqual(value.plainText, "Thanks\n\nOn Monday, Ada wrote:\n\n> Title\n> \n> Body")
         try await editor.call("window.MistMailCompose.focus(true)")
         let size = try await editor.call("return String(document.queryCommandValue('fontSize'))") as? String
-        XCTAssertEqual(size, "2", "The 13px body must read as Normal, legacy size 2")
+        XCTAssertEqual(size, "3", "The 16px body must read as Normal, legacy size 3")
     }
     func testCIDRoundTripUsesSupportedSchemeAndServesImage() async throws {
         let source = FixtureMailPageDataSource(), messages = try await source.messages(in: .unifiedInbox, before: nil, limit: 200)
@@ -68,5 +69,61 @@ final class MailComposeEditorTests: XCTestCase {
         try await editor.exec("createLink", value: "https://example.com")
         let linked = try await editor.exportDocument()
         XCTAssertTrue(linked.html.contains(">https://example.com</a>"))
+    }
+    func testFromSwapsOnlyUntouchedSignatureAndLeavesQuotedSignaturesAlone() async throws {
+        let previous = "<span style='color: blue'>Example Sender</span>"
+        let next = "<b>Other Sender</b>"
+        let html = MailComposeFormatting.messageBody("", signature: previous).html
+        let (editor, window) = try await editor(html: html, automaticSignature: previous)
+        defer { editor.detach(); window.close() }
+        let automatic = try await editor.exportDocument()
+        XCTAssertTrue(automatic.hasOnlyUntouchedSignature)
+        editor.swapSignature(from: previous, to: next)
+        let swapped = try await editor.exportDocument()
+        XCTAssertEqual(swapped.plainText, "Other Sender")
+        XCTAssertTrue(swapped.hasOnlyUntouchedSignature)
+
+        try await editor.call("document.querySelector('.mist-signature').innerHTML = '<i>Edited</i>'")
+        editor.swapSignature(from: next, to: previous)
+        let edited = try await editor.exportDocument()
+        XCTAssertEqual(edited.plainText, "Edited")
+        XCTAssertFalse(edited.hasOnlyUntouchedSignature)
+
+        try await editor.call("document.body.innerHTML = '<blockquote><div class=\"mist-signature\">Quoted</div></blockquote>'")
+        editor.swapSignature(from: next, to: previous)
+        let quoted = try await editor.exportDocument()
+        XCTAssertEqual(quoted.plainText, "> Quoted")
+    }
+    func testFontAndCustomColorApplyToSavedPanelSelection() async throws {
+        let (editor, window) = try await editor(html: "<div id=\"target\">Selected</div><div id=\"elsewhere\">Elsewhere</div>")
+        defer { editor.detach(); window.close() }
+        let capture = """
+            const select = id => {
+              const range = document.createRange();
+              range.selectNodeContents(document.getElementById(id));
+              getSelection().removeAllRanges();
+              getSelection().addRange(range);
+              window.MistMailCompose.saveSelection();
+            };
+            select('target');
+            window.MistMailCompose.capturePanelSelection(command);
+            select('elsewhere');
+            """
+        try await editor.call(capture, arguments: ["command": "fontName"])
+        try await editor.exec("fontName", value: MailFormattingToolbar.fontStack(for: "Georgia"), panelSelection: true)
+        try await editor.call(capture, arguments: ["command": "foreColor"])
+        try await editor.exec("foreColor", value: "#265a87", panelSelection: true)
+        let formatted = try await editor.call("""
+            const text = document.getElementById('target');
+            const styled = text.querySelectorAll('span');
+            return {
+              font: Array.from(styled).some(span => span.style.fontFamily.includes('Georgia')),
+              color: Array.from(styled).some(span => span.style.color === 'rgb(38, 90, 135)'),
+              elsewhere: document.getElementById('elsewhere').innerHTML
+            };
+            """) as? [String: Any]
+        XCTAssertEqual(formatted?["font"] as? Bool, true)
+        XCTAssertEqual(formatted?["color"] as? Bool, true)
+        XCTAssertEqual(formatted?["elsewhere"] as? String, "Elsewhere")
     }
 }

@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import MistMailCore
 import Network
+import UserNotifications
 
 /// App lifecycle adapter. The native mail page will use this engine directly.
 @MainActor
@@ -89,6 +90,11 @@ final class MistMailService: ObservableObject {
     func consumePendingRevealMessageID() -> UUID? {
         defer { pendingRevealMessageID = nil }
         return pendingRevealMessageID
+    }
+    func postNotification(_ request: UNNotificationRequest) async throws -> Bool {
+        guard await notifier.requestAuthorization() else { return false }
+        try await notifier.add(request)
+        return true
     }
     private func openNotification(messageID: UUID?) {
         pendingRevealMessageID = messageID

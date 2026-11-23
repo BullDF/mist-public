@@ -34,7 +34,7 @@ struct DrifterCLIServers {
 
 struct DrifterLaunchRequest {
     // An allowlist keeps every new CLI tool off until it is listed here.
-    static let claudeTools = "Bash,Read,Write,Edit,Glob,Grep,NotebookEdit,AskUserQuestion,EnterPlanMode,ExitPlanMode,Monitor,TaskStop,ToolSearch,WebSearch,WebFetch,CronCreate,CronDelete,CronList,ScheduleWakeup,PushNotification,ListMcpResourcesTool,ReadMcpResourceTool,ReadMcpResourceDirTool,Artifact,ArtifactComments,ArtifactData,ArtifactCheck"
+    static let claudeTools = "Bash,Read,Write,Edit,Glob,Grep,NotebookEdit,AskUserQuestion,EnterPlanMode,ExitPlanMode,Monitor,TaskStop,ToolSearch,WebSearch,WebFetch,ListMcpResourcesTool,ReadMcpResourceTool,ReadMcpResourceDirTool,Artifact,ArtifactComments,ArtifactData,ArtifactCheck"
     let prompt: String
     var attachments: [AgentAttachment] = []
     var config: DrifterConfig
@@ -67,14 +67,15 @@ struct DrifterLaunchRequest {
         if let parent {
             parts.append("You are a child chat of \(parent.label), working on the task it gave you. End that task by calling finish_task: status done when it's finished, blocked when you can't go on without an answer from your parent. Its message is the only thing your parent hears from you: what you write in this chat reaches only Johnny, and a turn without finish_task reports nothing. So write the message for your parent and make it stand on its own: what you did or what you need, and anything left uncommitted, unpushed or still running. Mist sends it when your turn ends, so call it last, then end your turn. While background work you started is still running, end your turn without it and call it once that work is done. Never message_agent your parent to report or to ask; after blocked, its answer arrives as your next message.")
         }
-        if engine == .claude {
+        if engine != .codex {
             if let text = try? String(contentsOf: home.folder.appendingPathComponent("CLAUDE.md"), encoding: .utf8) {
                 parts.append("Your home's CLAUDE.md:\n" + text)
             }
             if home.isRepository, let globalInstructions { parts.append(globalInstructions) }
         }
-        if engine == .codex {
-            parts.append("For anything long-running (builds, test suites, servers, downloads, waiting on a condition), use mistbrowser's run_in_background (one message when it exits) or monitor (a message per batch of output lines from a watching script), never exec_command with write_stdin polling or sleep loops. Both return at once: end your turn, and Mist sends you the result as a new message. stop_task stops one. Tasks stop when this chat closes.")
+        if engine != .claude {
+            let polling = engine == .codex ? "exec_command with write_stdin polling or sleep loops" : "shell polling or sleep loops"
+            parts.append("For anything long-running (builds, test suites, servers, downloads, waiting on a condition), use mistbrowser's run_in_background (one message when it exits) or monitor (a message per batch of output lines from a watching script), never \(polling). Both return at once: end your turn, and Mist sends you the result as a new message. stop_task stops one. Tasks stop when this chat closes.")
         }
         if !home.isRepository {
             parts.append("Your memory and skills are only the folders named above. Ignore any other memory or skill location your user instructions name, such as ~/Personal/drifter: never read or write it.")
@@ -86,13 +87,14 @@ struct DrifterLaunchRequest {
         + "Use the mistbrowser tools. Never ask the user to switch tabs. Tabs and tab groups the user mentions are listed by list_tabs, in the order the user's sidebar shows them. "
         + "For Johnny's email use list_mail_accounts, list_mail, search_mail, read_mail, write_mail_draft, send_mail and update_mail, never a webmail tab. send_mail asks Johnny in its own card. "
         + "For Slack use the slack_* tools when listed, never a Slack tab; they act as Johnny. slack_send_message, slack_schedule_message and slack_complete_file_upload ask Johnny in their own card. "
+        + "To run a prompt later or on a schedule, use mistbrowser's schedule_prompt (Mist keeps schedules across relaunches); to ping Johnny with a macOS notification, use notify. "
         + "When the user mentions tabs, start with them; their tabId values work with use_tab. "
         + "You can read and write files and run shell commands anywhere on this Mac using your built-in tools. "
         + "To attach local files to a page, use upload_files. "
         + "Always use absolute paths, expanding ~. When no location is named, save to ~/Downloads. "
         + "Report the absolute path of every file you write. Never touch files the user didn't ask about. "
         + "Before buying something, sending a message or post outside email and Slack, or deleting data, ask in chat unless the user already said to go ahead."
-    static let readOnlyTools = ["list_agents", "read_agent", "list_mail_accounts", "list_mail", "search_mail", "read_mail", "list_tabs", "use_tab", "snapshot", "read_page", "read_console", "read_network", "list_downloads", "search_history", "scroll", "scroll_until", "hover", "select_text", "wait_for", "screenshot"] + DrifterSlackTools.readOnly
+    static let readOnlyTools = ["list_agents", "read_agent", "list_schedules", "list_mail_accounts", "list_mail", "search_mail", "read_mail", "list_tabs", "use_tab", "snapshot", "read_page", "read_console", "read_network", "list_downloads", "search_history", "scroll", "scroll_until", "hover", "select_text", "wait_for", "screenshot"] + DrifterSlackTools.readOnly
 
     static func server(node: URL, resources: URL, bundleId: String, windowId: Int, capability: String) -> CodexMCPServer {
         .init(command: node.path, args: [resources.appendingPathComponent("phi-browser-skill/scripts/mist-browser-mcp.mjs").path],
@@ -137,13 +139,25 @@ struct DrifterLaunchRequest {
 
     func codex(folder: URL, server: CodexMCPServer) -> CodexLaunchRequest {
         let home = home ?? memory?.home ?? DrifterHome(folder: folder, isRepository: false)
+        return .init(prompt: prompt, attachments: attachments, model: config.model, effort: config.effort,
+              cwd: folder, developerInstructions: instructions(for: .codex, home: home), mcpServers: ["mistbrowser": serverWithBackgroundTasks(server)],
+              mentions: mentions, sender: sender, resume: resume,
+              inheritsCLIServers: inheritsCLIServers)
+    }
+
+    func gemini(folder: URL, server: CodexMCPServer, cliHome: URL, preload: URL) -> GeminiLaunchRequest {
+        let home = home ?? memory?.home ?? DrifterHome(folder: folder, isRepository: false)
+        return .init(prompt: prompt, attachments: attachments, model: config.model, effort: config.effort,
+                     cwd: folder, drifterHome: home.folder, cliHome: cliHome, preload: preload,
+                     instructions: instructions(for: .gemini, home: home),
+                     server: serverWithBackgroundTasks(server), mentions: mentions, sender: sender, resume: resume)
+    }
+
+    private func serverWithBackgroundTasks(_ server: CodexMCPServer) -> CodexMCPServer {
         var server = server
         server.env["MIST_BACKGROUND_TASKS"] = "1"
         server.env["MIST_FINISH_TASK"] = finishesTasks ? "1" : nil
-        return .init(prompt: prompt, attachments: attachments, model: config.model, effort: config.effort,
-              cwd: folder, developerInstructions: instructions(for: .codex, home: home), mcpServers: ["mistbrowser": server],
-              mentions: mentions, sender: sender, resume: resume,
-              inheritsCLIServers: inheritsCLIServers)
+        return server
     }
 }
 

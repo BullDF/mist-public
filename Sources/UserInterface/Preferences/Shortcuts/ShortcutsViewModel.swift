@@ -623,6 +623,12 @@ private extension CommandWrapper {
             return NSLocalizedString("settings.shortcuts.command.toggleChatbar", value: "Toggle Chat Panel", comment: "Shortcuts settings - Command title for showing or hiding the chat panel")
         case .PHI_SWITCH_CHAT_PANEL_AND_TAB:
             return NSLocalizedString("app.viewMenu.switchChatPanelAndTab", value: "Switch Between Chat Panel and Tab", comment: "View menu and shortcuts - Go from the chat panel to the chat's own tab, or from a chat tab back to the tab whose chat panel shows it")
+        case .PHI_CLOSE_PANEL_CHAT:
+            return NSLocalizedString("app.viewMenu.closeChat", value: "Close Chat", comment: "View menu and shortcuts - Close the chat the focused tab's chat panel shows, with its tab; the panel closes too")
+        case .PHI_SET_START_PAGE:
+            return NSLocalizedString("app.tabMenu.setStartPage", value: "Set Current Page as Start Page", comment: "Tab menu and shortcuts - Remember the focused grouped tab's current page as its start page")
+        case .PHI_RETURN_TO_START_PAGE:
+            return NSLocalizedString("app.tabMenu.returnToStartPage", value: "Return to Start Page", comment: "Tab menu and shortcuts - Take the focused grouped tab back to its start page")
         case .PHI_OPEN_CLIPBOARD: return MistAppID.clipboard.name
         case .PHI_MAKE_PRIMARY_WINDOW:
             return NSLocalizedString("settings.shortcuts.command.makePrimaryWindow", value: "Make Primary Window", comment: "Shortcuts settings title for making the focused window primary")

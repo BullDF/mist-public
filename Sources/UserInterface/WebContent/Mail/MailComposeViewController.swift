@@ -14,9 +14,7 @@ final class MailComposeViewController: NSViewController, NSTokenFieldDelegate, N
     private let spinner = NSProgressIndicator()
     private let attachmentCards = MailAttachmentCardsView(insets: NSEdgeInsets(top: 0, left: 20, bottom: 8, right: 20))
     private var controls: [NSControl] = []
-    private var formatting: [String: NSButton] = [:]
-    private let size = MistPopUpButton(), color = MistPopUpButton()
-    private var selectionState: [String: Any] = [:]
+    private var toolbar: MailFormattingToolbar!
     private var subscriptions = Set<AnyCancellable>()
     private var bodyInsets: [NSLayoutConstraint] = []
     private var attachmentSnapshot: [MailDraftAttachment] = []
@@ -37,8 +35,14 @@ final class MailComposeViewController: NSViewController, NSTokenFieldDelegate, N
         root.onFiles = { [weak model] in model?.addFiles($0) }; view = root
         root.themeChanged = { [weak self] in self?.updateInsets() }
         editor = MailComposeEditor(model: model)
-        editor.onState = { [weak self] in self?.updateSelection($0) }
-        editor.onShortcut = { [weak self] command in if command == "send" { self?.send() } else { self?.showLinkSheet() } }
+        toolbar = MailFormattingToolbar(editor: editor)
+        editor.onShortcut = { [weak self] command in
+            switch command {
+            case "send": self?.send()
+            case "link": self?.toolbar.showLinkSheet()
+            default: break
+            }
+        }
         editor.onReady = { [weak self] in self?.focusInitial() }
         let attach = MistButton(symbol: "paperclip", title: MailStrings.attachFiles, size: .regular); attach.onClick = { [weak self] in self?.attachFiles() }
         let discard = MistButton(symbol: "trash", title: MailStrings.discardDraft, size: .regular); discard.onClick = { [weak self] in self?.discard() }
@@ -75,12 +79,11 @@ final class MailComposeViewController: NSViewController, NSTokenFieldDelegate, N
         ccRow = row(MailStrings.ccField, MistFieldWellView(cc)); bccRow = row(MailStrings.bccField, MistFieldWellView(bcc))
         subject.delegate = self; subject.applyMistStyle(.body); subject.setAccessibilityLabel(MailStrings.subjectField)
         _ = row(MailStrings.subjectField, MistFieldWellView(subject))
-        let toolbar = makeFormattingToolbar()
         let body = NSView(); body.addSubview(editor); editor.translatesAutoresizingMaskIntoConstraints = false
         bodyInsets = [editor.leadingAnchor.constraint(equalTo: body.leadingAnchor), editor.trailingAnchor.constraint(equalTo: body.trailingAnchor), editor.topAnchor.constraint(equalTo: body.topAnchor), editor.bottomAnchor.constraint(equalTo: body.bottomAnchor)]
         NSLayoutConstraint.activate(bodyInsets)
         // Attachments sit under the fields, as in the reader under its header.
-        let stack = NSStackView(views: [fields, attachmentCards, toolbar, body]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 0
+        let stack = NSStackView(views: [fields, attachmentCards, toolbar!, body]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 0
         let card = MistCardView(style: .content)
         view.addSubview(actions); actions.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(card); card.translatesAutoresizingMaskIntoConstraints = false
@@ -113,7 +116,8 @@ final class MailComposeViewController: NSViewController, NSTokenFieldDelegate, N
             if field.currentEditor() == nil, fieldAddresses(field) != addresses { field.objectValue = addresses.map(MailAddressToken.init) }
         }
         if subject.currentEditor() == nil { subject.stringValue = model.draft.subject }
-        controls.forEach { $0.isEnabled = !model.isSending }; editor.isUserInteractionEnabledForCompose = !model.isSending
+        controls.forEach { $0.isEnabled = !model.isSending }; editor.allowsBodyEditing = !model.isSending
+        toolbar.isEnabled = !model.isSending
         spinner.isHidden = !model.isSending; if model.isSending { spinner.startAnimation(nil); hideSuggestions() } else { spinner.stopAnimation(nil) }
         updateCopyVisibility()
         let attachments = model.draft.attachments.filter { $0.contentID == nil }
@@ -149,8 +153,12 @@ final class MailComposeViewController: NSViewController, NSTokenFieldDelegate, N
         for (index, constraint) in bodyInsets.enumerated() { constraint.constant = index == 1 || index == 3 ? -inset : inset }
     }
     @objc private func changeFrom() {
-        guard accounts.indices.contains(from.indexOfSelectedItem) else { return }
-        model.update { $0.accountID = accounts[from.indexOfSelectedItem].id }
+        guard !model.isSending, accounts.indices.contains(from.indexOfSelectedItem) else { return }
+        let next = accounts[from.indexOfSelectedItem]
+        let previous = accounts.first { $0.id == model.draft.accountID }
+        guard next.id != model.draft.accountID else { return }
+        model.update { $0.accountID = next.id }
+        editor.swapSignature(from: previous?.config.signatureHTML, to: next.config.signatureHTML)
     }
     private func fieldAddresses(_ field: NSTokenField) -> [MailAddress] {
         precondition(field.currentEditor() == nil)
@@ -292,81 +300,6 @@ final class MailComposeViewController: NSViewController, NSTokenFieldDelegate, N
         guard let window = view.window else { return }
         let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = true
         panel.beginSheetModal(for: window) { [weak model] response in if response == .OK { model?.addFiles(panel.urls) } }
-    }
-    private func makeFormattingToolbar() -> NSView {
-        // Wide enough apart for each symbol's 24 pt hover circle.
-        let bar = NSStackView(); bar.spacing = 12; bar.edgeInsets = NSEdgeInsets(top: 4, left: 20, bottom: 6, right: 20)
-        func button(_ command: String, _ symbol: String, _ title: String, toggle: Bool = false) {
-            let button = MistIconButton(symbol: symbol, title: title)
-            if toggle { button.setButtonType(.toggle); formatting[command] = button }
-            button.onClick = { [weak self] in self?.exec(command) }; controls.append(button); bar.addArrangedSubview(button)
-        }
-        button("bold", "bold", MailStrings.bold, toggle: true); button("italic", "italic", MailStrings.italic, toggle: true)
-        button("underline", "underline", MailStrings.underline, toggle: true); button("strikeThrough", "strikethrough", MailStrings.strikethrough, toggle: true)
-        size.addItems(withTitles: [MailStrings.small, MailStrings.normal, MailStrings.large, MailStrings.huge]); size.selectItem(at: 1)
-        size.setAccessibilityLabel(MailStrings.textSize); size.setCustomTooltip(MailStrings.textSize); size.target = self; size.action = #selector(changeSize)
-        color.addItems(withTitles: [MailStrings.defaultColor, MailStrings.gray, MailStrings.red, MailStrings.orange, MailStrings.green, MailStrings.blue, MailStrings.purple])
-        color.setAccessibilityLabel(MailStrings.textColor); color.setCustomTooltip(MailStrings.textColor); color.target = self; color.action = #selector(changeColor)
-        controls += [size, color]; bar.addArrangedSubview(size); bar.addArrangedSubview(color)
-        button("insertUnorderedList", "list.bullet", MailStrings.bulletedList, toggle: true); button("insertOrderedList", "list.number", MailStrings.numberedList, toggle: true)
-        button("outdent", "decrease.indent", MailStrings.decreaseIndent); button("indent", "increase.indent", MailStrings.increaseIndent)
-        let link = MistIconButton(symbol: "link", title: MailStrings.link); link.setButtonType(.toggle); link.onClick = { [weak self] in self?.showLinkSheet() }; formatting["link"] = link; controls.append(link); bar.addArrangedSubview(link)
-        button("removeFormat", "textformat", MailStrings.clearFormatting)
-        let scroll = NSScrollView(); scroll.drawsBackground = false; scroll.hasHorizontalScroller = true; scroll.autohidesScrollers = true; scroll.documentView = bar
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor), bar.topAnchor.constraint(equalTo: scroll.contentView.topAnchor), bar.heightAnchor.constraint(equalTo: scroll.contentView.heightAnchor), scroll.heightAnchor.constraint(equalToConstant: 40)])
-        return scroll
-    }
-    private func exec(_ command: String, value: String? = nil) {
-        Task { [self] in do { try await editor.exec(command, value: value) } catch { model.report(error) } }
-    }
-    /// Gmail's scale over a 13px body: legacy sizes 1, 2, 4 and 6, so Normal is the body's own size.
-    private static let sizes = ["1", "2", "4", "6"]
-    @objc private func changeSize() { exec("fontSize", value: Self.sizes[size.indexOfSelectedItem]) }
-    private static let palette = ["#000000", "#808080", "#cc0000", "#e67300", "#008000", "#0066cc", "#800080"]
-    @objc private func changeColor() { exec("foreColor", value: Self.palette[color.indexOfSelectedItem]) }
-    private func updateSelection(_ state: [String: Any]) {
-        selectionState = state
-        for (command, button) in formatting { button.state = state[command] as? Bool == true ? .on : .off }
-        if let value = state["fontSize"] as? String, let index = Self.sizes.firstIndex(of: value) { size.selectItem(at: index) }
-        if let value = state["foreColor"] as? String {
-            let rgb = value.replacingOccurrences(of: " ", with: "").lowercased()
-            let values = ["rgb(0,0,0)", "rgb(128,128,128)", "rgb(204,0,0)", "rgb(230,115,0)", "rgb(0,128,0)", "rgb(0,102,204)", "rgb(128,0,128)"]
-            if let index = values.firstIndex(of: rgb) ?? Self.palette.firstIndex(of: rgb) { color.selectItem(at: index) }
-        }
-    }
-    private func showLinkSheet() {
-        guard let window = view.window, !model.isSending else { return }
-        Task { [self] in
-            do {
-                try await editor.call("window.MistMailCompose.saveSelection()")
-                let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: 136), styleMask: [.titled], backing: .buffered, defer: false)
-                panel.isReleasedWhenClosed = false; panel.title = MailStrings.link
-                let field = NSTextField(string: selectionState["href"] as? String ?? ""); field.placeholderString = "https://"; field.setAccessibilityLabel(MailStrings.linkURL)
-                let ok = MistButton(title: MailStrings.ok, role: .primary, size: .regular), cancel = MistButton(title: MailStrings.cancel, size: .regular), remove = MistButton(title: MailStrings.removeLink, size: .regular)
-                ok.keyEquivalent = "\r"; cancel.keyEquivalent = "\u{1b}"
-                ok.onClick = { window.endSheet(panel, returnCode: .OK) }; cancel.onClick = { window.endSheet(panel, returnCode: .cancel) }
-                remove.onClick = { window.endSheet(panel, returnCode: .init(rawValue: 42)) }; remove.isHidden = selectionState["link"] as? Bool != true
-                let actions = NSStackView(views: [remove, NSView(), cancel, ok]); actions.spacing = 8
-                let well = MistFieldWellView(field, shape: .rounded)
-                let stack = NSStackView(views: [NSTextField.mistLabel(MailStrings.linkURL, style: .secondary), well, actions]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
-                panel.contentView?.addSubview(stack); stack.translatesAutoresizingMaskIntoConstraints = false
-                NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor, constant: 20), stack.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor, constant: -20), stack.topAnchor.constraint(equalTo: panel.contentView!.topAnchor, constant: 20), well.widthAnchor.constraint(equalTo: stack.widthAnchor), actions.widthAnchor.constraint(equalTo: stack.widthAnchor)])
-                window.beginSheet(panel) { [self] response in
-                    Task { [self] in
-                        do {
-                            try await self.editor.call("window.MistMailCompose.restoreSelection()")
-                            if response.rawValue == 42 { try await self.editor.exec("unlink") }
-                            else if response == .OK {
-                                let raw = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !raw.isEmpty { try await self.editor.exec("createLink", value: URLComponents(string: raw)?.scheme == nil ? "https://" + raw : raw) }
-                            }
-                        } catch { self.model.report(error) }
-                    }
-                }
-                panel.makeFirstResponder(field)
-            } catch { model.report(error) }
-        }
     }
 }
 

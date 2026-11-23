@@ -12,6 +12,8 @@ enum MistSyncStrings {
     static let clipboardPlaceholder = NSLocalizedString("mistSync.clipboard.placeholder", value: "Paste or drop text, an image, or a file up to %@, or click to choose a file", comment: "Sync - Clipboard input placeholder; clicking the area opens a file chooser; placeholder is the formatted size limit")
     static let clipboardSend = NSLocalizedString("mistSync.clipboard.send", value: "Send", comment: "Sync - Send the staged clipboard item to other Macs")
     static let clipboardCopy = NSLocalizedString("mistSync.clipboard.copy", value: "Copy", comment: "Sync - Copy the shared item to this Mac's clipboard")
+    static let clipboardDownload = NSLocalizedString("mistSync.clipboard.download", value: "Download", comment: "Sync - Save the shared file to this Mac's Downloads folder")
+    static let clipboardShowInFinder = NSLocalizedString("mistSync.clipboard.showInFinder", value: "Show in Finder", comment: "Sync - Reveal the shared file just saved to Downloads")
     static let clipboardClear = NSLocalizedString("mistSync.clipboard.clear", value: "Clear", comment: "Sync - Clear the shared clipboard on every Mac")
     static let clipboardClearDraft = NSLocalizedString("mistSync.clipboard.clearDraft", value: "Clear", comment: "Sync - Remove the staged clipboard item on this Mac only, without sending it")
     static let clipboardFrom = NSLocalizedString("mistSync.clipboard.from", value: "From %1$@ · %2$@", comment: "Sync - Shared clipboard sender and time; placeholders are Mac name and formatted time")

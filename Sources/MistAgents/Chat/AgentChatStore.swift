@@ -43,6 +43,7 @@ final class AgentChatStore: ObservableObject {
 
     #if !MIST_CLAUDE_CODE_HOSTLESS_TESTS
     private var tabBindings: [UUID: AnyCancellable] = [:]
+    private var backgroundTabOpenCompletions: [UUID: [(Bool) -> Void]] = [:]
     private var pendingFolderCreations: [Int: Set<Int>] = [:]
     private lazy var closedFolders = BrowserAgentClosedFolders(
         url: route.directory.deletingLastPathComponent().appendingPathComponent("AgentFolders.json"))
@@ -295,6 +296,11 @@ final class AgentChatStore: ObservableObject {
     func bindNextTab(_ id: UUID, in state: BrowserState, url: String, completion: ((Int) -> Void)? = nil) {
         tabBindings[id] = state.$tabs.receive(on: DispatchQueue.main).sink { [weak self] tabs in
             guard let self, let tab = tabs.first(where: { $0.url == url }) else { return }
+            if self.closeOnTabArrival.remove(id) != nil {
+                self.closePanelChatTab(tab.guid)
+                self.tabBindings[id] = nil
+                return
+            }
             self.assign(id, to: tab.guid)
             if let title = self.conversation(for: id)?.title { tab.title = title }
             self.tabBindings[id] = nil
@@ -358,6 +364,7 @@ final class AgentChatStore: ObservableObject {
         })
         store.observers.append(NotificationCenter.default.addObserver(forName: .browserTabDidClose, object: nil, queue: .main) { [weak store] notification in
             guard let id = notification.userInfo?[BrowserTabCloseInfoKey.tabId] as? Int else { return }
+            MainActor.assumeIsolated { BrowserAgentRecordings.shared.tabClosed(id) }
             let url = notification.userInfo?[BrowserTabCloseInfoKey.url] as? String
             Task { @MainActor in store?.tabDidClose(id, url: url) }
         })
@@ -365,7 +372,10 @@ final class AgentChatStore: ObservableObject {
             MainActor.assumeIsolated { store?.windowWillClose() }
         })
         store.observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak store] _ in
-            MainActor.assumeIsolated { store?.terminate() }
+            MainActor.assumeIsolated {
+                BrowserAgentRecordings.shared.cancelAll()
+                store?.terminate()
+            }
         })
         return store
     }()
@@ -376,6 +386,9 @@ final class AgentChatStore: ObservableObject {
     private var entries: [UUID: Entry] = [:]
     private(set) var parent: [UUID: UUID] = [:]
     private var closing: Set<UUID> = []
+    private var closeOnTabArrival: Set<UUID> = []
+    // Chromium's removal reaches BrowserState asynchronously. Until then these tabs must not restore a closed chat.
+    private var panelClosingTabs: Set<Int> = []
     private var reportedQuestions: [UUID: Set<String>] = [:]
     private var taskFinishes: [UUID: AgentTaskFinish] = [:]
     /// Set by the Slack bridge.
@@ -530,6 +543,16 @@ final class AgentChatStore: ObservableObject {
     }
 
     #if !MIST_CLAUDE_CODE_HOSTLESS_TESTS
+    static func externalChatWindow() -> SpaceSessionController? {
+        let manager = SpaceSessionControllersManager.shared
+        func eligible(_ controller: SpaceSessionController) -> Bool {
+            controller.browserType == .normal && !controller.isDormant
+                && !controller.browserState.isIncognito && !controller.browserState.isAgentSpace
+        }
+        if let active = manager.activeWindowController, eligible(active) { return active }
+        return manager.getAllWindows().first(where: eligible)
+    }
+
     func launchBrowserChat(prompt: String, attachments: [AgentAttachment], mentions: [AgentTabMention],
                            config: DrifterConfig, in state: BrowserState, tabId: Int,
                            createBackgroundTab: Bool = false, sender: AgentMessageSender? = nil) throws -> AgentConversation {
@@ -552,15 +575,37 @@ final class AgentChatStore: ObservableObject {
     }
 
     /// A chat whose tab just closed (still within `closeDelay`) moves to the new tab instead of closing.
-    func openChatInBackground(_ id: UUID, in state: BrowserState, completion: @escaping (Bool) -> Void) {
+    func openChatInBackground(_ id: UUID, in state: BrowserState,
+                              completion: @escaping (_ opened: Bool, _ createdTab: Bool) -> Void) {
         func isOpen() -> Bool { entries[id].map { $0.tabId < 0 || tabExists($0.tabId) } ?? false }
-        if isOpen() { completion(true); return }
+        if backgroundTabOpenCompletions[id] != nil {
+            backgroundTabOpenCompletions[id]?.append { completion($0, false) }
+            return
+        }
+        if isOpen() { completion(true, false); return }
         _ = agentChats()
-        if isOpen() { completion(true); return }
-        guard entries[id] != nil || canRestore(id) else { completion(false); return }
+        if isOpen() { completion(true, false); return }
+        guard entries[id] != nil || canRestore(id) else { completion(false, false); return }
+        backgroundTabOpenCompletions[id] = [{ completion($0, $0) }]
+        var finished = false
+        let finish: (Bool) -> Void = { [weak self] opened in
+            guard !finished else { return }
+            finished = true
+            self?.backgroundTabOpenCompletions.removeValue(forKey: id)?.forEach { $0(opened) }
+        }
         let url = route.placeholderURL(for: id).absoluteString
         bindNextTab(id, in: state, url: url) { [weak self] tabId in
-            completion(self?.restoreIfNeeded(id, tabId: tabId) == true)
+            if let self, self.restoreIfNeeded(id, tabId: tabId) {
+                finish(true)
+            } else {
+                finish(false)
+            }
+        }
+        // Chromium can drop the tab request if its window closes before delivering the callback.
+        let binding = tabBindings[id]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self, weak binding] in
+            if let binding, self?.tabBindings[id] === binding { self?.tabBindings[id] = nil }
+            finish(false)
         }
         state.createTab(url, focusAfterCreate: false)
     }
@@ -568,7 +613,7 @@ final class AgentChatStore: ObservableObject {
 
     func create(request: DrifterLaunchRequest, tabId: Int) throws -> AgentConversation {
         var request = request
-        if request.parent == nil, ClaudeCodeClearCommand.matches(request.prompt) {
+        if request.parent == nil, request.sender?.kind != .schedule, ClaudeCodeClearCommand.matches(request.prompt) {
             return try createEmpty(config: request.config, tabId: tabId)
         }
         let (conversation, imported) = try prepare(engine: request.config.engine, prompt: request.prompt, attachments: request.attachments,
@@ -690,7 +735,7 @@ final class AgentChatStore: ObservableObject {
     }
 
     func recreate(_ id: UUID, tabId: Int, at url: URL) -> Bool {
-        guard !terminated, route.canRecreate(id),
+        guard !terminated, !closeOnTabArrival.contains(id), !panelClosingTabs.contains(tabId), route.canRecreate(id),
               url.path == route.canonicalURL(for: id).path || url.path == route.legacyURL(for: id).path else { return false }
         do {
             let chat = try createEmpty(tabId: tabId, id: id, placeholderAt: url)
@@ -767,7 +812,10 @@ final class AgentChatStore: ObservableObject {
             }
             if let turnActive, var preview = entry.browserPreview, preview.turnActive != turnActive {
                 #if !MIST_CLAUDE_CODE_HOSTLESS_TESTS
-                if !turnActive { BrowserAgentScrollRestore.shared.endTurn(chat: conversation.id) }
+                if !turnActive {
+                    BrowserAgentRecordings.shared.finish(chat: conversation.id, reason: .turnEnded)
+                    BrowserAgentScrollRestore.shared.endTurn(chat: conversation.id)
+                }
                 #endif
                 preview.setTurnActive(turnActive, now: self.now())
                 self.entries[conversation.id]?.browserPreview = preview
@@ -920,6 +968,9 @@ final class AgentChatStore: ObservableObject {
                          status == .running || status == .awaitingPermission ? "queued" : "started"))
     }
     func conversation(for id: UUID) -> AgentConversation? { entries[id]?.conversation }
+    func chatReferenceTitle(for id: UUID) -> String {
+        conversation(for: id)?.title ?? route.storedTitle(for: id) ?? AgentChatShortID.short(id)
+    }
     func drifterConfig(for id: UUID) -> DrifterConfig? { entries[id]?.settings.config }
 
     enum ModelSwitch: Equatable { case switched, unchanged, otherEngine, unavailable }
@@ -968,28 +1019,11 @@ final class AgentChatStore: ObservableObject {
         var ancestor = caller, depth = 0
         while let next = parent[ancestor] { depth += 1; ancestor = next }
         guard depth < 2 else { return .failure(.depth) }
-        let parentConfig = entry.settings.config
-        var config = parentConfig
-        let scope = DrifterModel.spawnScope(parentConfig)
-        if let model {
-            guard let resolved = DrifterModel.spawnModel(model) else { return .failure(.unknownModel) }
-            let allowed = switch scope {
-            case .any: true
-            case .gpt: resolved.engine == .codex
-            case .own: resolved.engine == parentConfig.engine && resolved.model == parentConfig.model
-            }
-            guard allowed else { return .failure(.restricted(parentConfig)) }
-            config.engine = resolved.engine; config.model = resolved.model
+        let config: DrifterConfig
+        switch DrifterModel.resolveSpawnConfig(from: entry.settings.config, models: entry.settings.models, model: model, effort: effort) {
+        case let .success(resolved): config = resolved
+        case let .failure(error): return .failure(error)
         }
-        if let effort, scope == .own, effort != parentConfig.effort { return .failure(.restricted(parentConfig)) }
-        let efforts = config.engine == .claude ? ClaudeCodeEffort.allCases.map(\.rawValue) : ["low", "medium", "high", "xhigh"]
-        if let effort {
-            guard efforts.contains(effort) else { return .failure(.invalidEffort(efforts)) }
-            config.effort = effort
-        } else if !efforts.contains(config.effort) {
-            config.effort = config.engine == .claude ? "xhigh" : "medium"
-        }
-        config.folder = DrifterHome.current.folder
         guard let window = windowOfTab(entry.tabId) ?? entry.browserPreview?.windowId else { return .failure(.noWindow) }
         let parentSender = sender(for: caller, kind: .parent)
         var created: UUID?
@@ -1146,6 +1180,34 @@ final class AgentChatStore: ObservableObject {
         close(id)
     }
 
+    /// The panel's Close Chat command closes every copy of the chat's tab.
+    func closeChat(_ id: UUID) {
+        guard let entry = entries[id], closing.insert(id).inserted else { return }
+        collapsePanels(showing: id)
+        removeFromPanelHistory(id)
+        #if !MIST_CLAUDE_CODE_HOSTLESS_TESTS
+        if isOpeningTab(for: id) { closeOnTabArrival.insert(id) }
+        #endif
+        var tabs = Set(chatTabs().filter { $0.chatId == id }.map(\.tabId))
+        if entry.tabId >= 0, tabExists(entry.tabId) { tabs.insert(entry.tabId) }
+        // Close any background copies before Chromium selects a successor to the active one.
+        for tabId in tabs.sorted(by: { !isTabActive($0) && isTabActive($1) }) { closePanelChatTab(tabId) }
+        closing.remove(id)
+        close(id, closingAllTabs: true)
+    }
+
+    private func closePanelChatTab(_ tabId: Int) {
+        guard tabExists(tabId), panelClosingTabs.insert(tabId).inserted else { return }
+        closeChatTab(tabId)
+    }
+
+    private func removeFromPanelHistory(_ id: UUID) {
+        for host in Array(panelHistory.keys) {
+            panelHistory[host]?.removeAll { $0 == id }
+            if panelChats[host] == id { panelChats[host] = panelHistory[host]?.last }
+        }
+    }
+
     /// A chat's own tab closed: the Chat panels showing it close too.
     private func collapsePanels(showing id: UUID) {
         for (host, chat) in panelChats where chat == id && tabExists(host) { collapsePanel(host) }
@@ -1180,6 +1242,7 @@ final class AgentChatStore: ObservableObject {
     /// Rebuilds a chat from its file without launching its agent; its first message does, through `restart`.
     @discardableResult
     func restoreIfNeeded(_ id: UUID, tabId: Int) -> Bool {
+        guard !closeOnTabArrival.contains(id), !panelClosingTabs.contains(tabId) else { return false }
         if let entry = entries[id] {
             if entry.tabId != tabId, !tabExists(entry.tabId) { assign(id, to: tabId) }
             return true
@@ -1252,6 +1315,13 @@ final class AgentChatStore: ObservableObject {
             .sorted { $0.reportOrder < $1.reportOrder }
     }
 
+    func activeBrowserReadTabs(windowId: Int) -> [Int] {
+        entries.values.compactMap(\.browserPreview)
+            .filter { $0.windowId == windowId && $0.turnActive && !$0.readingTabIds.isEmpty }
+            .sorted { $0.reportOrder < $1.reportOrder }
+            .flatMap { $0.readingTabIds.sorted() }
+    }
+
     @discardableResult
     func reportWorkingTab(principalId: String?, tabId: Int?, live: Bool) -> Bool {
         guard let id = browserChat(principalId: principalId),
@@ -1262,6 +1332,24 @@ final class AgentChatStore: ObservableObject {
         objectWillChange.send()
         entries[id]?.browserPreview = preview
         entries[id]?.browserFolder?.report(tabId: tabId, now: now())
+        armBrowserPreviewExpiry()
+        notifyBrowserPreviewChanged(windowId: preview.windowId)
+        return true
+    }
+
+    @discardableResult
+    func reportReadTab(principalId: String?, tabId: Int, reading: Bool) -> Bool {
+        let date = now()
+        guard let id = browserChat(principalId: principalId),
+              var preview = entries[id]?.browserPreview,
+              preview.touch(principal: principalId, tabId: tabId, reading: reading, live: true, now: date) else { return false }
+        if reading {
+            workingTabReportOrder &+= 1
+            preview.reportOrder = workingTabReportOrder
+        }
+        objectWillChange.send()
+        entries[id]?.browserPreview = preview
+        entries[id]?.browserFolder?.touch(tabId: tabId, now: date)
         armBrowserPreviewExpiry()
         notifyBrowserPreviewChanged(windowId: preview.windowId)
         return true
@@ -1405,13 +1493,16 @@ final class AgentChatStore: ObservableObject {
 
     private func invalidateBrowserPreview(principalId: String) {
         guard let id = browserChat(principalId: principalId), let preview = entries[id]?.browserPreview else { return }
+        #if !MIST_CLAUDE_CODE_HOSTLESS_TESTS
+        BrowserAgentRecordings.shared.finish(chat: id, reason: .turnEnded)
+        #endif
         objectWillChange.send()
         entries[id]?.browserPreview = nil
         armBrowserPreviewExpiry()
         notifyBrowserPreviewChanged(windowId: preview.windowId)
     }
 
-    private func notifyBrowserPreviewChanged(windowId: Int) {
+    func notifyBrowserPreviewChanged(windowId: Int) {
         NotificationCenter.default.post(name: .browserAgentPreviewDidChange, object: self,
                                         userInfo: ["windowId": windowId])
     }
@@ -1480,6 +1571,7 @@ final class AgentChatStore: ObservableObject {
     /// `url` is the closed tab's: a chat tab a relaunch restored has no entry until it shows.
     func tabDidClose(_ tabId: Int, url: String? = nil) {
         guard !terminated else { return }
+        panelClosingTabs.remove(tabId)
         if let id = route.conversationId(for: url), entries[id] == nil { deleteUnloadedChatIfEmpty(id) }
         setPanelChat(nil, for: tabId)
         if panelHistory.removeValue(forKey: tabId) != nil { objectWillChange.send() }
@@ -1487,7 +1579,8 @@ final class AgentChatStore: ObservableObject {
         for id in Array(entries.keys) {
             entries[id]?.browserFolder?.remove(tabId)
             guard var preview = entries[id]?.browserPreview,
-                  preview.tabId == tabId || preview.cards.contains(where: { $0.tabId == tabId }) else { continue }
+                  preview.tabId == tabId || preview.readingTabIds.contains(tabId)
+                    || preview.cards.contains(where: { $0.tabId == tabId }) else { continue }
             preview.removeTab(tabId)
             entries[id]?.browserPreview = preview
             previewWindows.insert(preview.windowId)
@@ -1544,7 +1637,7 @@ final class AgentChatStore: ObservableObject {
 
     func closeIfTabIsGone(_ tabId: Int) {
         guard !terminated, !tabExists(tabId) else { return }
-        for id in entries.keys.filter({ entries[$0]?.tabId == tabId }) {
+        for id in entries.keys.filter({ entries[$0]?.tabId == tabId && !closing.contains($0) }) {
             // Another tab still showing the chat (Duplicate Tab) becomes its own.
             if let other = otherTab(showing: id, besides: tabId) {
                 assign(id, to: other)
@@ -1560,12 +1653,16 @@ final class AgentChatStore: ObservableObject {
         }
     }
 
-    private func close(_ id: UUID) {
+    private func close(_ id: UUID, closingAllTabs: Bool = false) {
         guard entries[id] != nil, closing.insert(id).inserted else { return }
         defer { closing.remove(id) }
+        #if !MIST_CLAUDE_CODE_HOSTLESS_TESTS
+        // Closing removes the status subscription before the engine can report its end.
+        BrowserAgentRecordings.shared.finish(chat: id, reason: .turnEnded)
+        #endif
         // A panel or another tab still showing the chat holds it; `/clear` there has already moved the panel to the fresh chat.
         let deletes = !terminated && isEmpty(id) && !shownByPanel(id)
-            && otherTab(showing: id, besides: entries[id]?.tabId ?? -1) == nil
+            && (closingAllTabs || otherTab(showing: id, besides: entries[id]?.tabId ?? -1) == nil)
         detached.remove(id)
         panelNewChats.remove(id)
         for child in parent.compactMap({ $0.value == id ? $0.key : nil }) where staysInFamilyFolder(child) { closeWithTab(child) }
@@ -1580,10 +1677,7 @@ final class AgentChatStore: ObservableObject {
         engineBindings[id] = nil
         entries[id]?.conversation.onDraftChange = nil
         entries[id]?.conversation.onClear = nil
-        for host in Array(panelHistory.keys) {
-            panelHistory[host]?.removeAll { $0 == id }
-            if panelChats[host] == id { panelChats[host] = panelHistory[host]?.last }
-        }
+        removeFromPanelHistory(id)
         visiblePanels = visiblePanels.filter { $0.value != id }
         statusBindings[id] = nil
         idleTabs[id] = nil
@@ -1637,6 +1731,8 @@ final class AgentChatStore: ObservableObject {
         #if !MIST_CLAUDE_CODE_HOSTLESS_TESTS
         tabBindings.removeAll()
         #endif
+        closeOnTabArrival.removeAll()
+        panelClosingTabs.removeAll()
         pendingCloses.values.forEach { $0.cancel() }
         pendingCloses.removeAll()
         for entry in entries.values {

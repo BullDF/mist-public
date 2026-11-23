@@ -251,8 +251,8 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
         }
     }
 
-    /// Mail's links: a typed tab Chromium inserted next to a hidden pinned tab.
-    func testTypedTabAtExplicitIndexAppendsAndSurvivesInitialChromiumEcho() throws {
+    /// Mail's links: Chromium reports the tab with no creation kind, at strip index 0.
+    func testMailLinkTabAppendsAndSurvivesInitialChromiumEcho() throws {
         let state = try makeState()
         seedNormalTabs(state)
 
@@ -264,22 +264,30 @@ final class BrowserStateHiddenOpenerInsertionTests: XCTestCase {
         pinnedLiveTab.isPinned = true
         state.tabs.append(pinnedLiveTab)
 
+        state.openMailLink(URL(string: "https://d.example")!)
         state.handleNewTabFromChromium(
-            Tab(guid: 10, url: "https://d.example", isActive: true, index: 1),
-            context: NativeTabCreationContext(
-                isActiveAtCreation: true,
-                creationKind: .typedNewTab,
-                insertAfterTabId: 9,
-                sourceTabId: 9
-            )
+            Tab(guid: 10, url: "https://d.example", isActive: true, index: 0),
+            context: NativeTabCreationContext(isActiveAtCreation: true, creationKind: .unknown)
         )
         XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
 
-        let chromiumOrder = [9: 0, 10: 1, 1: 2, 2: 3, 3: 4]
+        let chromiumOrder = [10: 0, 9: 1, 1: 2, 2: 3, 3: 4]
         state.reorderTabs(chromiumOrder)
         XCTAssertEqual(state.normalTabs.map(\.guid), [1, 2, 3, 10])
 
         state.reorderTabs(chromiumOrder)
+        XCTAssertEqual(state.normalTabs.map(\.guid), [10, 1, 2, 3])
+    }
+
+    func testUnknownKindTabWithoutMailLinkKeepsChromiumSlot() throws {
+        let state = try makeState()
+        seedNormalTabs(state)
+
+        state.handleNewTabFromChromium(
+            Tab(guid: 10, url: "https://d.example", isActive: true, index: 0),
+            context: NativeTabCreationContext(isActiveAtCreation: true, creationKind: .unknown)
+        )
+        state.reorderTabs([10: 0, 1: 1, 2: 2, 3: 3])
         XCTAssertEqual(state.normalTabs.map(\.guid), [10, 1, 2, 3])
     }
 

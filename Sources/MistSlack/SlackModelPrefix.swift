@@ -77,7 +77,11 @@ struct SlackModelPrefix: Equatable {
 
     /// A name's parts, split at spaces and hyphens: `GPT-6.1 Terra` and `gpt-6.1-terra` both read `gpt 6.1 terra`.
     private static func names(of model: DrifterModel) -> [[String]] {
-        let alias = model.engine == .claude ? model.model : family(model.model)
+        let alias = switch model.engine {
+        case .claude: model.model
+        case .codex: family(model.model)
+        case .gemini: GeminiModelInfo.family(model.model)
+        }
         return [model.title, model.model, alias].map {
             $0.lowercased().split(whereSeparator: { $0 == " " || $0 == "-" }).map(String.init)
         }.filter { !$0.isEmpty }

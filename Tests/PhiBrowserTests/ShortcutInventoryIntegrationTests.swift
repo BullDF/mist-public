@@ -339,7 +339,7 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
     }
 
     func testProductPolicyOverridesSavedKeysAndStaleRuntimeBindings() throws {
-        let releasedKey = ShortcutsKey(characters: "m", modifiers: [.command, .shift])
+        let releasedKey = ShortcutsKey(characters: "k", modifiers: [.command, .shift])
         let commands = Array(Shortcuts.disabledShortcutCommands)
         install(Dictionary(uniqueKeysWithValues: commands.map { ($0, .custom(releasedKey)) }))
         let saved = Shortcuts.configuration.overrides
@@ -352,7 +352,7 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
         for command in commands {
             XCTAssertNil(Shortcuts.key(for: command))
             XCTAssertEqual(Shortcuts.chromiumOverrideState(for: command.rawValue), .disabled)
-            let menuItem = NSMenuItem(title: "Unsupported command", action: nil, keyEquivalent: "m")
+            let menuItem = NSMenuItem(title: "Unsupported command", action: nil, keyEquivalent: "k")
             menuItem.tag = command.rawValue
             menuItem.keyEquivalentModifierMask = [.command, .shift]
             Shortcuts.updateShortcut(for: menuItem)
@@ -461,19 +461,22 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
         XCTAssertEqual(model.filteredSections.flatMap(\.items).map(\.command), [.IDC_SHOW_BOOKMARK_BAR])
     }
 
-    @MainActor func testAppsSectionListsEachAppAfterViewWithOnlyDrifterBound() throws {
+    @MainActor func testAppsSectionListsEachAppAfterViewWithDrifterAndMailBound() throws {
         let commands = MistApps.all.map(\.openCommand) + [.PHI_NEW_DRIFTER_CHAT]
-        let drifterKey = ShortcutsKey(characters: "d", modifiers: [.command, .shift])
+        let keys: [CommandWrapper: ShortcutsKey] = [
+            .PHI_OPEN_DRIFTER: .init(characters: "d", modifiers: [.command, .shift]),
+            .PHI_OPEN_MAIL: .init(characters: "m", modifiers: [.command, .shift]),
+        ]
         XCTAssertEqual(Shortcuts.Group.apps.commands, commands)
         XCTAssertTrue(Set(commands).isDisjoint(with: Shortcuts.disabledShortcutCommands))
-        XCTAssertEqual(Shortcuts.DefaultShortcuts.filter { commands.contains($0.key) }, [.PHI_OPEN_DRIFTER: drifterKey])
+        XCTAssertEqual(Shortcuts.DefaultShortcuts.filter { commands.contains($0.key) }, keys)
         let model = ShortcutsViewModel(additionalBindings: { [] }, availableCommands: { [] })
         let titles = model.sections.map(\.category)
         let apps = try XCTUnwrap(model.sections.first { $0.category == Shortcuts.Group.apps.title })
         XCTAssertEqual(titles.firstIndex(of: apps.category), try XCTUnwrap(titles.firstIndex(of: Shortcuts.Group.view.title)) + 1)
         XCTAssertEqual(apps.items.map(\.command), commands)
         XCTAssertEqual(apps.items.map(\.name), MistAppID.allCases.map(\.name) + ["New Drifter Chat"])
-        XCTAssertEqual(apps.items.map(\.shortcutKey), commands.map { $0 == .PHI_OPEN_DRIFTER ? drifterKey : nil })
+        XCTAssertEqual(apps.items.map(\.shortcutKey), commands.map { keys[$0] })
         XCTAssertEqual(CommandWrapper.PHI_OPEN_MAIL.shortcutDescription, "Open Mail.")
     }
 
@@ -529,7 +532,7 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
     }
 
     func testUnavailableServicesDoNotConflictButOtherServiceStatesStillDo() throws {
-        install([.IDC_TAB_SEARCH: .custom(.init(characters: "m", modifiers: [.command, .shift]))])
+        install([.IDC_TAB_SEARCH: .custom(.init(characters: "k", modifiers: [.command, .shift]))])
         let menu = NSMenu()
         let services = NSMenu(title: "Services")
         services.autoenablesItems = false
@@ -543,7 +546,7 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
         group.submenu = nested
         services.addItem(group)
         let service = NSMenuItem(title: "Open man Page in Terminal",
-                                 action: NSSelectorFromString("_processRequest:"), keyEquivalent: "M")
+                                 action: NSSelectorFromString("_processRequest:"), keyEquivalent: "K")
         service.keyEquivalentModifierMask = .command
         service.allowsKeyEquivalentWhenHidden = true
         nested.addItem(service)
@@ -562,7 +565,7 @@ final class ShortcutInventoryIntegrationTests: XCTestCase {
                     XCTAssertFalse(try item(.IDC_TAB_SEARCH, in: model).hasConflict)
                 } else {
                     XCTAssertEqual(conflicts.map(\.name), [service.title])
-                    XCTAssertEqual(conflicts.first?.keys, ["⇧⌘M"])
+                    XCTAssertEqual(conflicts.first?.keys, ["⇧⌘K"])
                 }
             }
         }

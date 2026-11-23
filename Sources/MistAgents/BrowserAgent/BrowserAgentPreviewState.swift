@@ -1,6 +1,6 @@
 import Foundation
 
-/// Chat-owned working tabs, independent of view lifetimes.
+/// Chat-owned tab previews, independent of view lifetimes.
 struct BrowserAgentPreviewState: Equatable {
     let principalId: String
     let windowId: Int
@@ -20,6 +20,7 @@ struct BrowserAgentPreviewState: Equatable {
     private(set) var cards: [Card] = [] { didSet { if cards.isEmpty { cardAspect = nil } } }
     private(set) var turnActive = false
     private(set) var workedThisTurn = false
+    private(set) var readingTabIds: Set<Int> = []
     var reportOrder: UInt64 = 0
     var cardAspect: CGFloat? { didSet { if cards.isEmpty { cardAspect = nil } } }
 
@@ -39,7 +40,25 @@ struct BrowserAgentPreviewState: Equatable {
         return true
     }
 
+    @discardableResult
+    mutating func touch(principal: String?, tabId: Int, reading: Bool, live: Bool, now: Date) -> Bool {
+        guard live, principal == principalId, tabId != self.tabId else { return false }
+        if reading {
+            readingTabIds.insert(tabId)
+        } else {
+            guard readingTabIds.remove(tabId) != nil else { return false }
+            // A completed read must not bring back a dismissed or expired card.
+            guard cards.contains(where: { $0.tabId == tabId }) else { return true }
+        }
+        var updated = cards.filter { $0.tabId != tabId }
+        let workingIndex = updated.firstIndex { $0.tabId == self.tabId }
+        updated.insert(Card(tabId: tabId, lastWorked: now), at: workingIndex.map { $0 + 1 } ?? 0)
+        cards = updated
+        return true
+    }
+
     mutating func setTurnActive(_ active: Bool, now: Date) {
+        if !active { readingTabIds.removeAll() }
         guard active != turnActive else { return }
         if !active, workedThisTurn, let index = cards.firstIndex(where: { $0.tabId == tabId }) {
             cards[index].lastWorked = now
@@ -66,6 +85,7 @@ struct BrowserAgentPreviewState: Equatable {
 
     mutating func removeTab(_ tabId: Int) {
         dismiss(tabId: tabId)
+        readingTabIds.remove(tabId)
         if self.tabId == tabId { self.tabId = nil }
     }
 

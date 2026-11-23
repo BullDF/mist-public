@@ -4,13 +4,83 @@
 // found in the LICENSE file.
 
 import Foundation
+import Darwin
 
 /// Serializes a Space's bookmark tree — optionally preceded by a Favorites
 /// folder carrying the window's visible pinned tabs — into the Netscape
 /// bookmark file format (`NETSCAPE-Bookmark-file-1`) understood by Chrome,
-/// Firefox, Safari, and Edge. Pure string building — file writing and the
-/// save panel live with the menu action in `AppController`.
+/// Firefox, Safari, and Edge. Shared by the Bookmarks menu and Drifter.
 enum BookmarkHTMLExporter {
+    struct Counts {
+        let bookmarks: Int
+        let pinnedTabs: Int
+    }
+
+    enum ExportError: LocalizedError {
+        case emptySpace
+        case destinationExists
+
+        var errorDescription: String? {
+            switch self {
+            case .emptySpace: return "That Space has no bookmarks or pinned tabs to export."
+            case .destinationExists: return "A file already exists at that path. Set overwrite to true to replace it."
+            }
+        }
+    }
+
+    @MainActor
+    static func export(from state: BrowserState, to url: URL, overwrite: Bool,
+                       createParentDirectories: Bool = false,
+                       completion: @escaping (Result<Counts, Error>) -> Void) throws {
+        let bookmarks = state.bookmarkManager.rootFolder.children
+        let pinnedTabs = state.pinnedTabs
+        guard hasExportableContent(bookmarks: bookmarks, pinnedTabs: pinnedTabs) else { throw ExportError.emptySpace }
+        let counts = Counts(bookmarks: leafCount(bookmarks), pinnedTabs: pinnedTabs.filter { pinnedURL(for: $0) != nil }.count)
+        let html = htmlDocument(for: bookmarks, pinnedTabs: pinnedTabs,
+            favoritesFolderTitle: NSLocalizedString("app.bookmarkExport.exportedFolderName", value: "Favorites",
+                comment: "Bookmark export - name of the exported folder carrying the window's pinned tabs"))
+        AppController.inFlightBookmarkExportWrites += 1
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result {
+                try write(Data(html.utf8), to: url, overwrite: overwrite, createParentDirectories: createParentDirectories)
+                return counts
+            }
+            DispatchQueue.main.async {
+                AppController.inFlightBookmarkExportWrites -= 1
+                if AppController.bookmarkExportTerminationPending {
+                    AppController.shared.resumeTerminationAfterConfirmedExports()
+                }
+                completion(result)
+            }
+        }
+    }
+
+    private static func write(_ data: Data, to url: URL, overwrite: Bool, createParentDirectories: Bool) throws {
+        let files = FileManager.default
+        let parent = url.deletingLastPathComponent()
+        if createParentDirectories {
+            try files.createDirectory(at: parent, withIntermediateDirectories: true)
+        }
+        if overwrite {
+            try data.write(to: url, options: .atomic)
+            return
+        }
+        if files.fileExists(atPath: url.path) { throw ExportError.destinationExists }
+        // Publish the completed file atomically, failing even if a competing writer just created the destination.
+        let staging = parent.appendingPathComponent(".mist-bookmarks-\(UUID().uuidString).tmp")
+        defer { try? files.removeItem(at: staging) }
+        try data.write(to: staging, options: .atomic)
+        guard renamex_np(staging.path, url.path, UInt32(RENAME_EXCL)) == 0 else {
+            let code = errno
+            if code == EEXIST { throw ExportError.destinationExists }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code), userInfo: [NSFilePathErrorKey: url.path])
+        }
+    }
+
+    private static func leafCount(_ bookmarks: [Bookmark]) -> Int {
+        bookmarks.reduce(0) { $0 + ($1.isFolder ? leafCount($1.children) : 1) }
+    }
+
     static func htmlDocument(for bookmarks: [Bookmark],
                              pinnedTabs: [Tab],
                              favoritesFolderTitle: String) -> String {
@@ -64,14 +134,19 @@ enum BookmarkHTMLExporter {
     /// secondary fields on pinned records are never emitted (they would
     /// duplicate the partner's entry).
     private static func favoritesEntry(for tab: Tab) -> String? {
-        let savedOrLiveURL = (tab.pinnedUrl?.isEmpty == false) ? tab.pinnedUrl : tab.url
-        guard let url = savedOrLiveURL, !url.isEmpty else { return nil }
+        guard let url = pinnedURL(for: tab) else { return nil }
         let title = tab.storedTitle ?? tab.title
         let favicon = isFaviconPresumedDrifted(for: tab) ? nil : tab.cachedFaviconData
         let attributes = " HREF=\"\(escaped(url))\""
             + addDateAttribute(for: tab.pinnedCreatedDate)
             + iconAttribute(for: favicon)
         return "        <DT><A\(attributes)>\(escaped(title))</A>"
+    }
+
+    private static func pinnedURL(for tab: Tab) -> String? {
+        if let url = tab.pinnedUrl, !url.isEmpty { return url }
+        guard let url = tab.url, !url.isEmpty else { return nil }
+        return url
     }
 
     /// An open pinned tab's cached favicon follows live navigation (it is

@@ -43,7 +43,7 @@ enum MailNotificationPolicy {
 }
 
 /// Chromium installs its own delegate lazily. Keep it as a weak forwarding target
-/// whenever Mail reclaims the center, rather than taking over site notifications.
+/// whenever Mist installs its delegate for Mail and Drifter.
 @MainActor
 final class MistMailNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     private weak var forwardDelegate: (any UNUserNotificationCenterDelegate)?
@@ -61,7 +61,8 @@ final class MistMailNotificationDelegate: NSObject, UNUserNotificationCenterDele
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                            withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
         Task { @MainActor in
-            if MailNotificationPolicy.handles(notification.request.identifier) { completionHandler(presentation()) }
+            if DrifterNotifier.handles(notification.request.identifier) { completionHandler([.banner, .list, .sound]) }
+            else if MailNotificationPolicy.handles(notification.request.identifier) { completionHandler(presentation()) }
             else if let target = forwardDelegate, target.responds(to: #selector(userNotificationCenter(_:willPresent:withCompletionHandler:))) {
                 target.userNotificationCenter?(center, willPresent: notification, withCompletionHandler: completionHandler)
             } else { completionHandler([.banner, .list]) }
@@ -70,7 +71,14 @@ final class MistMailNotificationDelegate: NSObject, UNUserNotificationCenterDele
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                            withCompletionHandler completionHandler: @escaping @Sendable () -> Void) {
         Task { @MainActor in
-            if MailNotificationPolicy.handles(response.notification.request.identifier) {
+            let request = response.notification.request
+            if DrifterNotifier.handles(request.identifier) {
+                if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+                   let id = UUID(uuidString: request.content.threadIdentifier) {
+                    DrifterNotifier.openChat(id)
+                }
+                completionHandler()
+            } else if MailNotificationPolicy.handles(request.identifier) {
                 if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
                     let id = (response.notification.request.content.userInfo["messageID"] as? String).flatMap(UUID.init(uuidString:))
                     open(id)
@@ -83,7 +91,8 @@ final class MistMailNotificationDelegate: NSObject, UNUserNotificationCenterDele
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?) {
         Task { @MainActor in
-            if let notification, MailNotificationPolicy.handles(notification.request.identifier) { return }
+            if let identifier = notification?.request.identifier,
+               MailNotificationPolicy.handles(identifier) || DrifterNotifier.handles(identifier) { return }
             forwardDelegate?.userNotificationCenter?(center, openSettingsFor: notification)
         }
     }
@@ -136,6 +145,11 @@ final class MistMailNotifier {
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
     }
 
+    func add(_ request: UNNotificationRequest) async throws {
+        proxy.install(on: center)
+        try await center.add(request)
+    }
+
     func post(_ messages: [MailMessageSummary], accounts: [MailAccount]) async {
         guard MailNotificationPolicy.isEnabled(in: defaults) else { return }
         let requests = MailNotificationContent.requests(for: messages, accounts: accounts)
@@ -143,12 +157,11 @@ final class MistMailNotifier {
         for request in requests {
             guard MailNotificationPolicy.isEnabled(in: defaults) else { return }
             guard !removedIdentifiers.contains(request.identifier) else { continue }
-            proxy.install(on: center)
             let content = UNMutableNotificationContent()
             content.title = request.title; content.subtitle = request.subtitle; content.body = request.body
             content.threadIdentifier = request.threadIdentifier; content.userInfo = request.userInfo; content.sound = .default
             do {
-                try await center.add(UNNotificationRequest(identifier: request.identifier, content: content, trigger: nil))
+                try await add(UNNotificationRequest(identifier: request.identifier, content: content, trigger: nil))
                 if removedIdentifiers.contains(request.identifier) {
                     center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
                     center.removePendingNotificationRequests(withIdentifiers: [request.identifier])

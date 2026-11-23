@@ -155,6 +155,9 @@ enum CommandWrapper: Int, Equatable {
     case PHI_MAKE_PRIMARY_WINDOW     = 90038
     case PHI_NEW_DRIFTER_CHAT        = 90039
     case PHI_SWITCH_CHAT_PANEL_AND_TAB = 90040
+    case PHI_SET_START_PAGE          = 90041
+    case PHI_RETURN_TO_START_PAGE    = 90042
+    case PHI_CLOSE_PANEL_CHAT        = 90043
     case PHI_OPEN_MAIL               = 90031
     case PHI_DRIFTER_MODEL_MENU      = 90032
     case PHI_DRIFTER_EFFORT_MENU     = 90033
@@ -651,7 +654,7 @@ extension Shortcuts {
         .IDC_ZOOM_NORMAL: .init(characters: "0", modifiers: .command),
         .IDC_ZOOM_PLUS: .init(characters: "=", modifiers: .command),
         .IDC_ZOOM_MINUS: .init(characters: "-", modifiers: .command),
-        .IDC_DEV_TOOLS: .init(characters: "i", modifiers: [.command, .option]),
+        .IDC_DEV_TOOLS: .init(characters: "i", modifiers: [.command, .shift]),
 
         // Bookmarks
         .IDC_SHOW_BOOKMARK_MANAGER: .init(characters: "b", modifiers: [.command, .option]),
@@ -660,19 +663,23 @@ extension Shortcuts {
         // Tab
         .IDC_DUPLICATE_TAB: .init(characters: "y", modifiers: .command),
         .IDC_TAB_SEARCH: .init(characters: "a", modifiers: [.command, .shift]),
+        .PHI_SET_START_PAGE: .init(characters: "s", modifiers: [.command, .shift]),
+        // ⇧⌘H was Chromium's Home, which Mist disables.
+        .PHI_RETURN_TO_START_PAGE: .init(characters: "h", modifiers: [.command, .shift]),
 
         // PHI
         .PHI_TOGGLE_SIDEBAR: .init(characters: "s", modifiers: [.command]),
         .PHI_TOGGLE_CHATBAR: .init(characters: "e", modifiers: .command),
         // ⇧⌘F was Chromium's Always Show Toolbar in Full Screen, which Mist disables.
         .PHI_SWITCH_CHAT_PANEL_AND_TAB: .init(characters: "f", modifiers: [.command, .shift]),
+        .PHI_CLOSE_PANEL_CHAT: .init(characters: "e", modifiers: [.command, .shift]),
         .PHI_TAB_SWITCHER_FORWARD: .init(characters: "\t", modifiers: .control),
         .PHI_TAB_SWITCHER_BACKWARD: .init(characters: "\t", modifiers: [.control, .shift]),
         .PHI_COPY_URL: .init(characters: "c", modifiers: [.command, .shift]),
         // Printable shortcuts store the shifted character, as shortcut recording does.
         .PHI_CAPTURE_FULL_PAGE: .init(characters: "!", modifiers: [.command, .shift]),
         .PHI_CAPTURE_AREA: .init(characters: "@", modifiers: [.command, .shift]),
-        .PHI_ALTERNATE_NEW_TAB: .init(characters: "t", modifiers: [.command, .option]),
+        .PHI_ALTERNATE_NEW_TAB: .init(characters: "l", modifiers: [.command, .shift]),
         // Only while a Drifter composer has focus.
         .PHI_DRIFTER_MODEL_MENU: .init(characters: "m", modifiers: .command),
         .PHI_DRIFTER_EFFORT_MENU: .init(characters: ".", modifiers: .command),
@@ -680,6 +687,8 @@ extension Shortcuts {
 
         // Apps
         .PHI_OPEN_DRIFTER: .init(characters: "d", modifiers: [.command, .shift]),
+        // ⇧⌘M was Chromium's profile menu, which Mist disables.
+        .PHI_OPEN_MAIL: .init(characters: "m", modifiers: [.command, .shift]),
 
         // System Preserved Shortcuts
         .IDS_CLOSE_ALL_WINDOWS_MAC: .init(characters: "w", modifiers: [.command, .option, .shift]), // alternate

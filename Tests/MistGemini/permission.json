@@ -1,0 +1,16 @@
+{
+  "jsonrpc":"2.0","id":1,"method":"session/request_permission",
+  "params":{
+    "sessionId":"example",
+    "options":[
+      {"optionId":"persistent","name":"Always allow","kind":"allow_always"},
+      {"optionId":"proceed_once","name":"Allow","kind":"allow_once"},
+      {"optionId":"cancel","name":"Reject","kind":"reject_once"}
+    ],
+    "toolCall":{
+      "toolCallId":"mcp_mistbrowser_send_mail__example","status":"pending","title":"send_mail(draft_id: example-draft)",
+      "kind":"other","content":[],"locations":[],
+      "_meta":{"gemini-cli":{"mcp":{"server_name":"mistbrowser","tool_name":"send_mail"}}}
+    }
+  }
+}

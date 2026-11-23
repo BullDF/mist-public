@@ -13,7 +13,9 @@ final class MistDrifterLaunchRow: NSView {
     let backgroundLabel = NSTextField(labelWithString: "")
     let backgroundButton = MistMenuButton()
     private var backgroundTasks: [AgentBackgroundTask] = []
+    private var schedules: [DrifterSchedule] = []
     private var onStopTask: ((String) -> Void)?
+    private var onCancelSchedule: ((String) -> Void)?
     private var subscription: AnyCancellable?
 
     init(settings: DrifterSettings) {
@@ -66,18 +68,37 @@ final class MistDrifterLaunchRow: NSView {
         needsLayout = true
     }
     func setBackgroundTasks(_ tasks: [AgentBackgroundTask], onStop: ((String) -> Void)? = nil) {
-        // Only an active chat has running tasks; the New Tab launch strip stays empty.
         backgroundTasks = tasks
         onStopTask = onStop
-        backgroundLabel.stringValue = AgentChatStrings.backgroundCount(tasks)
-        let tooltip = tasks.isEmpty ? nil : tasks.map(\.description).joined(separator: "\n")
+        refreshBackgroundChip()
+    }
+
+    func setSchedules(_ schedules: [DrifterSchedule], onCancel: @escaping (String) -> Void) {
+        onCancelSchedule = onCancel
+        guard self.schedules != schedules else { return }
+        self.schedules = schedules
+        refreshBackgroundChip()
+    }
+
+    private func refreshBackgroundChip() {
+        var counts: [String] = []
+        if !backgroundTasks.isEmpty { counts.append(AgentChatStrings.backgroundCount(backgroundTasks)) }
+        if !schedules.isEmpty { counts.append(AgentChatStrings.scheduleCount(schedules.count)) }
+        backgroundLabel.stringValue = counts.joined(separator: " · ")
+        let lines = backgroundTasks.map(\.description) + schedules.map(scheduleMenuTitle)
+        let tooltip = lines.isEmpty ? nil : lines.joined(separator: "\n")
+        let hasMenu = !schedules.isEmpty || (!backgroundTasks.isEmpty && onStopTask != nil)
         backgroundLabel.setCustomTooltip(tooltip)
-        backgroundLabel.isHidden = tasks.isEmpty || onStop != nil
+        backgroundLabel.isHidden = backgroundTasks.isEmpty || hasMenu
         backgroundButton.title = backgroundLabel.stringValue
         backgroundButton.setAccessibilityLabel(backgroundLabel.stringValue)
         backgroundButton.setCustomTooltip(tooltip)
-        backgroundButton.isHidden = tasks.isEmpty || onStop == nil
+        backgroundButton.isHidden = !hasMenu
         needsLayout = true
+    }
+
+    private func scheduleMenuTitle(_ schedule: DrifterSchedule) -> String {
+        schedule.title + " · " + schedule.nextRun.formatted(date: .abbreviated, time: .shortened)
     }
 
     func backgroundMenu() -> NSMenu {
@@ -85,7 +106,18 @@ final class MistDrifterLaunchRow: NSView {
         for task in backgroundTasks {
             let entry = NSMenuItem(title: task.description, action: nil, keyEquivalent: "")
             let submenu = NSMenu()
-            submenu.addItem(item(AgentChatStrings.stop, value: task.id, selected: false, action: #selector(stopBackgroundTask(_:))))
+            submenu.autoenablesItems = false
+            let stop = item(AgentChatStrings.stop, value: task.id, selected: false, action: #selector(stopBackgroundTask(_:)))
+            stop.isEnabled = onStopTask != nil
+            submenu.addItem(stop)
+            entry.submenu = submenu
+            menu.addItem(entry)
+        }
+        if !backgroundTasks.isEmpty && !schedules.isEmpty { menu.addItem(.separator()) }
+        for schedule in schedules {
+            let entry = NSMenuItem(title: scheduleMenuTitle(schedule), action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            submenu.addItem(item(AgentChatStrings.cancelSchedule, value: schedule.id, selected: false, action: #selector(cancelSchedule(_:))))
             entry.submenu = submenu
             menu.addItem(entry)
         }
@@ -97,12 +129,16 @@ final class MistDrifterLaunchRow: NSView {
         guard let id = item.representedObject as? String, backgroundTasks.contains(where: { $0.id == id }) else { return }
         onStopTask?(id)
     }
+    @objc private func cancelSchedule(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String, schedules.contains(where: { $0.id == id }) else { return }
+        onCancelSchedule?(id)
+    }
 
     override func layout() {
         super.layout()
         attachButton.frame = NSRect(x: 0, y: 0, width: 28, height: 28)
         for button in [confirmationButton, modelButton, effortButton] { button.imagePosition = .imageLeading }
-        // The running-task menu always keeps room for at least its circle.
+        // Keep room for the background menu's circle when the count doesn't fit.
         let backgroundReserve: CGFloat = backgroundButton.isHidden ? 0 : 28 + 12
         var confirmationWidth = confirmationButton.intrinsicContentSize.width
         var modelWidth = min(240, modelButton.intrinsicContentSize.width)
@@ -133,7 +169,7 @@ final class MistDrifterLaunchRow: NSView {
         var backgroundWidth = backgroundButton.intrinsicContentSize.width + 4
         if backgroundWidth > backgroundRoom {
             backgroundButton.imagePosition = .imageOnly
-            backgroundButton.symbolName = "terminal"
+            backgroundButton.symbolName = backgroundTasks.isEmpty ? "clock" : "terminal"
             backgroundWidth = 28
         }
         backgroundButton.frame = NSRect(x: backgroundX, y: 0, width: backgroundWidth, height: 28)
@@ -153,9 +189,9 @@ final class MistDrifterLaunchRow: NSView {
         menu.autoenablesItems = false
         for engine in DrifterEngine.allCases where settings.lockedEngine == nil || settings.lockedEngine == engine {
             if !menu.items.isEmpty { menu.addItem(.separator()) }
-            let title = NSMenuItem(title: engine == .claude ? "Claude" : "GPT", action: nil, keyEquivalent: "")
+            let title = NSMenuItem(title: engine.pickerTitle, action: nil, keyEquivalent: "")
             title.isEnabled = false; menu.addItem(title)
-            if engine == .codex, let message = settings.codexMessage {
+            if let message = settings.modelMessages[engine] {
                 let item = NSMenuItem(title: message, action: nil, keyEquivalent: "")
                 item.isEnabled = false; menu.addItem(item)
             } else {

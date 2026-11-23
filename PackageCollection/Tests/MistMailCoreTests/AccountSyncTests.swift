@@ -2,6 +2,33 @@ import XCTest
 @testable import MistMailCore
 
 final class AccountSyncTests: XCTestCase {
+    func testLegacyAccountDecodesWithoutSignature() throws {
+        let data = try JSONEncoder().encode(MailAccount(config: testConfig()))
+        let account = try JSONDecoder().decode(MailAccount.self, from: data)
+        XCTAssertNil(account.config.signatureHTML)
+    }
+
+    func testSignatureEditPersistsWithoutTestingOrReconnecting() async throws {
+        let fixture = EngineFixture(), engine = try fixture.engine()
+        let account = MailAccount(config: testConfig())
+        try await engine.applySyncedAccount(account, password: nil)
+        await engine.setStatus(account.id, .connected)
+        var config = account.config
+        config.signatureHTML = "<b>Example Sender</b>"
+        try await engine.updateAccount(account.id, config: config)
+        let saved = try await engine.accounts(), status = await engine.accountStatuses()[account.id]
+        let connections = await fixture.server.connectCount
+        XCTAssertEqual(saved.first?.config.signatureHTML, config.signatureHTML)
+        XCTAssertEqual(status, .connected)
+        XCTAssertEqual(connections, 0)
+        config.signatureHTML = String(repeating: "é", count: 16_385)
+        XCTAssertThrowsError(try config.validate()) { XCTAssertEqual($0 as? MailError, .signatureTooLong) }
+        config.signatureHTML = "<div>&nbsp;<br></div>"
+        try await engine.updateAccount(account.id, config: config)
+        let cleared = try await engine.accounts()
+        XCTAssertNil(cleared.first?.config.signatureHTML)
+    }
+
     func testOfflineUpsertPreservesIdentityAndPasswordAndEmitsChanges() async throws {
         let fixture = EngineFixture(), engine = try fixture.engine()
         let events = await engine.events()

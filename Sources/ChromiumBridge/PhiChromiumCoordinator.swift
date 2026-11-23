@@ -274,6 +274,15 @@ extension PhiChromiumCoordinator: @preconcurrency PhiChromiumBridgeDelegate {
     /// destination, or keeps it in the source window if the user declines.
     /// Owns the prompt + routing so Chromium stays out of the UI and
     /// Space-window lifecycle.
+    func askSpace(forURL urlString: String, defaultSpaceId: String, sourceWindowId: Int64,
+                  sourceIsNewTab: Bool, ordinaryNewTab: Bool) {
+        // `ordinaryNewTab` picks upstream's top-or-end placement; every new
+        // tab opens at the end in Mist. The four-argument callback is what
+        // the framework sends a client without this one.
+        askSpace(forURL: urlString, defaultSpaceId: defaultSpaceId,
+                 sourceWindowId: sourceWindowId, sourceIsNewTab: sourceIsNewTab)
+    }
+
     func askSpace(forURL urlString: String, defaultSpaceId: String, sourceWindowId: Int64, sourceIsNewTab: Bool) {
         Task { @MainActor [self] in
             let manager = SpaceManager.shared
@@ -429,6 +438,14 @@ extension PhiChromiumCoordinator: @preconcurrency PhiChromiumBridgeDelegate {
     /// activates (cold-spawning if needed) the target Space's window in the
     /// source window's slot and opens the URL there, bypassing Space URL
     /// routing for the re-open so the same rule doesn't re-match in a loop.
+    func routeURL(inSpace spaceId: String, url urlString: String, sourceWindowId: Int64,
+                  ordinaryNewTab: Bool, sourceIsNewTab: Bool) {
+        // `ordinaryNewTab` picks upstream's top-or-end placement; every new
+        // tab opens at the end in Mist. The three-argument callback is what
+        // the framework sends a client without this one.
+        routeURL(inSpace: spaceId, url: urlString, sourceWindowId: sourceWindowId)
+    }
+
     func routeURL(inSpace spaceId: String, url urlString: String, sourceWindowId: Int64) {
         Task { @MainActor in
             // Silent auto-route to a Space with no open window. The stranded
@@ -1699,6 +1716,17 @@ extension PhiChromiumCoordinator {
     func isPeekLinkSurfaceEnabled() -> Bool {
         PhiPreferences.GeneralSettings.peekViewEnabled.loadValue()
             && !PhiPreferences.GeneralSettings.loadLayoutMode().isTraditional
+    }
+
+    // Synchronous query from Chromium as it creates the new foreground tab of
+    // a link: whether that tab opens in the Peek panel on its own. Chromium
+    // keeps the tab's first load in its window when it does.
+    func opensAutoPeekForLink(fromTabId sourceTabId: Int64,
+                              url: String,
+                              windowId: Int64) -> Bool {
+        SpaceSessionControllersManager.shared
+            .getBrowserState(for: windowId.intValue)?
+            .opensAutoPeek(forLinkFrom: sourceTabId.intValue, urlString: url) ?? false
     }
 
     // Content blocking of a profile published a new rule generation or

@@ -158,22 +158,30 @@ final class MailPageModel: ObservableObject {
         await queueComposeTransition { [self] in
             guard try await endCompose() else { return }
             guard let account = prefill.accountID ?? mailbox?.accountID ?? selectedMessage?.accountID ?? state.accounts.first?.id else { throw MailError.notFound }
-            let draft = MailDraft(accountID: account, to: prefill.to, cc: prefill.cc, bcc: prefill.bcc, subject: prefill.subject,
-                                  plainText: prefill.body, html: MailComposeFormatting.document(html: nil, plainText: prefill.body))
-            showCompose(try await source.saveDraft(draft), fresh: true, focus: .recipients)
+            let signature = signature(for: account)
+            var draft = MailDraft(accountID: account, to: prefill.to, cc: prefill.cc, bcc: prefill.bcc, subject: prefill.subject)
+            MailComposeFormatting.applyMessageBody(prefill.body, signature: signature, to: &draft)
+            showCompose(try await source.saveDraft(draft), fresh: true, focus: .recipients, automaticSignature: signature)
         }.value
     }
     func reply(to message: MailMessageSummary, all: Bool = false) async {
         await queueComposeTransition { [self] in
             guard try await endCompose() else { return }
-            showCompose(try await source.makeReply(to: message.id, all: all), fresh: true, focus: .body)
+            var draft = try await source.replyDraft(to: message.id, all: all)
+            MailComposeFormatting.applyMessageBody(signature: signature(for: draft.accountID), to: &draft)
+            showCompose(try await source.saveDraft(draft), fresh: true, focus: .body)
         }.value
     }
     func forward(_ message: MailMessageSummary) async {
         await queueComposeTransition { [self] in
             guard try await endCompose() else { return }
-            showCompose(try await source.makeForward(message.id), fresh: true, focus: .recipients)
+            var draft = try await source.forwardDraft(message.id)
+            MailComposeFormatting.applyMessageBody(signature: signature(for: draft.accountID), to: &draft)
+            showCompose(try await source.saveDraft(draft), fresh: true, focus: .recipients)
         }.value
+    }
+    private func signature(for accountID: UUID) -> String? {
+        MailAccountConfig.normalizedSignature(state.accounts.first { $0.id == accountID }?.config.signatureHTML)
     }
     func closeCompose() async {
         await queueComposeTransition { [self] in _ = try await endCompose() }.value
@@ -184,8 +192,9 @@ final class MailPageModel: ObservableObject {
         try await compose.close()
         return self.compose == nil
     }
-    private func showCompose(_ draft: MailDraft, fresh: Bool, focus: MailComposeModel.InitialFocus? = nil) {
-        let model = MailComposeModel(draft: draft, source: source, discardIfUntouched: fresh, initialFocus: focus ?? (draft.to.isEmpty ? .recipients : .body))
+    private func showCompose(_ draft: MailDraft, fresh: Bool, focus: MailComposeModel.InitialFocus? = nil, automaticSignature: String? = nil) {
+        let model = MailComposeModel(draft: draft, source: source, discardIfUntouched: fresh,
+                                     initialFocus: focus ?? (draft.to.isEmpty ? .recipients : .body), automaticSignature: automaticSignature)
         model.onError = { [weak self] in self?.showError($0) }
         model.onFinish = { [weak self, weak model] in
             guard let self, compose === model else { return }

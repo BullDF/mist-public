@@ -260,7 +260,10 @@ final class ShortcutNativeMenuIntegrationTests: XCTestCase {
         }
         service.keyEquivalentModifierMask = .command
         service.keyEquivalent = "M"
-        XCTAssertEqual(service.keyEquivalent, "M")
+        XCTAssertTrue(service.keyEquivalent.isEmpty, "Mail's ⇧⌘M is reserved too")
+        service.keyEquivalentModifierMask = .command
+        service.keyEquivalent = "K"
+        XCTAssertEqual(service.keyEquivalent, "K")
     }
 
     func testServiceSuppressionCoversReplacementSubmenusAndMenuTracking() throws {

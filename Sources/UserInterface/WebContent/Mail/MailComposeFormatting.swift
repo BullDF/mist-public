@@ -13,9 +13,11 @@ struct MailComposePrefill {
 struct MailComposeExport: Equatable {
     var html: String
     var plainText: String
+    var hasOnlyUntouchedSignature = false
 }
 
 enum MailComposeFormatting {
+    static let bodyFontStack = "-apple-system, Helvetica, Arial, sans-serif"
     static func addresses(_ text: String) -> [MailAddress] {
         var pieces: [String] = [], current = "", quoted = false, angle = false, escaped = false
         for character in text {
@@ -95,7 +97,26 @@ enum MailComposeFormatting {
     static func document(html: String?, plainText: String = "") -> String {
         let body = html ?? plainHTML(plainText)
         if body.range(of: "<body\\b", options: [.regularExpression, .caseInsensitive]) != nil { return body }
-        return "<!doctype html><html><head><meta charset=\"utf-8\"></head><body style=\"font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:13px\">\(body)</body></html>"
+        return "<!doctype html><html><head><meta charset=\"utf-8\"></head><body style=\"font-family:\(bodyFontStack.replacingOccurrences(of: " ", with: ""));font-size:16px\">\(body)</body></html>"
+    }
+    static func messageBody(_ text: String, signature: String?, quoteHTML: String? = nil, quoteText: String = "") -> MailComposeExport {
+        let blankLine = "<div><br></div>"
+        let signature = MailAccountConfig.normalizedSignature(signature) ?? ""
+        let quoteText = String(quoteText.drop(while: \.isNewline))
+        let quote = quoteHTML.map { $0.hasPrefix(blankLine) ? String($0.dropFirst(blankLine.count)) : $0 }
+            ?? (quoteText.isEmpty ? "" : plainHTML(quoteText))
+        let fragment = plainHTML(text) + blankLine + "<div class=\"mist-signature\">\(signature)</div>"
+            + (quote.isEmpty ? "" : blankLine + quote)
+        let plainText = [text, MailText.readable(signature), quoteText].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return .init(html: document(html: fragment), plainText: plainText)
+    }
+
+    static func applyMessageBody(_ text: String = "", signature: String?, to draft: inout MailDraft) {
+        let isQuoted = draft.replyContext != nil
+        let contents = messageBody(text, signature: signature, quoteHTML: isQuoted ? draft.html : nil,
+                                   quoteText: isQuoted ? draft.plainText : "")
+        draft.html = contents.html
+        draft.plainText = contents.plainText
     }
     static func referencedCIDs(_ html: String) -> Set<String> {
         guard let regex = try? NSRegularExpression(pattern: "cid:([^\\s\"'<>]+)", options: .caseInsensitive) else { return [] }

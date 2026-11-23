@@ -10,7 +10,7 @@ final class ClaudeCodeLaunchTests: XCTestCase {
         let request = DrifterLaunchRequest(prompt: "hello", config: .init(), windowId: 42)
         let args = try XCTUnwrap(request.claude(folder: folder, server: .init(command: "node")).launchArguments)
         func value(_ flag: String) throws -> String { args[try XCTUnwrap(args.firstIndex(of: flag)) + 1] }
-        XCTAssertEqual(try value("--tools"), "Bash,Read,Write,Edit,Glob,Grep,NotebookEdit,AskUserQuestion,EnterPlanMode,ExitPlanMode,Monitor,TaskStop,ToolSearch,WebSearch,WebFetch,CronCreate,CronDelete,CronList,ScheduleWakeup,PushNotification,ListMcpResourcesTool,ReadMcpResourceTool,ReadMcpResourceDirTool,Artifact,ArtifactComments,ArtifactData,ArtifactCheck")
+        XCTAssertEqual(try value("--tools"), "Bash,Read,Write,Edit,Glob,Grep,NotebookEdit,AskUserQuestion,EnterPlanMode,ExitPlanMode,Monitor,TaskStop,ToolSearch,WebSearch,WebFetch,ListMcpResourcesTool,ReadMcpResourceTool,ReadMcpResourceDirTool,Artifact,ArtifactComments,ArtifactData,ArtifactCheck")
         XCTAssertEqual(try value("--disallowedTools"), "Skill")
         let settings = try JSONDecoder().decode(ClaudeCodeJSON.self, from: Data(value("--settings").utf8))
         XCTAssertEqual(settings["autoMemoryDirectory"].string, "/owned/memory")

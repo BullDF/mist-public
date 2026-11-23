@@ -20,10 +20,15 @@ check(plan.sourceHeight(body: .zero) == 0, "no body")
 
 // A transcript that fits starts at the top; a longer one shows its end at the bottom.
 let body = CGSize(width: 404, height: 300)
-let short = plan.pictureFrame(rendered: 300, content: 300, body: body)
+let short = plan.pictureFrame(rendered: 300, body: body)
 check(short == CGRect(x: 0, y: 0, width: 404, height: 150), "a short transcript at the top")
-let long = plan.pictureFrame(rendered: 700, content: 2_000, body: body)
+let long = plan.pictureFrame(rendered: 700, body: body)
 check(long == CGRect(x: 0, y: -50, width: 404, height: 350), "a long transcript's end at the bottom")
+// A whole transcript within the rounded-up source height but taller than the body still shows its end.
+let snugBody = CGSize(width: 404, height: 240)
+check(plan.sourceHeight(body: snugBody) == 500, "the source height rounds 480 up")
+check(plan.pictureFrame(rendered: 490, body: snugBody) == CGRect(x: 0, y: -5, width: 404, height: 245),
+      "a whole transcript taller than the body ends at the bottom")
 
 // Long messages keep their end from a line start; an open code fence above the cut opens again.
 check(plan.tail("short", limit: 10, step: 5, markdown: true) == "short", "a short message stays whole")

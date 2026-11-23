@@ -262,6 +262,9 @@ struct MistIconTile: View {
         case icon(NSImage)
         /// A full-color app logo, aspect-fit within the chip.
         case logo(NSImage)
+        /// A brand's square mark (an engine's logo) at a logo's size, in its own colors or, as a template, in the
+        /// primary ink. `scale` evens out marks whose artwork is padded differently, so a row of them matches.
+        case mark(NSImage, template: Bool, scale: CGFloat = 1)
         /// An image filling the tile.
         case thumbnail(NSImage)
     }
@@ -288,6 +291,10 @@ struct MistIconTile: View {
                 Image(nsImage: image).resizable().scaledToFit().frame(width: side * 0.76, height: side * 0.76)
             case let .logo(image):
                 Image(nsImage: image).renderingMode(.original).resizable().scaledToFit().frame(width: side * Self.logoFraction, height: side * Self.logoFraction)
+            case let .mark(image, template, scale):
+                Image(nsImage: image).renderingMode(template ? .template : .original).resizable().scaledToFit()
+                    .frame(width: side * Self.logoFraction * scale, height: side * Self.logoFraction * scale)
+                    .themedForeground(.textPrimary)
             case let .thumbnail(image):
                 Image(nsImage: image).resizable().scaledToFill().frame(width: side, height: side)
             }

@@ -57,8 +57,10 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         store.updateTabURL("pinned-guid", url: try XCTUnwrap(URL(string: "https://new.example")))
 
         try waitUntil(otherSpace, describing: "open copy navigates to the edited URL") {
-            wrapper.navigatedURLs.contains("https://new.example")
+            wrapper.inPlaceNavigatedURLs == ["https://new.example"]
         }
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.customValues.isEmpty)
         XCTAssertEqual(otherPinned.pinnedUrl, "https://new.example")
         XCTAssertEqual(otherPinned.url, "https://new.example")
     }
@@ -368,7 +370,9 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
 
         state.navigatePinnedTabToOriginalURL(pinnedTab)
 
-        XCTAssertEqual(wrapper.navigatedURLs, ["https://www.google.com/"])
+        XCTAssertEqual(wrapper.inPlaceNavigatedURLs, ["https://www.google.com/"])
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.customValues.isEmpty)
     }
 
     func testPinnedTabOriginNavigationDoesNothingAtOriginalURL() throws {
@@ -385,6 +389,7 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         state.navigatePinnedTabToOriginalURL(pinnedTab)
 
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.inPlaceNavigatedURLs.isEmpty)
         XCTAssertTrue(wrapper.customValues.isEmpty)
     }
 
@@ -402,6 +407,7 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         state.navigatePinnedTabToOriginalURL(pinnedTab)
 
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.inPlaceNavigatedURLs.isEmpty)
         XCTAssertTrue(wrapper.customValues.isEmpty)
     }
 
@@ -434,7 +440,9 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
                 )
             ]
         )
-        XCTAssertEqual(wrapper.navigatedURLs, ["https://www.google.com/"])
+        XCTAssertEqual(wrapper.inPlaceNavigatedURLs, ["https://www.google.com/"])
+        XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.customValues.isEmpty)
     }
 
     func testScopeMigrationRebindsOpenPinnedTabWithoutReplacingRuntimeObject() async throws {
@@ -497,6 +505,7 @@ final class BrowserStatePinnedTabEditCrossSpaceTests: XCTestCase {
         XCTAssertEqual(liveTab.guidInLocalDB, newGuid)
         XCTAssertEqual(wrapper.customValues.last, newGuid)
         XCTAssertTrue(wrapper.navigatedURLs.isEmpty)
+        XCTAssertTrue(wrapper.inPlaceNavigatedURLs.isEmpty)
 
         wrapper.favIconData = updatedFavicon
         await store.performBackgroundWriteAndWait { _ in }
@@ -845,6 +854,11 @@ private final class PinnedEditWebContentWrapperSpy: NSObject, WebContentWrapper 
     func stopLoading() {}
     func navigate(toURL urlString: String) {
         navigatedURLs.append(urlString)
+        self.urlString = urlString
+    }
+    private(set) var inPlaceNavigatedURLs: [String] = []
+    func navigateInPlace(toURL urlString: String) {
+        inPlaceNavigatedURLs.append(urlString)
         self.urlString = urlString
     }
     func setAsActiveTab() {}

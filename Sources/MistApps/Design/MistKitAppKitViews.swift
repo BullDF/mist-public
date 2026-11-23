@@ -260,6 +260,19 @@ final class MistIconTileView: NSView {
             let inset: CGFloat
             if case .logo = content { inset = side * (1 - MistIconTile.logoFraction) / 2 } else { inset = side * 0.12 }
             imageView.frame = bounds.insetBy(dx: inset, dy: inset)
+        case let .mark(image, template, scale):
+            let mark = image.copy() as? NSImage
+            mark?.isTemplate = template
+            imageView.image = mark
+            if template {
+                imageView.phi.setContentTintColor(.textPrimary)
+            } else {
+                imageView.phi[\.contentTintColor] = nil
+                imageView.contentTintColor = nil
+            }
+            imageView.imageScaling = .scaleProportionallyUpOrDown
+            let inset = side * (1 - MistIconTile.logoFraction * scale) / 2
+            imageView.frame = bounds.insetBy(dx: inset, dy: inset)
         case let .thumbnail(image):
             imageView.isHidden = true
             layer?.contents = image.cgImage(forProposedRect: nil, context: nil, hints: nil)

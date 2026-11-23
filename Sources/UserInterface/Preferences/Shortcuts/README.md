@@ -313,13 +313,14 @@ items show no key.
   detached copy of the item to recover its declared binding and report the
   conflict. Explicitly cleared bindings remain empty in the copy and stay excluded.
   Entries under `NSApp.servicesMenu` that are both hidden and disabled are excluded
-  from the snapshot. Independently, `AppController` reserves Command-Shift-A for
-  browser use by clearing that key from AppKit Services (`_processRequest:`).
+  from the snapshot. Independently, `AppController` reserves Command-Shift-A and
+  Command-Shift-M (Terminal's man page Services' defaults) for browser use by
+  clearing those keys from AppKit Services (`_processRequest:`).
   It handles menu insertion, item changes, menu tracking and main-menu replacement,
   including detached Services copies. Service actions remain available by menu;
   other service keys and the user's system-wide Services preferences are unchanged.
   Chromium menu bindings and hidden accelerators are not suppressed. This policy
-  stays in effect when Tab Search is customized or disabled.
+  stays in effect when Tab Search or Mail is customized or disabled.
 - The Apps section, after View, lists the Apps menu's commands (`PHI_OPEN_CLIPBOARD`,
   `PHI_OPEN_DRIFTER`, `PHI_OPEN_MAIL`) by app name, in `MistApps.all` order, followed
   by New Drifter Chat (`PHI_NEW_DRIFTER_CHAT`), which has no default key.
@@ -547,6 +548,18 @@ native chat in the focused page's Chat panel. The View-menu action
 mounted Chat panel, or from the focused tab's open Chat panel to the chat's tab;
 it is disabled otherwise, regardless of keyboard focus.
 
+`PHI_CLOSE_PANEL_CHAT` (⇧⌘E, View ▸ Close Chat) runs the Chat panel header's
+Close Chat on the focused tab's open panel while it shows a chat; otherwise the
+key stays with the page.
+
+## Start Page Commands
+
+`PHI_SET_START_PAGE` (⇧⌘S) and `PHI_RETURN_TO_START_PAGE` (⇧⌘H) are Tab menu
+items acting on the focused tab's in-memory group start page, the same as the
+tab context menu's Set Current Page as Start Page and the sidebar icon's return
+arrow. They apply only in sidebar layouts and only when the action can run;
+otherwise the key stays with the page.
+
 ## Product Defaults and User Overrides
 
 Mist supplies these defaults before user overrides are applied. The Framework
@@ -559,11 +572,17 @@ exports the differing defaults for Chromium commands:
 | Toggle Sidebar | Command-S | Save Page |
 | Toggle Chat Panel | Command-E | Use Selection for Find (disabled) |
 | Switch Between Chat Panel and Tab | Command-Shift-F | Always Show Toolbar in Full Screen (disabled) |
+| Close Chat (Chat panel) | Command-Shift-E | None |
+| Set Current Page as Start Page | Command-Shift-S | None |
+| Return to Start Page | Command-Shift-H | Home (disabled) |
 | Choose Model (focused Drifter composer) | Command-M | Minimize (disabled) |
 | Choose Effort (focused Drifter composer) | Command-period | Stop (disabled) |
+| Open DevTools | Command-Shift-I | Option-Command-I |
+| Alternate New Tab | Command-Shift-L | None |
 | Zoom In | Command-equals | Command-plus |
 | Duplicate Tab | Command-Y | No Chromium default; History is disabled |
 | Drifter (Apps menu) | Command-Shift-D | Bookmark All Tabs (disabled) |
+| Mail (Apps menu) | Command-Shift-M | Profile menu (disabled) |
 
 Commands disabled by product policy keep their menu actions without keyboard bindings. This is a product
 baseline, not a user disable stored in `CustomShortcuts.json`, and it does not
@@ -574,12 +593,12 @@ Save Page remains available as a menu action. Phi's native File-menu hook clears
 its keyboard equivalent even if a legacy configuration contains an override;
 it has no ordinary settings row without a discovered binding or saved override.
 
-Mist always exports `productDefaultCommands` (Zoom In and Duplicate Tab) to
+Mist always exports `productDefaultCommands` (Zoom In, Duplicate Tab and Open DevTools) to
 Chromium, even without a saved override. These defaults replace every built-in
 alias. A custom or disabled user override wins. An exclusion that excludes the
 product default exports a disable; any other exclusion inherits Mist's default,
 so it exports the product default rather than Chromium's built-in key.
-Restoring defaults exports Command-equals and Command-Y again.
+Restoring defaults exports Command-equals, Command-Y and Command-Shift-I again.
 
 The existing override bridge still applies explicit user bindings to retained
 menu and hidden entries. User-created collisions continue through normal

@@ -87,6 +87,32 @@ final class MailComposeModelTests: XCTestCase {
         compose.update { $0.subject = "Delete this" }; try await compose.discard()
         XCTAssertNil(source.draftValues[compose.draft.id]); XCTAssertNil(model.compose)
     }
+    func testNewMessageReplyAndForwardUseAccountSignature() async throws {
+        let source = FixtureMailPageDataSource(), model = await page(source)
+        let account = model.state.accounts[0]
+        let signature = try XCTUnwrap(account.config.signatureHTML)
+        await model.newMessage()
+        let fresh = try XCTUnwrap(model.compose)
+        XCTAssertTrue(fresh.draft.html?.contains(signature) == true)
+        XCTAssertEqual(fresh.draft.plainText, MailText.readable(signature))
+        XCTAssertFalse(fresh.hasContent)
+        // A recipient added and then removed still leaves a signature-only draft.
+        fresh.update { $0.to = [.init("recipient@example.com")] }
+        fresh.update { $0.to = [] }
+        await model.closeCompose()
+        XCTAssertNil(source.draftValues[fresh.draft.id])
+
+        let original = try XCTUnwrap(model.messages.first { $0.accountID == account.id })
+        await model.reply(to: original)
+        let reply = try XCTUnwrap(model.compose?.draft)
+        XCTAssertTrue(reply.html?.contains("\(signature)</div><div><br></div>") == true)
+        XCTAssertTrue(reply.plainText.hasPrefix(MailText.readable(signature) + "\n\n"))
+        await model.forward(original)
+        let forward = try XCTUnwrap(model.compose?.draft)
+        XCTAssertTrue(forward.html?.contains("\(signature)</div><div><br></div>") == true)
+        XCTAssertTrue(forward.plainText.hasPrefix(MailText.readable(signature) + "\n\n"))
+        await model.closeCompose()
+    }
     func testSelectingAnotherMessageSavesAndMailboxChangeKeepsCompose() async throws {
         let source = FixtureMailPageDataSource(), model = await page(source)
         let first = model.messages[0], second = model.messages[1]

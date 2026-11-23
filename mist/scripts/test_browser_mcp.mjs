@@ -6,12 +6,12 @@ import { spawn } from 'node:child_process'
 import { createServer as createSocketServer } from 'node:net'
 import { once } from 'node:events'
 import { deflateSync } from 'node:zlib'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CdpClient, DirectPhiChannel } from '../../tools/phi-browser-skill/scripts/lib/cdp.mjs'
-import { createServer, localFilePath, outputPath, screenshotPath } from '../../tools/phi-browser-skill/scripts/mist-browser-mcp.mjs'
-import { parseKeyChord, wrapUntrusted, raceDialog, __scanFnForTest } from '../../tools/phi-browser-skill/scripts/lib/helpers.mjs'
+import { createServer, localFilePath, outputPath, recordingPath, screenshotPath } from '../../tools/phi-browser-skill/scripts/mist-browser-mcp.mjs'
+import { parseKeyChord, wrapUntrusted, raceDialog, setInputObserver, __mirrorCursorForTest, __mirrorEffectForTest, __scanFnForTest } from '../../tools/phi-browser-skill/scripts/lib/helpers.mjs'
 
 test('page scan preserves preformatted whitespace and leaves ordinary prose collapsed', () => {
   const text = textContent => ({ nodeType: 3, textContent })
@@ -71,6 +71,89 @@ const shot = (data = png, scale = 1) => ({ ok: true, image: data.toString('base6
   dataWidth: data.readUInt32BE(16), dataHeight: data.readUInt32BE(20), scale })
 const decode = response => JSON.parse(response.result.content.find(c => c.type === 'text').text)
 const request = (id, method, params) => ({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) })
+
+test('recording paths use local time and preserve an existing MP4 extension', () => {
+  const now = new Date(2026, 0, 2, 3, 4, 5)
+  assert.equal(recordingPath(undefined, now, '/example'), '/example/Downloads/Mist Recording 2026-01-02 at 03.04.05.mp4')
+  assert.equal(recordingPath('~/Videos/demo', now, '/example'), '/example/Videos/demo.mp4')
+  assert.equal(recordingPath('/example/demo.MP4'), '/example/demo.MP4')
+  assert.throws(() => recordingPath('demo.mp4'), /absolute/)
+})
+
+test('input observer sees moves and clicks without a task and cannot break input', () => {
+  const events = []
+  setInputObserver(event => { events.push(event); throw new Error('observer failed') })
+  try {
+    __mirrorCursorForTest(10, 20)
+    __mirrorEffectForTest('click', { x: 30, y: 40 })
+    __mirrorEffectForTest('scroll', { x: 50, y: 60 })
+  } finally { setInputObserver(null) }
+  __mirrorCursorForTest(70, 80)
+  assert.deepEqual(events, [{ kind: 'move', x: 10, y: 20 }, { kind: 'click', x: 30, y: 40 }])
+})
+
+test('recording routes forward pointer input for the current working tab and return labeled stills', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mist-recording-test-'))
+  const path = join(directory, 'nested', 'demo.mp4')
+  const summary = { path, durationSeconds: 74.76, width: 1280, height: 800, bytes: 1234, endedBy: 'stopped' }
+  const stills = [0, 24.9, 49.8, 74.7].map((at, i) => ({ at, image: String(i), mimeType: 'image/jpeg' }))
+  let stopError = false
+  const f = fixture({ setInputObserver, phiSend: async (method, args) => {
+    if (method.endsWith('.record') && args.action === 'stop') {
+      if (stopError) return { ok: false, error: 'No recording is running.' }
+      return { ok: true, ...summary, stills }
+    }
+    return { ok: true }
+  } })
+  const recordCalls = () => f.calls.filter(call => call[1] === 'agentSpace.spaces.record')
+  const pointerCalls = () => f.calls.filter(call => call[1] === 'agentSpace.spaces.recordPointer')
+  try {
+    assert.equal((await f.call('start_recording', { path })).result.isError, true)
+    await f.call('use_tab', { tabId: 2 })
+    const started = decode(await f.call('start_recording', { path: path.slice(0, -4) }))
+    assert.equal(started.tab.tabId, 2)
+    assert.equal(started.path, path)
+    assert.equal(started.recording, true)
+    assert.equal(started.maxSeconds, 600)
+    await access(join(directory, 'nested'))
+    assert.deepEqual(recordCalls(), [['phiSend', 'agentSpace.spaces.record', { action: 'start', windowId: 42, tabId: 2, path, overwrite: false }, 10000]])
+    __mirrorCursorForTest(1, 2)
+    await f.call('use_tab', { tabId: 3 })
+    __mirrorEffectForTest('click', { x: 3, y: 4 })
+
+    const stopped = await f.call('stop_recording')
+    assert.deepEqual(recordCalls().at(-1), ['phiSend', 'agentSpace.spaces.record', { action: 'stop', windowId: 42 }, 60000])
+    assert.deepEqual(decode(stopped), { ...summary, durationSeconds: 74.8, stills: 4 })
+    assert.deepEqual(stopped.result.content.slice(1), stills.flatMap(({ image, mimeType }, i) => [
+      { type: 'text', text: ['At 0:00', 'At 0:24', 'At 0:49', 'At 1:14'][i] }, { type: 'image', data: image, mimeType },
+    ]))
+    __mirrorCursorForTest(5, 6)
+    assert.deepEqual(pointerCalls(), [
+      ['phiSend', 'agentSpace.spaces.recordPointer', { windowId: 42, tabId: 2, kind: 'move', x: 1, y: 2 }],
+      ['phiSend', 'agentSpace.spaces.recordPointer', { windowId: 42, tabId: 3, kind: 'click', x: 3, y: 4 }],
+    ])
+
+    await writeFile(path, 'existing')
+    assert.match(decode(await f.call('start_recording', { path })).error, /That file exists/)
+    assert.equal(recordCalls().length, 2)
+    assert.equal(decode(await f.call('start_recording', { path, overwrite: true })).recording, true)
+    assert.deepEqual(recordCalls().at(-1)[2], { action: 'start', windowId: 42, tabId: 3, path, overwrite: true })
+    stopError = true
+    assert.equal(decode(await f.call('stop_recording')).error, 'No recording is running.')
+    __mirrorEffectForTest('click', { x: 7, y: 8 })
+    assert.equal(pointerCalls().length, 2)
+
+    stopError = false
+    const fresh = fixture({ phiSend: async () => ({ ok: true, ...summary, stills }) })
+    assert.equal(decode(await fresh.call('stop_recording')).path, path)
+    assert.deepEqual(fresh.calls.filter(call => call[0] === 'phiSend'), [
+      ['phiSend', 'agentSpace.spaces.record', { action: 'stop', windowId: 42 }, 60000],
+    ])
+  } finally {
+    await f.server.dispose()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test('raceDialog resolves the first outcome and observes abandoned failures', async () => {
   let notify, rejectWork, unsubscribed = false
@@ -143,7 +226,7 @@ test('Slack definitions merge unchanged, filter names and collisions, and cache 
     slackDefinition('slack_BAD'), slackDefinition('slack_'), slackDefinition('slack_bad-name'), read), slackOptions)
   for (let id = 1; id <= 2; id++) {
     const listed = (await f.server.dispatch(request(id, 'tools/list'))).result.tools
-    assert.equal(listed.length, 48)
+    assert.equal(listed.length, 53)
     assert.deepEqual(listed.slice(-2), [read, slackSend])
     assert.equal(listed.filter(t => t.name === 'list_tabs').length, 1)
   }
@@ -166,7 +249,7 @@ test('Slack discovery logs and retries failures and empty lists on the next tool
     if (attempt === 1) throw new Error('agentSpace.slack.tools: timed out after 20000ms')
     return { ok: true, tools: attempt === 2 ? [] : [slackSend] }
   } }, slackOptions)
-  for (const [index, count] of [46, 46, 47, 47].entries()) {
+  for (const [index, count] of [51, 51, 52, 52].entries()) {
     assert.equal((await f.server.dispatch(request(index, 'tools/list'))).result.tools.length, count)
   }
   assert.equal(attempt, 3)
@@ -250,6 +333,32 @@ test('agent tools route without a window binding and strip the ok envelope', asy
     ['phiSend', 'agentSpace.agents.list', {}],
     ['phiSend', 'agentSpace.agents.message', { id: 'efgh', text: 'Hello' }, 30000],
   ])
+})
+
+test('mount tools route to the calling chat and list_agents passes its mount status through', async () => {
+  const host = { tabId: 8, title: 'Mail' }
+  const f = fixture({ phiSend: async type => {
+    if (type.endsWith('.mount')) return { ok: true, mountedTo: host }
+    if (type.endsWith('.unmount')) return { ok: true, unmountedFrom: host }
+    return { ok: true, self: 'abcd', agents: [{ id: 'abcd', self: true, mountedTo: host }, { id: 'efgh' }] }
+  } })
+  f.state.rows.find(t => t.tabId === host.tabId).mountOnly = true
+  assert.equal(decode(await f.call('list_tabs')).tabs.find(t => t.tabId === host.tabId).mountOnly, true)
+  assert.equal((await f.call('use_tab', { tabId: host.tabId })).result.isError, true)
+  assert.deepEqual(decode(await f.call('mount_to_tab', { tabId: host.tabId })), { mountedTo: host })
+  assert.deepEqual(decode(await f.call('list_agents')).agents, [
+    { id: 'abcd', self: true, mountedTo: host }, { id: 'efgh' },
+  ])
+  assert.deepEqual(decode(await f.call('unmount_from_tab')), { unmountedFrom: host })
+  assert.deepEqual(f.calls.filter(c => ['phiSend', 'enterContext', 'switchTab'].includes(c[0])), [
+    ['enterContext', { kind: 'user', window: 42, create: false }],
+    ['phiSend', 'agentSpace.agents.mount', { windowId: 42, tabId: host.tabId }, 30000],
+    ['phiSend', 'agentSpace.agents.list', {}],
+    ['phiSend', 'agentSpace.agents.unmount', {}, 30000],
+  ])
+  const unbound = fixture()
+  await unbound.call('unmount_from_tab')
+  assert.deepEqual(unbound.calls, [['phiSend', 'agentSpace.agents.unmount', {}, 30000]])
 })
 
 test('mail tools route directly, reject blanks, and wrap untrusted bodies', async () => {
@@ -863,6 +972,7 @@ function fixture(overrides = {}, options = {}) {
     userFocus: async () => ({ windowId: 42, tab: state.rows.find(t => t.active) }),
     phiSend: async () => ({ ok: true }),
     phiSendOnce: async () => ({ ok: true, tools: [] }),
+    setInputObserver: () => {},
     switchTab: async target => {
       state.attached = target
       const row = state.rows.find(t => t.targetId === target)
@@ -872,8 +982,9 @@ function fixture(overrides = {}, options = {}) {
       state.reading = target
       try { return await work() } finally { state.reading = null }
     },
-    openSpaceTab: async (_, url) => {
+    openSpaceTab: async (_, url, { placement } = {}) => {
       const row = { tabId: 10, targetId: 'new', title: 'Opened', url, active: false }
+      if (placement?.kind === 'group') row.group = state.rows.find(t => t.group?.token === placement.token)?.group
       state.rows.push(row)
       return { ...row, windowId: 42 }
     },
@@ -936,13 +1047,41 @@ test('tabId observations leave the working tab attached and report only the read
     assert.equal(result.tab.tabId, 3)
     if (name === 'snapshot') assert.equal(result.refs, 'These refs act on tab 3 only after use_tab with tabId 3.')
   }
-  assert.equal(f.calls.filter(c => c[0] === 'withTabSession' && c[1] === 'page3').length, 2)
+  const sequence = f.calls.flatMap(([name, method, payload]) => {
+    if (name === 'withTabSession') return [[name, method]]
+    if (name === 'phiSend' && method === 'agentSpace.spaces.readTab') return [payload]
+    return []
+  })
+  const read = [
+    { windowId: 42, tabId: 3, phase: 'start' },
+    ['withTabSession', 'page3'],
+    { windowId: 42, tabId: 3, phase: 'end' },
+  ]
+  assert.deepEqual(sequence, [...read, ...read])
   assert.equal(f.calls.filter(c => c[0] === 'phiSend' && c[1] === 'agentSpace.spaces.wakeTab' && c[2].tabId === 3).length, 2)
   assert.ok(!f.calls.some(c => c[0] === 'switchTab' || c[0] === 'phiSend' && /workingTab|scrolled/.test(c[1])))
   assert.equal(decode(await f.call('list_tabs')).tabs.find(t => t.working).tabId, 2)
   await f.call('click', { ref: 12 })
   assert.equal(f.state.attached, 'page2')
   assert.ok(!f.calls.some(c => c[0] === 'switchTab'))
+})
+
+test('readTab notification errors leave the read result intact', async () => {
+  const f = fixture({ phiSend: async method => {
+    if (method === 'agentSpace.spaces.readTab') throw new Error('Preview unavailable')
+    return { ok: true }
+  } })
+  const result = decode(await f.call('read_page', { tabId: 3 }))
+  assert.equal(result.result, wrapUntrusted('Page text'))
+  assert.deepEqual(f.calls.filter(c => c[1] === 'agentSpace.spaces.readTab').map(c => c[2].phase), ['start', 'end'])
+})
+
+test('failed reads still send readTab end', async () => {
+  const f = fixture({ observe: async () => { throw new Error('Read failed') } })
+  const reply = await f.call('snapshot', { tabId: 3 })
+  assert.equal(reply.result.isError, true)
+  assert.match(decode(reply).error, /Read failed/)
+  assert.deepEqual(f.calls.filter(c => c[1] === 'agentSpace.spaces.readTab').map(c => c[2].phase), ['start', 'end'])
 })
 
 test('tabId reads work before use_tab, refuse invalid tabs, and use the working session for its own id', async () => {
@@ -952,7 +1091,7 @@ test('tabId reads work before use_tab, refuse invalid tabs, and use the working 
   await f.call('use_tab', { tabId: 2 })
   f.calls.length = 0
   assert.equal(decode(await f.call('read_page', { tabId: 2 })).tab.tabId, 2)
-  assert.ok(!f.calls.some(c => c[0] === 'withTabSession' || c[0] === 'phiSend' && c[1].endsWith('.wakeTab')))
+  assert.ok(!f.calls.some(c => c[0] === 'withTabSession' || c[0] === 'phiSend' && /\.(wakeTab|readTab)$/.test(c[1])))
 })
 
 test('other-tab dialogs give an answer hint and working-tab dialogs do not block passive reads', async () => {
@@ -962,12 +1101,14 @@ test('other-tab dialogs give an answer hint and working-tab dialogs do not block
   await f.call('use_tab', { tabId: 2 })
   assert.equal(decode(await f.call('read_page', { tabId: 3 })).tab.tabId, 3)
   otherDialog = dialog
+  f.calls.length = 0
   for (const name of ['read_page', 'snapshot']) {
     const result = decode(await f.call(name, { tabId: 3 }))
     assert.equal(result.tab.tabId, 3)
     assert.deepEqual(result.result.dialog, { ...dialog, message: wrapUntrusted(dialog.message), defaultPrompt: wrapUntrusted(dialog.defaultPrompt) })
     assert.match(result.next, /use_tab with tabId 3, then handle_dialog/)
   }
+  assert.deepEqual(f.calls.filter(c => c[1] === 'agentSpace.spaces.readTab').map(c => c[2].phase), ['start', 'end', 'start', 'end'])
   const g = fixture({ observe: async () => ({ dialog }) })
   assert.match(decode(await g.call('snapshot', { tabId: 3 })).next, /use_tab with tabId 3, then handle_dialog/)
 })
@@ -1060,8 +1201,18 @@ test('tools/list exposes the exact tool set, schemas, and annotations without bi
   const { result: { tools } } = await server.dispatch(request(1, 'tools/list'))
   assert.deepEqual(tools.map(t => t.name), [
     'list_tabs', 'group_tabs', 'use_tab', 'open_tab', 'navigate', 'reload', 'go_back', 'go_forward', 'snapshot', 'read_page', 'evaluate', 'read_console', 'read_network', 'click', 'drag', 'hover', 'fill',
-    'type_text', 'upload_files', 'press_key', 'select_option', 'select_text', 'scroll', 'scroll_until', 'wait_for', 'handle_dialog', 'close_tab', 'screenshot', 'save_page', 'list_downloads', 'search_history', 'save_screenshot', 'list_agents', 'list_mail_accounts', 'list_mail', 'search_mail', 'read_mail', 'write_mail_draft', 'send_mail', 'update_mail', 'message_agent', 'spawn_agent', 'read_agent', 'stop_agent', 'close_agent', 'hand_off',
+    'type_text', 'upload_files', 'press_key', 'select_option', 'select_text', 'scroll', 'scroll_until', 'wait_for', 'handle_dialog', 'close_tab', 'screenshot', 'save_page', 'export_bookmarks', 'list_downloads', 'search_history', 'save_screenshot', 'start_recording', 'stop_recording', 'list_agents', 'mount_to_tab', 'unmount_from_tab', 'list_mail_accounts', 'list_mail', 'search_mail', 'read_mail', 'write_mail_draft', 'send_mail', 'update_mail', 'message_agent', 'spawn_agent', 'read_agent', 'stop_agent', 'close_agent', 'hand_off',
   ])
+  for (const [name, properties] of [['start_recording', { path: { type: 'string', minLength: 1 }, overwrite: { type: 'boolean' } }], ['stop_recording', {}]]) {
+    const definition = tools.find(tool => tool.name === name)
+    assert.deepEqual(definition.inputSchema, { type: 'object', properties, required: [], additionalProperties: false })
+    assert.deepEqual(definition.annotations, {})
+  }
+  assert.deepEqual(tools.find(tool => tool.name === 'open_tab').inputSchema, {
+    type: 'object', additionalProperties: false, required: ['url'],
+    properties: { url: { type: 'string', minLength: 1 }, groupId: { type: 'string', minLength: 1 }, ungrouped: { type: 'boolean' } },
+    allOf: [{ not: { required: ['groupId', 'ungrouped'] } }],
+  })
   const readonly = new Set(['list_tabs', 'use_tab', 'scroll', 'scroll_until', 'hover', 'select_text', 'snapshot', 'read_page', 'read_console', 'read_network', 'list_downloads', 'search_history', 'wait_for', 'screenshot', 'list_agents', 'read_agent', 'list_mail_accounts', 'list_mail', 'search_mail', 'read_mail'])
   for (const name of ['snapshot', 'read_page']) assert.deepEqual(tools.find(t => t.name === name).inputSchema.properties.tabId, tools.find(t => t.name === 'use_tab').inputSchema.properties.tabId)
   for (const name of ['press_key', 'click']) {
@@ -1525,6 +1676,77 @@ test('open_tab creates a background tab in the bound window, then attaches to it
   assert.equal(decode(await call('list_tabs')).tabs.find(t => t.tabId === 10).working, true)
 })
 
+test('open_tab places new user tabs without claiming them as folder tabs', async () => {
+  const url = 'https://new.example/'
+  for (const [args, placement, group] of [
+    [{ groupId: 'r1' }, { kind: 'group', token: 'r1' }, { group: 'Reading' }],
+    [{ ungrouped: true }, { kind: 'tabList' }, {}],
+  ]) {
+    const f = groupFixture()
+    const tab = { tabId: 10, url, title: 'Opened' }
+    assert.deepEqual(decode(await f.call('open_tab', { url, ...args })),
+      { tab, placed: placement.kind, ...group, usersTab: true })
+    assert.deepEqual(f.calls.find(c => c[0] === 'openSpaceTab'),
+      ['openSpaceTab', 'space', url, { activate: false, window: 42, placement }])
+    assert.deepEqual(decode(await f.call('open_tab', { url, groupId: 'missing' })),
+      { tab, reused: true, usersTab: true })
+    assert.equal(f.calls.filter(c => c[0] === 'openSpaceTab').length, 1)
+    assert.ok(!f.calls.some(c => c[0] === 'addTabsToGroup'))
+  }
+  const f = fixture()
+  await f.call('open_tab', { url, ungrouped: false })
+  assert.deepEqual(f.calls.find(c => c[0] === 'openSpaceTab'),
+    ['openSpaceTab', 'space', url, { activate: false, window: 42 }])
+  assert.deepEqual(decode(await f.call('open_tab', { url, ungrouped: true })),
+    { tab: { tabId: 10, url, title: 'Opened' }, reused: true })
+})
+
+test('open_tab rejects invalid placement before opening a new tab', async () => {
+  const f = groupFixture()
+  const url = 'https://new.example/'
+  for (const [args, error] of [
+    [{ groupId: 'r1', ungrouped: false }, /mutually exclusive/],
+    [{ groupId: 'missing' }, /No tab group/],
+    [{ groupId: 'f1' }, /agent tab folder/],
+  ]) {
+    const reply = await f.call('open_tab', { url, ...args })
+    assert.equal(reply.result.isError, true)
+    assert.match(decode(reply).error, error)
+  }
+  assert.ok(!f.calls.some(c => c[0] === 'openSpaceTab'))
+})
+
+test('open_tab reports a bare user tab when its requested group disappears during the open', async () => {
+  const f = fixture({ openSpaceTab: async (_, url) => {
+    delete f.state.rows.find(row => row.tabId === 2).group
+    const tab = { tabId: 10, targetId: 'new', title: 'Opened', url, active: false }
+    f.state.rows.push(tab)
+    return tab
+  } })
+  f.state.rows.find(row => row.tabId === 2).group = { token: 'r1', title: 'Reading' }
+  const url = 'https://new.example/'
+  assert.deepEqual(decode(await f.call('open_tab', { url, groupId: 'r1' })),
+    { tab: { tabId: 10, url, title: 'Opened' }, placed: 'tabList', usersTab: true })
+})
+
+test('export_bookmarks sends an expanded or default path without choosing a working tab', async () => {
+  const f = fixture({ phiSend: async (_, { path, space }) => ({
+    ok: true, path: path ?? '/exports/default.html', space: space ?? 'Current', bookmarks: 3, pinnedTabs: 2,
+  }) })
+  const path = join(homedir(), 'exports', 'bookmarks.html')
+  assert.deepEqual(decode(await f.call('export_bookmarks', { path: '~/exports/bookmarks', space: 'Work', overwrite: true })),
+    { path, space: 'Work', bookmarks: 3, pinnedTabs: 2 })
+  assert.deepEqual(decode(await f.call('export_bookmarks')), {
+    path: '/exports/default.html', space: 'Current', bookmarks: 3, pinnedTabs: 2,
+  })
+  assert.equal((await f.call('export_bookmarks', { path: 'relative' })).result.isError, true)
+  assert.deepEqual(f.calls.filter(c => c[0] === 'phiSend'), [
+    ['phiSend', 'agentSpace.spaces.exportBookmarks', { windowId: 42, path, space: 'Work', overwrite: true }, 30000],
+    ['phiSend', 'agentSpace.spaces.exportBookmarks', { windowId: 42, path: undefined, space: undefined, overwrite: false }, 30000],
+  ])
+  assert.ok(!f.calls.some(c => c[0] === 'switchTab'))
+})
+
 test('navigate without a working tab opens one in the background', async () => {
   const { call, calls, state } = fixture()
   const reply = await call('navigate', { url: 'https://new.example/' })
@@ -1964,7 +2186,7 @@ test('actual CLI supports stdio handshake without connecting to a real socket', 
   const replies = result.stdout.trim().split('\n').map(JSON.parse)
   assert.deepEqual(replies.map(r => r.id), [1, 2, 3])
   assert.equal(replies[0].result.protocolVersion, 'future-version')
-  assert.equal(replies[1].result.tools.length, 46)
+  assert.equal(replies[1].result.tools.length, 51)
 })
 
 test('actual CLI lists Slack tools over /phi-agent alone while Mist refuses a turn\'s browser connections', async () => {

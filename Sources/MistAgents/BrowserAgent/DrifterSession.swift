@@ -28,13 +28,13 @@ final class DrifterSession {
          bindProcess: @escaping (Int32) -> Void, invalidate: @escaping () -> Void,
          environment: @escaping @Sendable () async -> ClaudeCodeEnvironment = { await ClaudeCodeEnvironment.shared.value }) {
         self.conversation = conversation; self.invalidate = invalidate; self.request = request
-        backgroundTasks = request.config.engine == .codex ? DrifterBackgroundTasks(folder: folder, outputFolder: tasksFolder) : nil
+        backgroundTasks = request.config.engine != .claude ? DrifterBackgroundTasks(folder: folder, outputFolder: tasksFolder) : nil
         if let resume = request.resume { conversation.update(items: resume.items, status: .starting) }
         self.settings = settings ?? DrifterSettings(config: request.config, running: true)
         self.settings.isEnabled = false
         backgroundTasks?.onChange = { [weak conversation] in conversation?.updateDrifterTasks($0) }
         backgroundTasks?.onEnded = { [weak self] id, summary, status in
-            (self?.engine as? CodexSession)?.backgroundTaskEnded(taskId: id, summary: summary, status: status)
+            (self?.engine as? any DrifterBackgroundTaskSession)?.backgroundTaskEnded(taskId: id, summary: summary, status: status)
         }
         backgroundTasks?.onWake = { [weak self] message in await self?.onWake?(message) ?? false }
         backgroundTasks?.isQueued = { [weak conversation] id in conversation?.queue.contains { $0.id == id } == true }
@@ -80,12 +80,17 @@ final class DrifterSession {
             var request = DrifterLaunchRequest(prompt: request.prompt, attachments: request.attachments,
                 config: self.settings.config, windowId: request.windowId, mentions: request.mentions, sender: request.sender, parent: request.parent, slackThread: request.slackThread, chatId: conversation.id, resume: request.resume, memory: memory, skills: skills)
             request.home = home
-            if bundleId == "com.bulldf.mist", home.isRepository, request.config.engine == .claude {
+            if bundleId == "com.bulldf.mist", home.isRepository, request.config.engine != .codex {
                 let userHome = FileManager.default.homeDirectoryForCurrentUser
-                let config = captured.variables["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
-                    ?? userHome.appendingPathComponent(".claude")
+                let file: URL
+                if request.config.engine == .gemini { file = userHome.appendingPathComponent(".gemini/GEMINI.md") }
+                else {
+                    let config = captured.variables["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
+                        ?? userHome.appendingPathComponent(".claude")
+                    file = config.appendingPathComponent("CLAUDE.md")
+                }
                 request.globalInstructions = await Task.detached(priority: .utility) {
-                    DrifterInstructionIncludes.expand(config.appendingPathComponent("CLAUDE.md"), home: userHome)
+                    DrifterInstructionIncludes.expand(file, home: userHome)
                 }.value
             }
             guard let node = ClaudeCodeEnvironment.findExecutable(name: "node", environment: captured.variables,
@@ -96,8 +101,8 @@ final class DrifterSession {
             let server = DrifterLaunchRequest.server(node: node, resources: resources, bundleId: bundleId,
                 windowId: request.windowId, capability: capability)
             // Browser agents use subscription credentials, never inherited API keys.
-            let variables = captured.variables.filter { !$0.key.hasPrefix("ANTHROPIC_") && $0.key != "OPENAI_API_KEY" }
-            self.backgroundTasks?.environment = variables
+            let variables = ClaudeCodeEnvironment.subscriptionVariables(captured.variables)
+            self.backgroundTasks?.environment = request.config.engine == .gemini ? GeminiEnvironment.sanitized(variables) : variables
             let environment: @Sendable () async -> ClaudeCodeEnvironment = {
                 ClaudeCodeEnvironment(variables: variables, executable: captured.executable)
             }
@@ -116,11 +121,23 @@ final class DrifterSession {
             let engine: any AgentChatSession
             switch request.config.engine {
             case .claude:
-                engine = ClaudeCodeSession(request: request.claude(folder: folder, server: server), conversation: conversation, environment: environment)
+                #if MIST_CLAUDE_CODE_HOSTLESS_TESTS
+                let archiver: ClaudeCodeRemoteControlArchiver? = nil
+                #else
+                let archiver: ClaudeCodeRemoteControlArchiver? = .shared
+                #endif
+                engine = ClaudeCodeSession(request: request.claude(folder: folder, server: server), conversation: conversation, environment: environment, archiver: archiver)
             case .codex:
                 let codex = CodexSession(request: request.codex(folder: folder, server: server), conversation: conversation, environment: environment)
                 codex.allowsFileChange = { memory.allowsFileChanges($0, cwd: folder) || skills.allowsFileChanges($0, cwd: folder) }
                 engine = codex
+            case .gemini:
+                let cliHome = tasksFolder.deletingLastPathComponent().appendingPathComponent("Gemini", isDirectory: true)
+                let preload = resources.appendingPathComponent("gemini-preload.mjs")
+                let gemini = GeminiSession(request: request.gemini(folder: folder, server: server, cliHome: cliHome, preload: preload),
+                                           conversation: conversation, environment: environment)
+                gemini.allowsFileChange = { memory.allowsFileChanges($0, cwd: folder) || skills.allowsFileChanges($0, cwd: folder) }
+                engine = gemini
             }
             self.engine = engine
             engine.agentTextTransform = { [weak self] text in
@@ -158,6 +175,8 @@ final class DrifterSession {
             }
         } else if let codex = engine as? CodexSession {
             codex.model = config.model; codex.effort = config.effort
+        } else if let gemini = engine as? GeminiSession {
+            gemini.model = config.model; gemini.effort = config.effort
         }
         engine?.approvePendingBrowserTools()
     }

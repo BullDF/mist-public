@@ -4607,10 +4607,15 @@ export async function scrapeMedia({ types = ['image'], within = null, dir,
 // ---------------------------------------------------------------------------
 // Input (coordinates are CSS pixels, origin top-left of the viewport)
 
+let inputObserver = null
+
+export function setInputObserver(fn) { inputObserver = fn }
+
 // Normally fire-and-forget: the overlay cursor is cosmetic, so callers don't
 // spend an app-bus round trip on every click/hover. movePointer awaits the
 // returned promise only when seeding a cursor's first visible position.
 function mirrorCursor(x, y) {
+  try { inputObserver?.({ kind: 'move', x, y }) } catch {}
   const task = state.task
   if (!task) return  // no overlay in user-space mode
   if (contextKind() === 'shadow') return  // no overlay, no watcher
@@ -4622,11 +4627,16 @@ function mirrorCursor(x, y) {
 // native overlay. Coordinates are widget space (like mirrorCursor); cosmetic,
 // so never block input on it.
 function mirrorEffect(kind, props = {}) {
+  if (kind === 'click') {
+    try { inputObserver?.({ kind: 'click', x: props.x, y: props.y }) } catch {}
+  }
   const task = state.task
   if (!task) return  // no overlay in user-space mode
   if (contextKind() === 'shadow') return  // no overlay, no watcher
   phiSend('agentSpace.effect', { taskId: task.taskId, kind, ...props }).catch(() => {})
 }
+
+export { mirrorCursor as __mirrorCursorForTest, mirrorEffect as __mirrorEffectForTest }
 
 // Fire-and-forget transcript line for the live session console (View ▸ Agent
 // Transcript in Phi). Cosmetic like the input mirrors: never block or fail a
@@ -7501,7 +7511,7 @@ export async function listSpaceTabs(space, { window: windowId = null } = {}) {
 const claimedSpaceTabs = new Set()
 
 export async function openSpaceTab(space, url, { activate = true,
-                                                 window: windowId = null } = {}) {
+                                                 window: windowId = null, placement } = {}) {
   if (!url || typeof url !== 'string') {
     throw new Error('openSpaceTab(space, url): url is required')
   }
@@ -7514,7 +7524,7 @@ export async function openSpaceTab(space, url, { activate = true,
       throw err
     })).map((t) => t.tabId))
   const opened = await phiSend('agentSpace.spaces.openTab',
-    { spaceId, url, activate, ...(windowId != null ? { windowId } : {}) })
+    { spaceId, url, activate, ...(windowId != null ? { windowId } : {}), ...(placement ? { placement } : {}) })
   const wanted = (u) => {
     try { return new URL(u).href === new URL(url).href } catch { return u === url }
   }

@@ -59,7 +59,9 @@ private struct MistDrifterSettingsView: View {
                             }
                         }
                     }
-                    if let message = settings.codexMessage { note(message) }
+                    ForEach(DrifterEngine.allCases, id: \.self) { engine in
+                        if let message = settings.modelMessages[engine] { note(message) }
+                    }
                     note(Strings.hint)
                 }
             }

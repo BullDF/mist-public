@@ -24,6 +24,7 @@ struct MailAccountForm {
     var smtpHost = "", smtpPort = "465", smtpSecurity: MailSecurity = .tls
     var serverExpanded = false
     var sortOrder = 0
+    var signatureHTML: String?
 
     init(account: MailAccount? = nil, senderName: String = NSFullUserName()) {
         self.senderName = senderName
@@ -31,6 +32,7 @@ struct MailAccountForm {
             let config = account.config
             presetIndex = MailAccountPreset.all.firstIndex { $0.imap?.host == config.imap.host && $0.smtp?.host == config.smtp.host } ?? 2
             accountName = config.displayName; self.senderName = config.senderName; email = config.email; username = config.username; sortOrder = config.sortOrder
+            signatureHTML = config.signatureHTML
             imapHost = config.imap.host; imapPort = String(config.imap.port); imapSecurity = config.imap.security
             smtpHost = config.smtp.host; smtpPort = String(config.smtp.port); smtpSecurity = config.smtp.security; serverExpanded = presetIndex == 2
         } else { selectPreset(0) }
@@ -50,7 +52,8 @@ struct MailAccountForm {
     func configuration() throws -> MailAccountConfig {
         guard let incoming = Int(imapPort), let outgoing = Int(smtpPort) else { throw MailError.invalidConfiguration }
         let config = MailAccountConfig(displayName: accountName.isEmpty ? email : accountName, senderName: senderName, email: email, username: username,
-                                       imap: .init(host: imapHost, port: incoming, security: imapSecurity), smtp: .init(host: smtpHost, port: outgoing, security: smtpSecurity), sortOrder: sortOrder)
+                                       imap: .init(host: imapHost, port: incoming, security: imapSecurity), smtp: .init(host: smtpHost, port: outgoing, security: smtpSecurity), sortOrder: sortOrder,
+                                       signatureHTML: signatureHTML)
         try config.validate(); return config
     }
 }
@@ -181,12 +184,15 @@ private struct MailAccountSheet: View {
     let account: MailAccount?
     let engine: MailEngine?
     @State private var form: MailAccountForm
+    @State private var signature: MailSignatureEditorSession
+    @State private var signatureHasFocus = false
     @State private var working = false
     @State private var error: String?
     @Environment(\.dismiss) private var dismiss
 
     init(account: MailAccount?, engine: MailEngine?) {
         self.account = account; self.engine = engine; _form = State(initialValue: MailAccountForm(account: account))
+        _signature = State(initialValue: MailSignatureEditorSession(html: account?.config.signatureHTML))
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -215,6 +221,14 @@ private struct MailAccountSheet: View {
                             else { AppController.shared?.application(NSApp, open: [url]) }
                         }.buttonStyle(.link).font(.system(size: 12))
                     }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(MailStrings.signature).font(.system(size: 12)).themedForeground(.textSecondary)
+                        SettingsDetailCard {
+                            MailSignatureEditorView(editor: signature.editor, isEnabled: !working, hasFocus: $signatureHasFocus)
+                                .frame(height: 180)
+                                .padding(.vertical, 4)
+                        }
+                    }
                     DisclosureGroup(MailStrings.servers, isExpanded: $form.serverExpanded) {
                         SettingsDetailCard {
                             field(MailStrings.imapHost, text: $form.imapHost)
@@ -232,9 +246,11 @@ private struct MailAccountSheet: View {
                 if working { ProgressView().controlSize(.small) }
                 Spacer()
                 Button(MailStrings.cancel) { dismiss() }.keyboardShortcut(.cancelAction).disabled(working)
-                Button(MailStrings.signIn, action: signIn).keyboardShortcut(.defaultAction).disabled(working || (account == nil && form.password.isEmpty))
+                Button(MailStrings.signIn, action: signIn)
+                    .keyboardShortcut(signatureHasFocus ? nil : .defaultAction)
+                    .disabled(working || (account == nil && form.password.isEmpty))
             }
-        }.padding(24).frame(width: 600, height: 610).themedBackground(PhiPreferences.fixedWindowBackground)
+        }.padding(24).frame(width: 600, height: 740).themedBackground(PhiPreferences.fixedWindowBackground)
         .interactiveDismissDisabled(working)
     }
     private func field(_ title: String, text: Binding<String>) -> some View {
@@ -252,7 +268,13 @@ private struct MailAccountSheet: View {
         Task {
             do {
                 guard let engine else { throw MailError.storage("") }
+                form.signatureHTML = try await signature.editor.exportBody()
                 var config = try form.configuration()
+                if config.signatureHTML != nil {
+                    let password = if let account, form.password.isEmpty { try await engine.storedPassword(accountID: account.id) }
+                        else { form.password }
+                    try MistEngineMailAccountSyncStorage.validateSignatureSize(config, password: password)
+                }
                 if let account { try await engine.updateAccount(account.id, config: config, password: form.password.isEmpty ? nil : form.password) }
                 else {
                     // Last, read now: a reorder while the sheet was open moves the positions up.
@@ -263,5 +285,52 @@ private struct MailAccountSheet: View {
             } catch { self.error = MailPresentation.errorMessage(error) }
             working = false
         }
+    }
+}
+
+@MainActor
+private final class MailSignatureEditorSession {
+    private let html: String?
+    init(html: String?) { self.html = html }
+
+    lazy var editor: MailRichTextEditor = {
+        let editor = MailRichTextEditor()
+        editor.setAccessibilityLabel(MailStrings.signature)
+        editor.loadDocument(MailComposeFormatting.document(html: MailAccountConfig.normalizedSignature(html)))
+        return editor
+    }()
+}
+
+private struct MailSignatureEditorView: NSViewRepresentable {
+    let editor: MailRichTextEditor
+    let isEnabled: Bool
+    @Binding var hasFocus: Bool
+
+    func makeCoordinator() -> MailFormattingToolbar {
+        let toolbar = MailFormattingToolbar(editor: editor)
+        let focus = $hasFocus
+        editor.onFocusChange = { focus.wrappedValue = $0 }
+        editor.onShortcut = { [weak toolbar] command in
+            if command == "link" { toolbar?.showLinkSheet() }
+        }
+        return toolbar
+    }
+
+    func makeNSView(context: Context) -> NSStackView {
+        let toolbar = context.coordinator
+        let stack = NSStackView(views: [toolbar, editor])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
+        NSLayoutConstraint.activate([
+            toolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            editor.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        ])
+        return stack
+    }
+
+    func updateNSView(_ view: NSStackView, context: Context) {
+        context.coordinator.isEnabled = isEnabled
+        editor.allowsBodyEditing = isEnabled
     }
 }

@@ -5,7 +5,7 @@ struct AgentChatResume: Equatable, Sendable {
     var items: [AgentChatItem]
 }
 
-/// The two CLI engines share lifecycle and browser-tool approval hooks.
+/// The CLI engines share lifecycle and browser-tool approval hooks.
 @MainActor
 protocol AgentChatSession: AnyObject {
     var resumeId: String? { get }
@@ -17,4 +17,9 @@ protocol AgentChatSession: AnyObject {
     func approvePendingBrowserTools()
     func close()
     func terminateNow()
+}
+
+@MainActor
+protocol DrifterBackgroundTaskSession: AgentChatSession {
+    func backgroundTaskEnded(taskId: String, summary: String, status: AgentChatItem.TaskNotificationStatus)
 }

@@ -432,12 +432,7 @@ extension Tab: ContextMenuRepresentable {
             else { targetTab.clearStoredTitle() }
         }
         if targetTab.isOpenned, let wrapper = targetTab.webContentWrapper {
-            wrapper.updateTabCustomValue("")
-            wrapper.navigate(toURL: normalizedString)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak targetTab] in
-                guard let currentGuid = targetTab?.guidInLocalDB else { return }
-                wrapper.updateTabCustomValue(currentGuid)
-            }
+            wrapper.navigateInPlace(toURL: normalizedString)
         }
     }
 

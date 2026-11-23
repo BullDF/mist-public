@@ -173,7 +173,13 @@ extension CommandWrapper {
         case .PHI_TOGGLE_CHATBAR:
             return NSLocalizedString("settings.shortcuts.description.chatbar", value: "Show or hide the chat panel.", comment: "Shortcuts settings - Description of the chatbar command")
         case .PHI_SWITCH_CHAT_PANEL_AND_TAB:
-            return NSLocalizedString("settings.shortcuts.description.switchChatPanelAndTab", value: "Go from the chat panel to the chat's tab, or from a chat tab back to its chat panel.", comment: "Shortcuts settings - Description of switching between a chat panel and tab")
+            return NSLocalizedString("settings.shortcuts.description.switchChatPanelAndTab", value: "Go from the chat panel to the chat's tab, or from a chat tab back to its chat panel, or choose a tab to mount it to.", comment: "Shortcuts settings - Description of switching between a chat panel and tab")
+        case .PHI_CLOSE_PANEL_CHAT:
+            return NSLocalizedString("settings.shortcuts.description.closePanelChat", value: "Close the chat shown in the chat panel, along with its tab.", comment: "Shortcuts settings - Description of the command that closes the chat panel's chat")
+        case .PHI_SET_START_PAGE:
+            return NSLocalizedString("settings.shortcuts.description.setStartPage", value: "Set the focused grouped tab's start page to its current page.", comment: "Shortcuts settings - Description of the command that remembers a grouped tab's current page as its start page")
+        case .PHI_RETURN_TO_START_PAGE:
+            return NSLocalizedString("settings.shortcuts.description.returnToStartPage", value: "Take the focused grouped tab back to its start page.", comment: "Shortcuts settings - Description of the command that returns a grouped tab to its start page")
         case .PHI_OPEN_CLIPBOARD: return Self.openAppDescription(.clipboard)
         case .PHI_MAKE_PRIMARY_WINDOW:
             return NSLocalizedString("settings.shortcuts.description.makePrimaryWindow", value: "Make the focused window the primary window, where links from other apps open.", comment: "Shortcuts settings description for making the focused window primary")

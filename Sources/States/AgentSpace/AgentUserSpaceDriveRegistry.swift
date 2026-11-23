@@ -27,7 +27,12 @@ import Darwin
 /// the previous, extension-driven mask was lost.
 @MainActor
 final class AgentUserSpaceDriveRegistry {
-    static let shared = AgentUserSpaceDriveRegistry()
+    static let shared = AgentUserSpaceDriveRegistry(browserChat: { principalId in
+        guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: principalId) else { return nil }
+        return AgentChatStore.shared.browserChat(principalId: principalId)
+    }, groupFolderTab: { tabId, chatId, windowId in
+        AgentChatStore.shared.groupBrowserAgentTab(tabId, chatId: chatId, windowId: windowId)
+    })
 
     /// One driving session's hold on one tab. A hold outlives the user taking
     /// the tab back: the driver is refused meanwhile, but the record is what
@@ -45,6 +50,12 @@ final class AgentUserSpaceDriveRegistry {
         var principalId: String?
     }
 
+    enum OpenTabPlacement {
+        case folder
+        case group(token: String)
+        case tabList
+    }
+
     /// An `agentSpace.spaces.openTab` the app has issued but Chromium has not
     /// created yet. Opening a tab in the user's Space is the one drive the
     /// browser never sees — the app performs it itself, so no CDP command is
@@ -55,6 +66,7 @@ final class AgentUserSpaceDriveRegistry {
         let driverName: String
         let at: Date
         let chatId: UUID?
+        let placement: OpenTabPlacement
     }
 
     /// A driver that stops sending commands but stays attached leaves no close
@@ -103,7 +115,13 @@ final class AgentUserSpaceDriveRegistry {
     /// `AgentAnimationManager.stateChanged`, which fires from the same paths.
     let driveStateChanged = PassthroughSubject<Int, Never>()
 
-    private init() {}
+    private let browserChat: (String?) -> UUID?
+    private let groupFolderTab: (Int, UUID, Int) -> Void
+
+    init(browserChat: @escaping (String?) -> UUID?, groupFolderTab: @escaping (Int, UUID, Int) -> Void) {
+        self.browserChat = browserChat
+        self.groupFolderTab = groupFolderTab
+    }
 
     /// Tests share the singleton; clear every hold, takeover, and mask between
     /// cases so one test's state can't decide the next one's verdict.
@@ -198,27 +216,37 @@ final class AgentUserSpaceDriveRegistry {
     /// agent's behalf. Chromium creates the tab internally, so this open is
     /// invisible to the drive reports — the expectation recorded here is
     /// claimed by the matching `newTabCreated`.
-    func agentWillOpenTab(inWindow windowId: Int, principalId: String?, driverName: String) {
+    func agentWillOpenTab(inWindow windowId: Int, principalId: String?, driverName: String,
+                          placement: OpenTabPlacement = .folder) {
         pendingOpens.append(PendingOpen(
             windowId: windowId,
             principalId: principalId ?? "anonymous",
             driverName: driverName,
             at: Date(),
-            chatId: AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: principalId)
-                ? AgentChatStore.shared.browserChat(principalId: principalId) : nil))
+            chatId: browserChat(principalId),
+            placement: placement))
     }
 
     /// A tab was created. Claims the oldest expectation for its window, if any
     /// — every other tab creation (the user's own, most of them) falls through
     /// untouched.
-    func noteTabCreated(tabId: Int, windowId: Int) {
+    func noteTabCreated(tabId: Int, windowId: Int, state: BrowserState? = nil) {
         let now = Date()
         pendingOpens.removeAll { now.timeIntervalSince($0.at) > Self.openExpectationTTL }
         guard let index = pendingOpens.firstIndex(where: { $0.windowId == windowId })
         else { return }
         let pending = pendingOpens.remove(at: index)
-        if let chatId = pending.chatId {
-            AgentChatStore.shared.groupBrowserAgentTab(tabId, chatId: chatId, windowId: windowId)
+        switch pending.placement {
+        case .folder:
+            if let chatId = pending.chatId {
+                groupFolderTab(tabId, chatId, windowId)
+            }
+        case .group(let token):
+            if let state, let group = state.groups[token], !BrowserAgentFolderState.isAgentFolderTitle(group.title) {
+                state.addTabsToGroupEnd([tabId], token: token)
+            }
+        case .tabList:
+            break
         }
         guard !isReclaimed(tabId: tabId) else { return }
 

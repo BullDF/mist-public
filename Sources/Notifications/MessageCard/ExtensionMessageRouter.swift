@@ -234,12 +234,18 @@ final class ExtensionMessageRouter {
         register(type: "agentSpace.spaces.workingTab") { context in
             AgentSpaceRouter.handleSpacesWorkingTab(context: context)
         }
+        register(type: "agentSpace.spaces.readTab") { context in
+            AgentSpaceRouter.handleSpacesReadTab(context: context)
+        }
         register(type: "agentSpace.spaces.scrolled") { context in
             AgentSpaceRouter.handleSpacesScrolled(context: context)
         }
         register(type: "agentSpace.spaces.screenshot") { context in
             AgentSpaceRouter.handleSpacesScreenshot(context: context)
         }
+        register(type: "agentSpace.spaces.exportBookmarks") { AgentSpaceRouter.handleSpacesExportBookmarks(context: $0) }
+        register(type: "agentSpace.spaces.record") { AgentSpaceRouter.handleSpacesRecord(context: $0) }
+        register(type: "agentSpace.spaces.recordPointer") { AgentSpaceRouter.handleSpacesRecordPointer(context: $0) }
         register(type: "agentSpace.mail.accounts") { AgentSpaceRouter.handleMailAccounts(context: $0) }
         register(type: "agentSpace.mail.list") { AgentSpaceRouter.handleMailList(context: $0) }
         register(type: "agentSpace.mail.search") { AgentSpaceRouter.handleMailSearch(context: $0) }
@@ -251,9 +257,15 @@ final class ExtensionMessageRouter {
         register(type: "agentSpace.slack.call") { AgentSpaceRouter.handleSlackCall(context: $0) }
         register(type: "agentSpace.tasks.start") { AgentSpaceRouter.handleTasksStart(context: $0) }
         register(type: "agentSpace.tasks.stop") { AgentSpaceRouter.handleTasksStop(context: $0) }
+        register(type: "agentSpace.schedules.create") { AgentSpaceRouter.handleScheduleCreate(context: $0) }
+        register(type: "agentSpace.schedules.list") { AgentSpaceRouter.handleScheduleList(context: $0) }
+        register(type: "agentSpace.schedules.cancel") { AgentSpaceRouter.handleScheduleCancel(context: $0) }
+        register(type: "agentSpace.notify") { AgentSpaceRouter.handleNotify(context: $0) }
         register(type: "agentSpace.agents.list") { context in
             AgentSpaceRouter.handleAgentsList(context: context)
         }
+        register(type: "agentSpace.agents.mount") { AgentSpaceRouter.handleAgentsMount(context: $0) }
+        register(type: "agentSpace.agents.unmount") { AgentSpaceRouter.handleAgentsUnmount(context: $0) }
         register(type: "agentSpace.agents.finish") { AgentSpaceRouter.handleAgentsFinish(context: $0) }
         register(type: "agentSpace.agents.handOff") { AgentSpaceRouter.handleAgentsHandOff(context: $0) }
         register(type: "agentSpace.agents.message") { context in

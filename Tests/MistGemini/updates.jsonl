@@ -1,0 +1,11 @@
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Running "}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"the check."}}
+{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Internal thinking"}}
+{"sessionUpdate":"tool_call","toolCallId":"run_shell_command__example","status":"pending","title":"printf 'mist-gemini-acp-ok\\n'","content":[],"locations":[],"kind":"execute"}
+{"sessionUpdate":"tool_call_update","toolCallId":"run_shell_command__example","status":"completed","title":"printf 'mist-gemini-acp-ok\\n'","content":[{"type":"content","content":{"type":"text","text":"mist-gemini-acp-ok"}}],"locations":[],"kind":"execute"}
+{"sessionUpdate":"tool_call","toolCallId":"replace__example","status":"pending","title":"Update notes.txt","content":[{"type":"diff","path":"/example/notes.txt","oldText":"Old note","newText":"New note"}],"locations":[{"path":"/example/notes.txt"}],"kind":"edit"}
+{"sessionUpdate":"tool_call_update","toolCallId":"replace__example","status":"completed","title":"Update notes.txt","content":[{"type":"diff","path":"/example/notes.txt","oldText":"Old note","newText":"New note"}],"locations":[{"path":"/example/notes.txt"}],"kind":"edit"}
+{"sessionUpdate":"tool_call","toolCallId":"mcp_mistbrowser_run_in_background__example","status":"pending","title":"printf ready","content":[],"locations":[],"kind":"other"}
+{"sessionUpdate":"tool_call_update","toolCallId":"mcp_mistbrowser_run_in_background__example","status":"completed","title":"printf ready","content":[{"type":"content","content":{"type":"text","text":"{\"taskId\":\"task-example\"}"}}],"locations":[],"kind":"other"}
+{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"memory","description":"Manage memory"}]}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Done."}}

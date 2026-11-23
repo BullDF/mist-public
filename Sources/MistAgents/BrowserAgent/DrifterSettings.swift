@@ -14,12 +14,13 @@ enum DrifterConfirmation: String, Codable, CaseIterable {
         }
     }
     func automaticallyAllows(tool: String, requiresInteraction: Bool) -> Bool {
-        if ["finish_task", "stop_task", "group_tabs", "hand_off"].contains(where: { tool == "mcp__mistbrowser__" + $0 }) { return true }
+        if ["finish_task", "stop_task", "group_tabs", "hand_off", "notify", "stop_recording", "mount_to_tab", "unmount_from_tab"]
+            .contains(where: { tool == "mcp__mistbrowser__" + $0 }) { return true }
         if tool == "mcp__mistbrowser__send_mail" || DrifterSlackTools.alwaysConfirm.contains(where: { tool == "mcp__mistbrowser__" + $0 }) { return false }
         guard !requiresInteraction else { return false }
         if ["Read", "Glob", "Grep"].contains(tool) { return true }
         if DrifterSlackTools.readOnly.contains(where: { tool == "mcp__mistbrowser__" + $0 }) { return true }
-        if ["list_agents", "read_agent", "list_mail_accounts", "list_mail", "search_mail", "read_mail"].map({ "mcp__mistbrowser__" + $0 }).contains(tool) { return true }
+        if ["list_agents", "read_agent", "list_schedules", "list_mail_accounts", "list_mail", "search_mail", "read_mail"].map({ "mcp__mistbrowser__" + $0 }).contains(tool) { return true }
         return self == .skip
     }
 }
@@ -41,9 +42,10 @@ struct DrifterLaunchSettings {
     var config: DrifterConfig {
         removeLegacyKeys()
         let engine = defaults.string(forKey: Self.engineKey).flatMap(DrifterEngine.init(rawValue:)) ?? .claude
+        let model = DrifterModel.offered(defaults.string(forKey: Self.modelKey) ?? "opus", engine: engine)
+        let effort = defaults.string(forKey: Self.effortKey) ?? (engine == .gemini ? GeminiModelInfo.defaultEffort : "xhigh")
         return .init(engine: engine,
-              model: DrifterModel.offered(defaults.string(forKey: Self.modelKey) ?? "opus", engine: engine),
-              effort: defaults.string(forKey: Self.effortKey) ?? "xhigh",
+              model: model, effort: engine == .gemini ? DrifterModel.geminiModel(model).effort(effort) : effort,
               confirmation: defaults.string(forKey: Self.confirmationKey).flatMap(DrifterConfirmation.init(rawValue:)) ?? .skip)
     }
 
@@ -82,7 +84,7 @@ struct DrifterModel: Equatable, Identifiable {
     /// picks Codex's catalog last gave (`DrifterCodexPicks`). A chat on a model not offered keeps
     /// running on it; a new chat's default falls back to an offered one (`offered`).
     static var codexPicks: [String] { DrifterCodexPicks.shared.ids }
-    static var spawnModelIDs: [String] { ClaudeCodeModel.allCases.map(\.rawValue) + codexPicks }
+    static var spawnModelIDs: [String] { ClaudeCodeModel.allCases.map(\.rawValue) + codexPicks + DrifterGeminiPicks.shared.ids }
     static func spawnModel(_ query: String) -> (engine: DrifterEngine, model: String)? {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let model = ClaudeCodeModel.allCases.first(where: { $0.rawValue.lowercased() == query }) {
@@ -91,7 +93,22 @@ struct DrifterModel: Equatable, Identifiable {
         if let pick = codexPicks.first(where: {
             $0.lowercased() == query || title($0, engine: .codex).lowercased() == query || codexFamily($0) == query
         }) { return (.codex, pick) }
+        if let pick = DrifterGeminiPicks.shared.models.first(where: {
+            $0.id == query || $0.displayName.lowercased() == query || GeminiModelInfo.family($0.id) == query
+        }) { return (.gemini, pick.id) }
         return nil
+    }
+
+    static func forSpawn(_ config: DrifterConfig, models: [Self]) -> Self {
+        if let model = models.first(where: { $0.engine == config.engine && $0.model == config.model }) { return model }
+        if config.engine == .gemini { return geminiModel(config.model) }
+        if config.engine == .codex, let cached = DrifterCodexPicks.shared.model(config.model) {
+            return codexModel(cached)
+        }
+        let (efforts, fallback) = config.engine == .claude
+            ? (ClaudeCodeEffort.allCases.map(\.rawValue), "xhigh") : (["low", "medium", "high", "xhigh"], "medium")
+        return .init(engine: config.engine, model: config.model, title: title(config.model, engine: config.engine),
+                     efforts: efforts, defaultEffort: fallback)
     }
     /// The children a chat may spawn (Johnny's rule): Opus and Fable chats any model at any effort,
     /// Astra chats any GPT model at any effort, every other chat only its own model and effort.
@@ -101,6 +118,7 @@ struct DrifterModel: Equatable, Identifiable {
         switch config.engine {
         case .claude: return [.opus, .fable].contains(ClaudeCodeModel(rawValue: config.model.lowercased())) ? .any : .own
         case .codex: return codexFamily(config.model.lowercased()) == "astra" ? .gpt : .own
+        case .gemini: return .own
         }
     }
     /// "GPT-6.1 Terra · low".
@@ -114,6 +132,9 @@ struct DrifterModel: Equatable, Identifiable {
         case .codex:
             if codexPicks.contains(model) { return model }
             return codexPicks.first { codexFamily($0) == codexFamily(model) } ?? codexPicks[0]
+        case .gemini:
+            let picks = DrifterGeminiPicks.shared.ids
+            return picks.first { GeminiModelInfo.family($0) == GeminiModelInfo.family(model) } ?? picks[0]
         }
     }
     /// A GPT model's label, made from its ID because Codex's own names mix hyphens and spaces:
@@ -126,32 +147,54 @@ struct DrifterModel: Equatable, Identifiable {
             let parts = model.split(separator: "-").map(String.init)
             guard parts.count > 1, parts[0].lowercased() == "gpt" else { return model }
             return (["GPT-" + parts[1]] + parts.dropFirst(2).map(\.capitalized)).joined(separator: " ")
+        case .gemini:
+            return DrifterGeminiPicks.shared.models.first { $0.id == model }?.displayName ?? GeminiModelInfo.title(model)
         }
     }
     private static func codexFamily(_ id: String) -> String { id.split(separator: "-").dropFirst(2).joined(separator: "-") }
-    /// The models the picker offers, after refreshing their catalogs; the message says why GPT models are missing.
-    @MainActor static func load(codex includeCodex: Bool = true) async -> (models: [Self], codexMessage: String?) {
+    /// The picker catalogs and any messages explaining why an engine is unavailable.
+    @MainActor static func load(lockedEngine: DrifterEngine? = nil) async
+        -> (models: [Self], messages: [DrifterEngine: String]) {
+        async let codex = loadCodex(included: lockedEngine == nil || lockedEngine == .codex)
+        async let gemini = loadGemini(included: lockedEngine == nil || lockedEngine == .gemini)
         await ClaudeCodeModelCatalog.shared.refreshIfStale()
-        var codex: [CodexModelInfo] = [], message: String?
-        if includeCodex {
-            do {
-                let result = try await CodexModelCatalog.shared.load()
-                if result.account == .chatgpt {
-                    codex = result.models
-                    DrifterCodexPicks.shared.update(from: codex)
-                } else { message = CodexStrings.loginRequired }
-            } catch { message = error.localizedDescription }
-        }
-        return (merged(claude: ClaudeCodeModelCatalog.shared.models, codex: codex), message)
+        let (gpt, gptMessage) = await codex
+        let (google, googleMessage) = await gemini
+        var messages: [DrifterEngine: String] = [:]
+        messages[.codex] = gptMessage
+        messages[.gemini] = googleMessage
+        return (merged(claude: ClaudeCodeModelCatalog.shared.models, codex: gpt, gemini: google), messages)
     }
-    static func merged(claude: [String: ClaudeCodeModelInfo], codex: [CodexModelInfo]) -> [Self] {
+    private static func loadCodex(included: Bool) async -> ([CodexModelInfo], String?) {
+        guard included else { return ([], nil) }
+        do {
+            let result = try await CodexModelCatalog.shared.load()
+            guard result.account == .chatgpt else { return ([], CodexStrings.loginRequired) }
+            DrifterCodexPicks.shared.update(from: result.models)
+            return (result.models, nil)
+        } catch { return ([], error.localizedDescription) }
+    }
+    private static func loadGemini(included: Bool) async -> ([GeminiModelInfo], String?) {
+        guard included else { return ([], nil) }
+        do { return (try await GeminiModelCatalog.shared.load(), nil) }
+        catch { return ([], error.localizedDescription) }
+    }
+    static func geminiModel(_ id: String, displayName: String? = nil) -> Self {
+        .init(engine: .gemini, model: id, title: displayName ?? title(id, engine: .gemini),
+              efforts: GeminiModelInfo.efforts(id), defaultEffort: GeminiModelInfo.defaultEffort)
+    }
+    private static func codexModel(_ info: CodexModelInfo) -> Self {
+        .init(engine: .codex, model: info.id, title: title(info.id, engine: .codex),
+              efforts: info.efforts, defaultEffort: info.defaultEffort)
+    }
+    static func merged(claude: [String: ClaudeCodeModelInfo], codex: [CodexModelInfo], gemini: [GeminiModelInfo] = []) -> [Self] {
         ClaudeCodeModel.allCases.map {
             Self(engine: .claude, model: $0.rawValue, title: claude[$0.rawValue]?.displayName ?? $0.title,
                  efforts: ClaudeCodeEffort.allCases.map(\.rawValue), defaultEffort: "xhigh")
         } + DrifterCodexPicks.picks(from: codex.map(\.id)).compactMap { pick in
-            codex.first { $0.id == pick }.map {
-                Self(engine: .codex, model: $0.id, title: title($0.id, engine: .codex), efforts: $0.efforts, defaultEffort: $0.defaultEffort)
-            }
+            codex.first { $0.id == pick }.map(codexModel)
+        } + GeminiModelInfo.picks(from: gemini).map {
+            geminiModel($0.id, displayName: $0.displayName)
         }
     }
 }
@@ -175,6 +218,7 @@ final class DrifterCodexPicks: @unchecked Sendable {
     private let updatesFromCatalog: Bool
     private let lock = NSLock()
     private var stored: [String]
+    private var catalog: [CodexModelInfo] = []
 
     init(defaults: UserDefaults, updatesFromCatalog: Bool = true) {
         self.defaults = defaults
@@ -184,12 +228,14 @@ final class DrifterCodexPicks: @unchecked Sendable {
     }
 
     var ids: [String] { lock.withLock { stored } }
+    func model(_ id: String) -> CodexModelInfo? { lock.withLock { catalog.first { $0.id == id } } }
 
     /// Saves the catalog's picks, writing defaults only when they changed.
     func update(from catalog: [CodexModelInfo]) {
         let next = Self.picks(from: catalog.map(\.id))
         guard updatesFromCatalog, !next.isEmpty else { return }
         let changed = lock.withLock {
+            self.catalog = catalog
             guard stored != next else { return false }
             stored = next
             return true
@@ -232,7 +278,7 @@ final class DrifterSettings: ObservableObject {
     @Published private(set) var config: DrifterConfig
     @Published var isEnabled = true
     @Published private(set) var models: [DrifterModel] = []
-    @Published private(set) var codexMessage: String?
+    @Published private(set) var modelMessages: [DrifterEngine: String] = [:]
     var onChange: ((DrifterConfig) -> Void)?
     /// A launch composer's new-chat defaults, and the defaults it last took.
     private let saved: DrifterLaunchSettings?
@@ -250,7 +296,9 @@ final class DrifterSettings: ObservableObject {
 
     var selectedModel: DrifterModel? { models.first { $0.engine == config.engine && $0.model == config.model } }
     var modelTitle: String { selectedModel?.title ?? DrifterModel.title(config.model, engine: config.engine) }
-    var efforts: [String] { selectedModel?.efforts ?? [config.effort] }
+    var efforts: [String] {
+        selectedModel?.efforts ?? (config.engine == .gemini ? GeminiModelInfo.efforts(config.model) : [config.effort])
+    }
 
     /// Takes defaults changed in Settings ▸ Drifter; until they change, this composer's own pick stays.
     func reloadSaved() {
@@ -266,8 +314,8 @@ final class DrifterSettings: ObservableObject {
     }
 
     func refreshModels() async {
-        let loaded = await DrifterModel.load(codex: lockedEngine != .claude)
-        if lockedEngine != .claude { codexMessage = loaded.codexMessage }
+        let loaded = await DrifterModel.load(lockedEngine: lockedEngine)
+        modelMessages = loaded.messages
         models = loaded.models
         if let selectedModel { selectModel(selectedModel) }
     }

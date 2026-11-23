@@ -8,6 +8,19 @@ import Foundation
 class APIClient {
     static let shared = APIClient()
 
+    func geminiModels(key: String) async throws -> Data {
+        let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000")!
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        return data
+    }
+
     func slackSocket(_ url: URL) -> URLSessionWebSocketTask {
         URLSession.shared.webSocketTask(with: url)
     }

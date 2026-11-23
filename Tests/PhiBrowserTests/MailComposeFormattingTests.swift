@@ -30,7 +30,7 @@ final class MailComposeFormattingTests: XCTestCase {
         XCTAssertTrue(html.contains("Hello &lt;&amp;&gt;")); XCTAssertTrue(html.contains("<div><br></div>"))
         XCTAssertTrue(html.contains("<blockquote type=\"cite\"><div>First</div><blockquote type=\"cite\"><div>Nested</div></blockquote><div>Back</div></blockquote><div>Done</div>"))
         let wrapped = MailComposeFormatting.document(html: "<p>Test</p>")
-        XCTAssertTrue(wrapped.hasPrefix("<!doctype html>")); XCTAssertTrue(wrapped.contains("font-size:13px"))
+        XCTAssertTrue(wrapped.hasPrefix("<!doctype html>")); XCTAssertTrue(wrapped.contains("font-size:16px"))
         XCTAssertTrue(MailComposeFormatting.document(html: nil).contains("<div><br></div>"))
         let full = "<!doctype html><html><head><title>Original</title></head><BODY class=\"original\">Hi</BODY></html>"
         XCTAssertEqual(MailComposeFormatting.document(html: full), full)
@@ -41,5 +41,22 @@ final class MailComposeFormattingTests: XCTestCase {
         XCTAssertEqual(MailComposeFormatting.suggestions(values, matching: "elodie", excluding: [values[0].address]).first, values[1].address)
         XCTAssertEqual(MailComposeFormatting.suggestions(values, matching: "PERSON2", excluding: []), [values[2].address])
         XCTAssertTrue(MailComposeFormatting.suggestions(values, matching: "lod", excluding: []).isEmpty)
+    }
+
+    func testMessageBodyPlacesSignatureAboveQuoteAndKeepsEmptySlot() {
+        let signature = "<span style=\"font-family: Georgia; color: blue\">Example Sender</span>"
+        let quote = "<p>Intro</p><blockquote>Original</blockquote>"
+        let message = MailComposeFormatting.messageBody("Hello <", signature: signature,
+            quoteHTML: "<div><br></div>" + quote, quoteText: "\n\nIntro\n> Original")
+        let fragment = "<div>Hello &lt;</div><div><br></div><div class=\"mist-signature\">\(signature)</div><div><br></div>\(quote)"
+        XCTAssertEqual(message.html, MailComposeFormatting.document(html: fragment))
+        XCTAssertEqual(message.plainText, "Hello <\n\nExample Sender\n\nIntro\n> Original")
+
+        let blank = MailComposeFormatting.messageBody("", signature: "<div>&nbsp;</div>")
+        XCTAssertEqual(blank.html, MailComposeFormatting.document(html: "<div><br></div><div><br></div><div class=\"mist-signature\"></div>"))
+        XCTAssertEqual(blank.plainText, "")
+
+        let plainQuote = MailComposeFormatting.messageBody("", signature: nil, quoteText: "\n\nIntro\n> A < B")
+        XCTAssertTrue(plainQuote.html.contains("<div><br></div><div>Intro</div><blockquote type=\"cite\"><div>A &lt; B</div></blockquote>"))
     }
 }

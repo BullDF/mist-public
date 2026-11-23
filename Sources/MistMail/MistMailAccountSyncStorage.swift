@@ -25,14 +25,26 @@ final class MistEngineMailAccountSyncStorage: MistMailAccountSyncStorage {
         guard let engine else { return [] }
         var result: [MistMailSyncAccount] = []
         for account in try await engine.accounts() {
-            let config = account.config
-            result.append(MistMailSyncAccount(id: account.id, displayName: config.displayName, senderName: config.senderName,
-                email: config.email, username: config.username,
-                imap: .init(host: config.imap.host, port: config.imap.port, security: config.imap.security.rawValue),
-                smtp: .init(host: config.smtp.host, port: config.smtp.port, security: config.smtp.security.rawValue),
-                sortOrder: config.sortOrder, isGmail: account.isGmail, password: try await engine.storedPassword(accountID: account.id)))
+            result.append(Self.snapshot(account, password: try await engine.storedPassword(accountID: account.id)))
         }
         return result
+    }
+
+    static func validateSignatureSize(_ config: MailAccountConfig, password: String?) throws {
+        guard config.signatureHTML != nil else { return }
+        var candidate = snapshot(MailAccount(config: config), password: password)
+        // An account reorder may assign a larger position before this record is emitted.
+        candidate.sortOrder = Int.min
+        guard try MistMailAccountSyncSource.fitsBlobLimit(candidate) else { throw MailError.signatureTooLong }
+    }
+
+    private static func snapshot(_ account: MailAccount, password: String?) -> MistMailSyncAccount {
+        let config = account.config
+        return MistMailSyncAccount(id: account.id, displayName: config.displayName, senderName: config.senderName,
+            email: config.email, username: config.username,
+            imap: .init(host: config.imap.host, port: config.imap.port, security: config.imap.security.rawValue),
+            smtp: .init(host: config.smtp.host, port: config.smtp.port, security: config.smtp.security.rawValue),
+            sortOrder: config.sortOrder, isGmail: account.isGmail, password: password, signatureHTML: config.signatureHTML)
     }
 
     func write(_ account: MistMailSyncAccount) async throws {
@@ -42,7 +54,8 @@ final class MistEngineMailAccountSyncStorage: MistMailAccountSyncStorage {
         let config = MailAccountConfig(displayName: account.displayName, senderName: account.senderName,
             email: account.email, username: account.username,
             imap: .init(host: account.imap.host, port: account.imap.port, security: imapSecurity),
-            smtp: .init(host: account.smtp.host, port: account.smtp.port, security: smtpSecurity), sortOrder: account.sortOrder)
+            smtp: .init(host: account.smtp.host, port: account.smtp.port, security: smtpSecurity), sortOrder: account.sortOrder,
+            signatureHTML: account.signatureHTML)
         try await engine.applySyncedAccount(MailAccount(id: account.id, config: config, isGmail: account.isGmail), password: account.password)
     }
 

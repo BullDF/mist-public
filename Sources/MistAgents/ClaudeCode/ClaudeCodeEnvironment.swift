@@ -22,6 +22,10 @@ struct ClaudeCodeEnvironment: Sendable {
         environment.filter { $0.key != "CLAUDECODE" && !$0.key.hasPrefix("CLAUDE_CODE_") }
     }
 
+    static func subscriptionVariables(_ environment: [String: String]) -> [String: String] {
+        environment.filter { !$0.key.hasPrefix("ANTHROPIC_") && $0.key != "OPENAI_API_KEY" }
+    }
+
     static func findExecutable(name: String = "claude", environment: [String: String], home: URL,
                                isExecutable: (String) -> Bool = FileManager.default.isExecutableFile(atPath:)) -> URL? {
         let candidates = (environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/" + name }

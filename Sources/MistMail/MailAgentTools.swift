@@ -176,12 +176,14 @@ final class MailAgentTools {
             if draftID != nil { base.attachments = base.attachments.filter { $0.contentID != nil } }
             base.attachments += paths.map { let url = URL(fileURLWithPath: $0); return MailDraftAttachment(filename: url.lastPathComponent, file: url) }
         }
-        if !keepsContent {
-            let body = input["body"] as? String ?? ""
-            base.plainText = body + base.plainText
-            base.html = MailComposeFormatting.document(html: base.html.map { MailComposeFormatting.plainHTML(body) + $0 }, plainText: base.plainText)
+        let body = input["body"] as? String ?? ""
+        guard !base.isEmpty || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MailAgentToolError(message: "The draft is empty.")
         }
-        guard !base.isEmpty else { throw MailAgentToolError(message: "The draft is empty.") }
+        if !keepsContent {
+            let signature = state.accounts.first { $0.id == base.accountID }?.config.signatureHTML
+            MailComposeFormatting.applyMessageBody(body, signature: signature, to: &base)
+        }
         return base
     }
     func writeDraft(_ input: [String: Any]) async throws -> [String: Any] {

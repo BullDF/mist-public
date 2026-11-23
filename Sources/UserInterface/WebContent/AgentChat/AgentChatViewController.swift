@@ -14,6 +14,7 @@ final class AgentChatViewController: NSViewController, MistAppPage {
     private(set) var previewStack: BrowserAgentPreviewStack?
     private var pageTrailingConstraint: NSLayoutConstraint?
     private let pageLayout = DrifterChatPageLayout()
+    private let mountAnchor = AgentChatMountAnchor()
     private let findBar = NativeFindBar()
     private weak var transcriptScroll: AgentChatTranscriptScroll?
     private(set) var textScale: CGFloat = 1 {
@@ -54,7 +55,7 @@ final class AgentChatViewController: NSViewController, MistAppPage {
             let settings = entry.settings
             composer.configure(settings: settings, skillFolders: entry.conversation.skillFolders)
             hosting = MistKitHostingView(rootView: DrifterChatPage(conversation: entry.conversation, settings: settings, composer: composer, layout: pageLayout,
-                                                                       origin: .init(store: store, chatId: id), panel: presentation == .panel,
+                                                                       origin: .init(store: store, chatId: id, anchor: mountAnchor), panel: presentation == .panel,
                                                                        onTranscriptScroll: { [weak self] in self?.setTranscript($0) },
                                                                        onRevealMarker: { [weak self] in self?.revealMarker($0) }))
         } else {
@@ -101,6 +102,14 @@ final class AgentChatViewController: NSViewController, MistAppPage {
 
     func revealMarker(_ id: String) { transcriptScroll?.revealMarker(id) }
     func stepMarker(forward: Bool) { transcriptScroll?.stepMarker(forward: forward) }
+
+    /// Opens the header's Mount to Tab picker; false when the chat is mounted or the page shows no header.
+    func showMountPicker() -> Bool {
+        guard presentation == .page, let id = conversationId, store.panelHost(of: id) == nil,
+              let anchor = mountAnchor.view, anchor.window != nil else { return false }
+        AgentChatMountPicker.show(chatId: id, store: store, relativeTo: anchor)
+        return true
+    }
 
     var pageZoom: CGFloat? { textScale }
 
@@ -292,12 +301,14 @@ struct AgentChatIDButton: View {
     }
 }
 
+/// The header's Mount to Tab button, which the picker opens from, whether clicked or by Switch Between Chat Panel and Tab.
+private final class AgentChatMountAnchor { weak var view: NSView? }
+
 /// Shows the linked panel and unmounts the chat from it, or offers to mount an unlinked chat to a tab.
 private struct AgentChatPanelOriginButton: View {
-    private final class Anchor { weak var view: NSView? }
     @ObservedObject var store: AgentChatStore
     let chatId: UUID
-    @State private var anchor = Anchor()
+    let anchor: AgentChatMountAnchor
     var body: some View {
         if store.panelHost(of: chatId) != nil {
             HStack(spacing: 4) {
@@ -1590,7 +1601,7 @@ struct AgentChatTranscriptRows: View {
     }
 
     func workingRow(afterRows: Bool) -> some View {
-        AgentChatWorkingRow(conversation: conversation).padding(.top, afterRows ? 18 : 0)
+        AgentChatWorkingRow(conversation: conversation, engine: engine).padding(.top, afterRows ? 18 : 0)
     }
 
     var body: some View {
@@ -1743,20 +1754,22 @@ private struct AgentChatFixedIconLabelStyle: LabelStyle {
 private struct AgentChatWorkingRow: View {
     @Environment(\.agentChatTextScale) private var textScale
     @ObservedObject var conversation: AgentConversation
+    let engine: DrifterEngine
     @AgentChatColors private var colors
 
     var body: some View {
+        let icon = AgentChatIcon.resolve(engine: engine)
         TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: 8) {
                 // Opacity is computed from the clock, not animated: an animation
                 // transaction would also carry the row's first layout and slide the icon.
                 TimelineView(.animation) { pulse in
-                    Image(conversation.usesClaudePresentation ? "agent-claude" : "agent-openai").renderingMode(conversation.usesClaudePresentation ? .original : .template).resizable().scaledToFit()
+                    Image(icon.rawValue).renderingMode(icon.isTemplate ? .template : .original).resizable().scaledToFit()
                         .frame(width: 16, height: 16)
                         .opacity(0.725 + 0.275 * cos(pulse.date.timeIntervalSinceReferenceDate * .pi / 1.2))
                 }
                 Text(AgentChatStrings.workingWord(conversation.workingWord))
-                    .foregroundStyle(conversation.usesClaudePresentation
+                    .foregroundStyle(engine == .claude
                         ? Color(red: 0.85, green: 0.47, blue: 0.35) : colors.resolve(.textPrimary))
                 Text(AgentChatStrings.workingProgress(elapsed: context.date.timeIntervalSince(conversation.turnStartedAt), tokens: conversation.outputTokens))
                     .foregroundStyle(colors.resolve(.textSecondary))
@@ -3348,6 +3361,7 @@ final class AgentChatComposer: NSView, ObservableObject {
     private var statusSubscription: AnyCancellable?
     private var draftSubscription: AnyCancellable?
     private var backgroundSubscription: AnyCancellable?
+    private var scheduleSubscription: AnyCancellable?
     private var commandSubscriptions = Set<AnyCancellable>()
     private var skillCatalog: DrifterSkillCatalog?
     private var skillSubscription: AnyCancellable?
@@ -3360,7 +3374,7 @@ final class AgentChatComposer: NSView, ObservableObject {
         [editor, editor.commandPopup, editor.mentionPopup, strip, stopButton, sendButton].forEach { card.addSubview($0) }
         card.acceptsAttachments = { [weak self] in self?.canEdit == true }
         card.onDrop = { [weak self] in self?.addAttachments(from: $0) ?? false }
-        editor.setPlaceholder(AgentChatStrings.reply, icon: .asset("agent-claude"))
+        editor.setPlaceholder(AgentChatStrings.reply, icon: .drifter(engine: .claude))
         editor.onChange = { [weak self] in
             guard let self else { return }
             self.publishDraft()
@@ -3458,7 +3472,22 @@ final class AgentChatComposer: NSView, ObservableObject {
             self?.browserLaunchRow?.setBackgroundTasks(tasks, onStop: self?.conversation?.onStopTask)
         }
         browserLaunchRow?.setBackgroundTasks(conversation?.backgroundTasks ?? [], onStop: conversation?.onStopTask)
+        scheduleSubscription = conversation.map { _ in
+            NotificationCenter.default.publisher(for: DrifterScheduleStore.didChange, object: DrifterScheduleStore.shared)
+                .sink { [weak self] _ in self?.refreshSchedules() }
+        }
+        refreshSchedules()
         refresh()
+    }
+
+    private func refreshSchedules() {
+        let schedules: [DrifterSchedule]
+        if let id = conversation?.id {
+            schedules = ((try? DrifterScheduleStore.shared.list()) ?? []).filter { $0.owner == id && $0.target == .thisChat }
+        } else {
+            schedules = []
+        }
+        browserLaunchRow?.setSchedules(schedules) { DrifterScheduleStore.shared.cancelFromUI($0) }
     }
     private var canEdit: Bool {
         guard let conversation else { return onLaunch != nil }

@@ -422,6 +422,7 @@ final class BookmarkLayoutTestWebContentWrapper: NSObject, WebContentWrapper {
     func goForward() {}
     func stopLoading() {}
     func navigate(toURL urlString: String) { self.urlString = urlString }
+    func navigateInPlace(toURL urlString: String) { self.urlString = urlString }
     func setAsActiveTab() { activationCount += 1 }
     func moveSelf(to newIndex: Int, selectAfterMove: Bool) {}
     func moveSelf(toNewWindow activateNewWindow: Bool) {}

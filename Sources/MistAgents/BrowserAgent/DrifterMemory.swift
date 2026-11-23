@@ -48,8 +48,8 @@ struct DrifterMemory: Sendable {
         if home.isRepository {
             text += "\n\nAfter each memory edit, commit only the files you changed and push: `git -C \(home.folder.path) add <files>`, `git -C \(home.folder.path) commit -m \"<one line>\" -- <files>`, `git -C \(home.folder.path) push`; on a rejected push, `git -C \(home.folder.path) pull --rebase` and push again. Other sessions share this repo: never `add -A` or `.`."
         }
-        // Claude loads the index through autoMemoryDirectory; Codex needs one injected copy.
-        if engine == .codex, let index = try? String(contentsOf: folder.appendingPathComponent("MEMORY.md"), encoding: .utf8),
+        // Claude loads the index through autoMemoryDirectory; the other engines get one injected copy.
+        if engine != .claude, let index = try? String(contentsOf: folder.appendingPathComponent("MEMORY.md"), encoding: .utf8),
            !index.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             text += "\n\nYour memory index (MEMORY.md):\n" + index
         }

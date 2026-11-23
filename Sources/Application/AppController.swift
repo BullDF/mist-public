@@ -58,6 +58,7 @@ import Settings
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ClaudeCodeRemoteControlArchiver.shared.start()
         ChromiumLauncher.sharedInstance().bridge?.applicationDidFinishLaunching(notification)
         MistBuildFlavor.applyApplicationIcon()
         MistSyncEngine.shared.start()
@@ -65,8 +66,10 @@ import Settings
         MistMailService.shared.start()
         SlackAgentConnection.shared.start()
         SlackAgentBridge.shared.start()
+        DrifterScheduleRunner.shared.start()
         SlackAgentAccess.installChatHooks()
         DrifterCodexPicks.preload()
+        DrifterGeminiPicks.preload()
         ChromiumLauncher.sharedInstance().bridge?.setMetricsReportingEnabled(false) { effectiveEnabled in
             if effectiveEnabled {
                 AppLogWarn("[OSS] Failed to disable Chromium metrics reporting")

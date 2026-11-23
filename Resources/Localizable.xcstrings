@@ -841,6 +841,90 @@
         }
       }
     },
+    "mail.account.signature": {
+      "comment": "Mail - Account signature section and editor label",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signature"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signature"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signatur"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "署名"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "签名"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "簽名"
+          }
+        }
+      }
+    },
+    "mail.account.signatureTooLong": {
+      "comment": "Mail - Account signature exceeded its UTF-8 size limit",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This signature is too long."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cette signature est trop longue."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Signatur ist zu lang."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この署名は長すぎます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此签名过长。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這個簽名太長。"
+          }
+        }
+      }
+    },
     "mail.settings.servers": {
       "comment": "Mail account sheet - Advanced server settings disclosure",
       "extractionState": "extracted_with_value",
@@ -2823,6 +2907,174 @@
           "stringUnit": {
             "state": "translated",
             "value": "最大"
+          }
+        }
+      }
+    },
+    "mail.compose.font": {
+      "comment": "Mail - Formatting toolbar font picker",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Font"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Police"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schriftart"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォント"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "字体"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "字型"
+          }
+        }
+      }
+    },
+    "mail.compose.defaultFont": {
+      "comment": "Mail - Default message body font",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Par défaut"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Standard"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既定"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "默认"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預設"
+          }
+        }
+      }
+    },
+    "mail.compose.otherFormatting": {
+      "comment": "Mail - Open the system font or color panel",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autre…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Andere…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "その他…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他…"
+          }
+        }
+      }
+    },
+    "mail.compose.customColor": {
+      "comment": "Mail - Selected text color outside the palette",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Personnalisé"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Benutzerdefiniert"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "カスタム"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自定义"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自訂"
           }
         }
       }
@@ -5923,6 +6175,48 @@
         }
       }
     },
+    "browser.agent.permission.exportBookmarks": {
+      "comment": "Browser tool permission action phrase",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "export bookmarks"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lesezeichen exportieren"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "exporter les favoris"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブックマークを書き出す"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出书签"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出書籤"
+          }
+        }
+      }
+    },
     "browser.agent.permission.saveScreenshot": {
       "comment": "Browser tool permission action phrase",
       "extractionState": "extracted_with_value",
@@ -5961,6 +6255,48 @@
           "stringUnit": {
             "state": "translated",
             "value": "儲存螢幕截圖"
+          }
+        }
+      }
+    },
+    "browser.agent.permission.startRecording": {
+      "comment": "Browser tool permission action phrase",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "record this tab"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "diesen Tab aufnehmen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "enregistrer cet onglet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このタブを録画"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "录制此标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "錄製此分頁"
           }
         }
       }
@@ -6093,6 +6429,342 @@
     },
     "browser.agent.tool.saveScreenshot": {
       "comment": "Screenshot file name",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ gespeichert"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ enregistré"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を保存しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已儲存 %@"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.startRecording.failed": {
+      "comment": "Browser Agent - Could not start a tab recording",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't start recording"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aufnahme konnte nicht gestartet werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de lancer l’enregistrement"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "録画を開始できませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法开始录制"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法開始錄製"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.startRecording.running": {
+      "comment": "Browser Agent - Starting a tab recording",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starting recording"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aufnahme wird gestartet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Démarrage de l’enregistrement"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "録画を開始中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在开始录制"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在開始錄製"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.startRecording.untitled": {
+      "comment": "Browser Agent - Recording a tab without a title",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recording tab"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tab wird aufgenommen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrement de l’onglet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブを録画中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在录制标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在錄製分頁"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.startRecording": {
+      "comment": "Browser Agent - Recording the tab with this title",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recording %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ wird aufgenommen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrement de %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@を録画中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在录制 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在錄製 %@"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.stopRecording.failed": {
+      "comment": "Browser Agent - Could not save a tab recording",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't save recording"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aufnahme konnte nicht gespeichert werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de sauvegarder l’enregistrement"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "録画を保存できませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存录制内容"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法儲存錄製內容"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.stopRecording.running": {
+      "comment": "Browser Agent - Saving a tab recording",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saving recording"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aufnahme wird gespeichert"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sauvegarde de l’enregistrement"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "録画を保存中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在保存录制内容"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在儲存錄製內容"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.stopRecording.saved": {
+      "comment": "Browser Agent - Saved a tab recording without a file name",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saved recording"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aufnahme gespeichert"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrement sauvegardé"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "録画を保存しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存录制内容"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已儲存錄製內容"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.stopRecording": {
+      "comment": "Browser Agent - Saved recording file name",
       "extractionState": "extracted_with_value",
       "localizations": {
         "en": {
@@ -6631,6 +7303,582 @@
         }
       }
     },
+    "browser.agentChat.toolGroup.bookmarksExported.running": {
+      "comment": "Grouped bookmark exports in progress; number of exports",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "exporting bookmarks %d time"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "exporting bookmarks %d times"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "exportiert Lesezeichen %d Mal"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "exportiert Lesezeichen %d Mal"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "exportation des favoris %d fois"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "exportation des favoris %d fois"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "ブックマークを%d回書き出し中"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "正在导出书签 %d 次"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "正在匯出書籤 %d 次"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.chatMounted.running": {
+      "comment": "Grouped chat mounts in progress; number of mounts",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "mounting to a tab %d time"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "mounting to a tab %d times"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "hängt Chat %d Mal an einen Tab an"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "hängt Chat %d Mal an einen Tab an"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "attachement à un onglet %d fois"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "attachement à un onglet %d fois"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "チャットをタブに%d回マウント中"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "正在将聊天挂载到标签页 %d 次"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "正在將聊天掛載到分頁 %d 次"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.chatUnmounted.running": {
+      "comment": "Grouped chat unmounts in progress; number of unmounts",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "unmounting from a tab %d time"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "unmounting from a tab %d times"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "löst Chat %d Mal vom Tab"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "löst Chat %d Mal vom Tab"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "détachement d’un onglet %d fois"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "détachement d’un onglet %d fois"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "チャットをタブから%d回マウント解除中"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "正在从标签页卸载聊天 %d 次"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "正在從分頁卸載聊天 %d 次"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.bookmarksExported": {
+      "comment": "Grouped bookmark exports completed; number of exports",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "exported bookmarks %d time"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "exported bookmarks %d times"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "hat Lesezeichen %d Mal exportiert"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "hat Lesezeichen %d Mal exportiert"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "favoris exportés %d fois"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "favoris exportés %d fois"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "ブックマークを%d回書き出しました"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已导出书签 %d 次"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已匯出書籤 %d 次"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.chatMounted": {
+      "comment": "Grouped chat mounts completed; number of mounts",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "mounted to a tab %d time"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "mounted to a tab %d times"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "hat Chat %d Mal an einen Tab angehängt"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "hat Chat %d Mal an einen Tab angehängt"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "attaché à un onglet %d fois"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "attaché à un onglet %d fois"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "チャットをタブに%d回マウントしました"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已将聊天挂载到标签页 %d 次"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已將聊天掛載到分頁 %d 次"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.chatUnmounted": {
+      "comment": "Grouped chat unmounts completed; number of unmounts",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "unmounted from a tab %d time"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "unmounted from a tab %d times"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "hat Chat %d Mal vom Tab gelöst"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "hat Chat %d Mal vom Tab gelöst"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "détaché d’un onglet %d fois"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "détaché d’un onglet %d fois"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "チャットをタブから%d回マウント解除しました"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已从标签页卸载聊天 %d 次"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已從分頁卸載聊天 %d 次"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "browser.agentChat.toolGroup.screenshotsSaved.running": {
       "comment": "Grouped screenshot saves running; number of screenshots",
       "extractionState": "extracted_with_value",
@@ -6854,6 +8102,222 @@
                   "value": "已儲存 %d 張螢幕截圖"
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.recordingStarted.running": {
+      "comment": "Grouped tab recordings starting; number of recordings",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "starting %d recording" } },
+              "other": { "stringUnit": { "state": "translated", "value": "starting %d recordings" } }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d Aufnahme wird gestartet" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d Aufnahmen werden gestartet" } }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "démarrage de %d enregistrement" } },
+              "other": { "stringUnit": { "state": "translated", "value": "démarrage de %d enregistrements" } }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d件の録画を開始中" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d件の録画を開始中" } }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "正在开始 %d 项录制" } },
+              "other": { "stringUnit": { "state": "translated", "value": "正在开始 %d 项录制" } }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "正在開始 %d 項錄製" } },
+              "other": { "stringUnit": { "state": "translated", "value": "正在開始 %d 項錄製" } }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.recordingStarted": {
+      "comment": "Grouped tab recordings started; number of recordings",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "started %d recording" } },
+              "other": { "stringUnit": { "state": "translated", "value": "started %d recordings" } }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d Aufnahme gestartet" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d Aufnahmen gestartet" } }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d enregistrement lancé" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d enregistrements lancés" } }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d件の録画を開始" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d件の録画を開始" } }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "已开始 %d 项录制" } },
+              "other": { "stringUnit": { "state": "translated", "value": "已开始 %d 项录制" } }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "已開始 %d 項錄製" } },
+              "other": { "stringUnit": { "state": "translated", "value": "已開始 %d 項錄製" } }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.recordingsSaved.running": {
+      "comment": "Grouped tab recording saves running; number of recordings",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "saving %d recording" } },
+              "other": { "stringUnit": { "state": "translated", "value": "saving %d recordings" } }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d Aufnahme wird gespeichert" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d Aufnahmen werden gespeichert" } }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "sauvegarde de %d enregistrement" } },
+              "other": { "stringUnit": { "state": "translated", "value": "sauvegarde de %d enregistrements" } }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d件の録画を保存中" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d件の録画を保存中" } }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "正在保存 %d 项录制" } },
+              "other": { "stringUnit": { "state": "translated", "value": "正在保存 %d 项录制" } }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "正在儲存 %d 項錄製" } },
+              "other": { "stringUnit": { "state": "translated", "value": "正在儲存 %d 項錄製" } }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.toolGroup.recordingsSaved": {
+      "comment": "Grouped tab recording saves completed; number of recordings",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "saved %d recording" } },
+              "other": { "stringUnit": { "state": "translated", "value": "saved %d recordings" } }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d Aufnahme gespeichert" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d Aufnahmen gespeichert" } }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d enregistrement sauvegardé" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d enregistrements sauvegardés" } }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "%d件の録画を保存" } },
+              "other": { "stringUnit": { "state": "translated", "value": "%d件の録画を保存" } }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "已保存 %d 项录制" } },
+              "other": { "stringUnit": { "state": "translated", "value": "已保存 %d 项录制" } }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "one": { "stringUnit": { "state": "translated", "value": "已儲存 %d 項錄製" } },
+              "other": { "stringUnit": { "state": "translated", "value": "已儲存 %d 項錄製" } }
             }
           }
         }
@@ -8833,6 +10297,510 @@
         }
       }
     },
+    "browser.agent.tool.exportBookmarks": {
+      "comment": "Browser Agent - Exported bookmarks without a file name in the result",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exported bookmarks"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lesezeichen exportiert"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favoris exportés"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブックマークを書き出しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已导出书签"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已匯出書籤"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.exportBookmarks.file": {
+      "comment": "Browser Agent - %@ is the exported bookmarks file name",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exported bookmarks to %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lesezeichen nach %@ exportiert"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Favoris exportés vers %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブックマークを%@に書き出しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已将书签导出到%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已將書籤匯出至%@"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.exportBookmarks.running": {
+      "comment": "Browser Agent - Bookmark export in progress",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exporting bookmarks"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lesezeichen werden exportiert"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportation des favoris"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブックマークを書き出し中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在导出书签"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在匯出書籤"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.exportBookmarks.failed": {
+      "comment": "Browser Agent - Bookmark export failed",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't export bookmarks"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lesezeichen konnten nicht exportiert werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’exporter les favoris"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブックマークを書き出せませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法导出书签"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法匯出書籤"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.mountToTab": {
+      "comment": "Browser Agent - Mounted to a tab without a title in the result",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mounted to tab"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An Tab angehängt"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attaché à un onglet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブにマウントしました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已挂载到标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已掛載到分頁"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.mountToTab.title": {
+      "comment": "Browser Agent - %@ is the title of the tab the chat was mounted to",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mounted to %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An %@ angehängt"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attaché à %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@にマウントしました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已挂载到%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已掛載到%@"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.mountToTab.running": {
+      "comment": "Browser Agent - Mounting the chat to a tab",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mounting to tab"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat wird an Tab angehängt"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attachement à un onglet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブにマウント中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在挂载到标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在掛載到分頁"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.mountToTab.failed": {
+      "comment": "Browser Agent - Mounting the chat to a tab failed",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't mount to tab"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat konnte nicht an den Tab angehängt werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’attacher à l’onglet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブにマウントできませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法挂载到标签页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法掛載到分頁"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.unmountFromTab": {
+      "comment": "Browser Agent - Unmounted from a tab without a title in the result",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unmounted from tab"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vom Tab gelöst"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Détaché de l’onglet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブからマウント解除しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已从标签页卸载"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已從分頁卸載"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.unmountFromTab.title": {
+      "comment": "Browser Agent - %@ is the title of the tab the chat was unmounted from",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unmounted from %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Von %@ gelöst"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Détaché de %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@からマウント解除しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已从%@卸载"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已從%@卸載"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.unmountFromTab.running": {
+      "comment": "Browser Agent - Unmounting the chat from a tab",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unmounting from tab"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat wird vom Tab gelöst"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Détachement de l’onglet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブからマウント解除中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在从标签页卸载"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在從分頁卸載"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.unmountFromTab.failed": {
+      "comment": "Browser Agent - Unmounting the chat from a tab failed",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't unmount from tab"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat konnte nicht vom Tab gelöst werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de détacher de l’onglet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブからマウント解除できませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法从标签页卸载"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法從分頁卸載"
+          }
+        }
+      }
+    },
     "browser.agent.tool.savePage": {
       "comment": "Browser Agent - Tool summary: saved a web page as a file; %@ is the file name",
       "extractionState": "extracted_with_value",
@@ -9207,6 +11175,510 @@
           "stringUnit": {
             "state": "translated",
             "value": "無法搜尋瀏覽記錄"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.schedulePrompt": {
+      "comment": "Tool summary after scheduling a Drifter prompt",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scheduled prompt"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt geplant"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt planifié"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロンプトをスケジュールしました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已安排提示"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已排定提示"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.schedulePrompt.running": {
+      "comment": "Tool summary while scheduling a Drifter prompt",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scheduling prompt"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt wird geplant"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Planification du prompt"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロンプトをスケジュール中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安排提示"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在排定提示"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.schedulePrompt.failed": {
+      "comment": "Tool summary after scheduling a Drifter prompt failed",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't schedule prompt"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt konnte nicht geplant werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de planifier le prompt"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロンプトをスケジュールできませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法安排提示"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法排定提示"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.listSchedules": {
+      "comment": "Tool summary after listing Drifter schedules",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listed schedules"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeitpläne aufgelistet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Planifications répertoriées"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュールを一覧表示しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已列出计划"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已列出排程"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.listSchedules.running": {
+      "comment": "Tool summary while listing Drifter schedules",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listing schedules"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeitpläne werden aufgelistet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chargement des planifications"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュールを取得中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在列出计划"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在列出排程"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.listSchedules.failed": {
+      "comment": "Tool summary after listing Drifter schedules failed",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't list schedules"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeitpläne konnten nicht aufgelistet werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de lister les planifications"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュールを取得できませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法列出计划"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法列出排程"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.cancelSchedule": {
+      "comment": "Tool summary after cancelling a Drifter schedule",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelled schedule"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeitplan aufgehoben"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Planification annulée"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュールを取り消しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已取消计划"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已取消排程"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.cancelSchedule.running": {
+      "comment": "Tool summary while cancelling a Drifter schedule",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancelling schedule"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeitplan wird aufgehoben"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Annulation de la planification"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュールを取り消し中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在取消计划"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在取消排程"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.cancelSchedule.failed": {
+      "comment": "Tool summary after cancelling a Drifter schedule failed",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't cancel schedule"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeitplan konnte nicht aufgehoben werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’annuler la planification"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュールを取り消せませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法取消计划"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法取消排程"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.notify": {
+      "comment": "Tool summary after posting a Drifter notification",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Posted notification"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mitteilung gesendet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notification envoyée"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知を送信しました"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已发送通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已傳送通知"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.notify.running": {
+      "comment": "Tool summary while posting a Drifter notification",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Posting notification"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mitteilung wird gesendet"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoi de la notification"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知を送信中"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在发送通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在傳送通知"
+          }
+        }
+      }
+    },
+    "browser.agent.tool.notify.failed": {
+      "comment": "Tool summary after posting a Drifter notification failed",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't post notification"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mitteilung konnte nicht gesendet werden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible d’envoyer la notification"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知を送信できませんでした"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法发送通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法傳送通知"
           }
         }
       }
@@ -11025,6 +13497,90 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$@想要%2$@"
+          }
+        }
+      }
+    },
+    "browser.agent.permission.schedulePrompt": {
+      "comment": "Permission action phrase for scheduling a Drifter prompt",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "schedule a prompt"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "einen Prompt planen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "planifier un prompt"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロンプトをスケジュールする"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安排提示"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "排定提示"
+          }
+        }
+      }
+    },
+    "browser.agent.permission.cancelSchedule": {
+      "comment": "Permission action phrase; %@ is the schedule ID",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cancel schedule %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zeitplan %@ aufheben"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "annuler la planification %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュール %@ を取り消す"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消计划 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消排程 %@"
           }
         }
       }
@@ -32359,6 +34915,132 @@
         }
       }
     },
+    "drifter.home.scheduled": {
+      "comment": "Drifter home - Heading for scheduled prompts",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scheduled"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geplant"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Planifié"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スケジュール済み"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已安排"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已排定"
+          }
+        }
+      }
+    },
+    "drifter.home.scheduled.wakes": {
+      "comment": "Drifter home - Scheduled prompt target; %@ is the name of the chat it wakes",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wakes %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weckt %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réveille %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ を再開"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "唤醒 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "喚醒 %@"
+          }
+        }
+      }
+    },
+    "drifter.home.scheduled.newChat": {
+      "comment": "Drifter home - Scheduled prompt target; %@ is the model and effort label of the chat it starts",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New chat · %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuer Chat · %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nouvelle discussion · %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいチャット · %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新对话 · %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新對話 · %@"
+          }
+        }
+      }
+    },
     "drifter.home.history" : {
       "comment": "Drifter home - Heading for earlier saved chats",
       "extractionState": "extracted_with_value",
@@ -32901,6 +35583,48 @@
           "stringUnit": {
             "state": "translated",
             "value": "關閉面板"
+          }
+        }
+      }
+    },
+    "browser.chatPanel.closeChat": {
+      "comment": "Chat panel - Close the shown chat by closing its tab; the panel closes too",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close Chat"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat schließen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer la discussion"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットを閉じる"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭聊天"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉聊天"
           }
         }
       }
@@ -34973,6 +37697,78 @@
         "ja" : {"stringUnit": {"state": "translated", "value": "[画像]"}},
         "zh-Hans" : {"stringUnit": {"state": "translated", "value": "[图片]"}},
         "zh-Hant" : {"stringUnit": {"state": "translated", "value": "[圖片]"}}
+      }
+    },
+    "browser.gemini.missingKey" : {
+      "comment" : "Gemini - API key required, %@ is the path to the .env file",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {"stringUnit": {"state": "translated", "value": "Add GEMINI_API_KEY= to %@."}},
+        "de" : {"stringUnit": {"state": "translated", "value": "Füge GEMINI_API_KEY= in %@ hinzu."}},
+        "fr" : {"stringUnit": {"state": "translated", "value": "Ajoutez GEMINI_API_KEY= dans %@."}},
+        "ja" : {"stringUnit": {"state": "translated", "value": "%@ に GEMINI_API_KEY= を追加してください。"}},
+        "zh-Hans" : {"stringUnit": {"state": "translated", "value": "请在 %@ 中添加 GEMINI_API_KEY=。"}},
+        "zh-Hant" : {"stringUnit": {"state": "translated", "value": "請在 %@ 中加入 GEMINI_API_KEY=。"}}
+      }
+    },
+    "browser.gemini.notFound" : {
+      "comment" : "Gemini - CLI not installed, keep the terminal command in English",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {"stringUnit": {"state": "translated", "value": "Gemini CLI wasn't found. Install it with brew install gemini-cli."}},
+        "de" : {"stringUnit": {"state": "translated", "value": "Gemini CLI wurde nicht gefunden. Installiere es mit brew install gemini-cli."}},
+        "fr" : {"stringUnit": {"state": "translated", "value": "Gemini CLI est introuvable. Installez-le avec brew install gemini-cli."}},
+        "ja" : {"stringUnit": {"state": "translated", "value": "Gemini CLI が見つかりません。brew install gemini-cli でインストールしてください。"}},
+        "zh-Hans" : {"stringUnit": {"state": "translated", "value": "未找到 Gemini CLI。请使用 brew install gemini-cli 安装。"}},
+        "zh-Hant" : {"stringUnit": {"state": "translated", "value": "找不到 Gemini CLI。請使用 brew install gemini-cli 安裝。"}}
+      }
+    },
+    "browser.gemini.launchFailed" : {
+      "comment" : "Gemini - Process launch failed",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {"stringUnit": {"state": "translated", "value": "Gemini couldn't start."}},
+        "de" : {"stringUnit": {"state": "translated", "value": "Gemini konnte nicht gestartet werden."}},
+        "fr" : {"stringUnit": {"state": "translated", "value": "Gemini n’a pas pu démarrer."}},
+        "ja" : {"stringUnit": {"state": "translated", "value": "Gemini を起動できませんでした。"}},
+        "zh-Hans" : {"stringUnit": {"state": "translated", "value": "Gemini 无法启动。"}},
+        "zh-Hant" : {"stringUnit": {"state": "translated", "value": "Gemini 無法啟動。"}}
+      }
+    },
+    "browser.gemini.invalidResponse" : {
+      "comment" : "Gemini - Invalid protocol response",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {"stringUnit": {"state": "translated", "value": "Gemini returned an invalid response."}},
+        "de" : {"stringUnit": {"state": "translated", "value": "Gemini hat eine ungültige Antwort zurückgegeben."}},
+        "fr" : {"stringUnit": {"state": "translated", "value": "Gemini a renvoyé une réponse non valide."}},
+        "ja" : {"stringUnit": {"state": "translated", "value": "Gemini が無効な応答を返しました。"}},
+        "zh-Hans" : {"stringUnit": {"state": "translated", "value": "Gemini 返回了无效响应。"}},
+        "zh-Hant" : {"stringUnit": {"state": "translated", "value": "Gemini 傳回了無效回應。"}}
+      }
+    },
+    "browser.gemini.turnFailed" : {
+      "comment" : "Gemini - Failed turn",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {"stringUnit": {"state": "translated", "value": "Gemini couldn't complete this turn."}},
+        "de" : {"stringUnit": {"state": "translated", "value": "Gemini konnte diesen Durchgang nicht abschließen."}},
+        "fr" : {"stringUnit": {"state": "translated", "value": "Gemini n’a pas pu terminer ce tour."}},
+        "ja" : {"stringUnit": {"state": "translated", "value": "Gemini はこのターンを完了できませんでした。"}},
+        "zh-Hans" : {"stringUnit": {"state": "translated", "value": "Gemini 无法完成这轮对话。"}},
+        "zh-Hant" : {"stringUnit": {"state": "translated", "value": "Gemini 無法完成這輪對話。"}}
+      }
+    },
+    "browser.gemini.exited" : {
+      "comment" : "Gemini - Unexpected process exit",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {"stringUnit": {"state": "translated", "value": "Gemini stopped unexpectedly."}},
+        "de" : {"stringUnit": {"state": "translated", "value": "Gemini wurde unerwartet beendet."}},
+        "fr" : {"stringUnit": {"state": "translated", "value": "Gemini s’est arrêté inopinément."}},
+        "ja" : {"stringUnit": {"state": "translated", "value": "Gemini が予期せず停止しました。"}},
+        "zh-Hans" : {"stringUnit": {"state": "translated", "value": "Gemini 意外停止。"}},
+        "zh-Hant" : {"stringUnit": {"state": "translated", "value": "Gemini 意外停止。"}}
       }
     },
     "browser.claudeCode.slashCommands" : {
@@ -37362,6 +40158,144 @@
                 "stringUnit": {
                   "state": "translated",
                   "value": "%d 個監視器"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "browser.agentChat.background.cancelSchedule": {
+      "comment": "Button or menu item that cancels a scheduled prompt",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abbrechen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Annuler"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キャンセル"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消"
+          }
+        }
+      }
+    },
+    "browser.agentChat.background.schedules": {
+      "comment": "Number of scheduled prompts for this chat",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d schedule"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d schedules"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d Zeitplan"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d Zeitpläne"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d planification"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d planifications"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "スケジュール %d 件"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d 项计划"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d 項排程"
                 }
               }
             }
@@ -41972,37 +44906,37 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "This chat can't switch between Claude and GPT models. Start a new thread to use %@."
+            "value": "This chat can't switch engines. Start a new thread to use %@."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Dieser Chat kann nicht zwischen Claude- und GPT-Modellen wechseln. Starte einen neuen Thread, um %@ zu verwenden."
+            "value": "Dieser Chat kann die Engine nicht wechseln. Starte einen neuen Thread, um %@ zu verwenden."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cette conversation ne peut pas passer d’un modèle Claude à un modèle GPT, ni l’inverse. Démarrez un nouveau fil pour utiliser %@."
+            "value": "Cette conversation ne peut pas changer de moteur. Démarrez un nouveau fil pour utiliser %@."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このチャットでは Claude と GPT のモデルを切り替えられません。%@ を使うには、新しいスレッドを開始してください。"
+            "value": "このチャットではエンジンを切り替えられません。%@ を使うには、新しいスレッドを開始してください。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此聊天无法在 Claude 和 GPT 模型之间切换。请开始新的会话以使用 %@。"
+            "value": "此聊天无法切换引擎。请开始新的会话以使用 %@。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "此聊天無法在 Claude 與 GPT 模型之間切換。請開始新的討論串以使用 %@。"
+            "value": "此聊天無法切換引擎。請開始新的討論串以使用 %@。"
           }
         }
       }
@@ -43557,6 +46491,90 @@
           "stringUnit": {
             "state": "translated",
             "value": "複製"
+          }
+        }
+      }
+    },
+    "mistSync.clipboard.download": {
+      "comment": "Sync - Save the shared file to this Mac's Downloads folder",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Herunterladen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Télécharger"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダウンロード"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載"
+          }
+        }
+      }
+    },
+    "mistSync.clipboard.showInFinder": {
+      "comment": "Sync - Reveal the shared file just saved to Downloads",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show in Finder"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Im Finder anzeigen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher dans le Finder"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finderに表示"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在访达中显示"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Finder 中顯示"
           }
         }
       }
@@ -52273,6 +55291,90 @@
         }
       }
     },
+    "app.tabMenu.returnToStartPage": {
+      "comment": "Tab menu and shortcuts - Take the focused grouped tab back to its start page",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Return to Start Page"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zurück zur Startseite"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revenir à la page de départ"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開始ページに戻る"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返回起始页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回到起始頁"
+          }
+        }
+      }
+    },
+    "app.tabMenu.setStartPage": {
+      "comment": "Tab menu and shortcuts - Remember the focused grouped tab's current page as its start page",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set Current Page as Start Page"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelle Seite als Startseite festlegen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Définir la page actuelle comme page de départ"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在のページを開始ページに設定"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将当前页面设为起始页"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將目前頁面設為起始頁"
+          }
+        }
+      }
+    },
     "app.timeMachineBackup.deleteConfirmation.cancelButton" : {
       "comment" : "Help menu - Button that cancels Time Machine backup deletion",
       "extractionState" : "extracted_with_value",
@@ -54537,6 +57639,48 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在新分頁顯示書籤列"
+          }
+        }
+      }
+    },
+    "app.viewMenu.closeChat": {
+      "comment": "View menu and shortcuts - Close the chat the focused tab's chat panel shows, with its tab; the panel closes too",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close Chat"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat schließen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer la discussion"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットを閉じる"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭聊天"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉聊天"
           }
         }
       }
@@ -82793,37 +85937,163 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Go from the chat panel to the chat's tab, or from a chat tab back to its chat panel."
+            "value": "Go from the chat panel to the chat's tab, or from a chat tab back to its chat panel, or choose a tab to mount it to."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vom Chatbereich zum Tab des Chats oder von einem Chat-Tab zurück zu seinem Chatbereich wechseln."
+            "value": "Vom Chatbereich zum Tab des Chats oder von einem Chat-Tab zurück zu seinem Chatbereich wechseln oder einen Tab zum Anhängen auswählen."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Passer du panneau de chat à l’onglet du chat, ou d’un onglet de chat à son panneau de chat."
+            "value": "Passer du panneau de chat à l’onglet du chat, ou d’un onglet de chat à son panneau de chat, ou choisir un onglet auquel l’attacher."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "チャットパネルからチャットのタブに移動するか、チャットタブからそのチャットパネルに戻ります。"
+            "value": "チャットパネルからチャットのタブに移動するか、チャットタブからそのチャットパネルに戻るか、マウント先のタブを選択します。"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "从聊天面板转到聊天的标签页，或从聊天标签页返回其聊天面板。"
+            "value": "从聊天面板转到聊天的标签页，或从聊天标签页返回其聊天面板，或选择要挂载到的标签页。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "從聊天面板前往聊天的分頁，或從聊天分頁返回其聊天面板。"
+            "value": "從聊天面板前往聊天的分頁，或從聊天分頁返回其聊天面板，或選擇要掛載到的分頁。"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.description.closePanelChat": {
+      "comment": "Shortcuts settings - Description of the command that closes the chat panel's chat",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close the chat shown in the chat panel, along with its tab."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den im Chatbereich angezeigten Chat samt seinem Tab schließen."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer la discussion affichée dans le panneau de chat, avec son onglet."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットパネルに表示中のチャットを、そのタブとともに閉じます。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭聊天面板中显示的聊天及其标签页。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉聊天面板中顯示的聊天及其分頁。"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.description.setStartPage": {
+      "comment": "Shortcuts settings - Description of the command that remembers a grouped tab's current page as its start page",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set the focused grouped tab's start page to its current page."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Startseite des fokussierten Tabs in einer Tab-Gruppe auf seine aktuelle Seite setzen."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Définir la page actuelle de l’onglet actif d’un groupe d’onglets comme sa page de départ."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブグループ内のフォーカス中のタブの開始ページを、現在のページに設定します。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将标签页组中当前标签页的起始页设为其当前页面。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將分頁群組中目前分頁的起始頁設為其目前頁面。"
+          }
+        }
+      }
+    },
+    "settings.shortcuts.description.returnToStartPage": {
+      "comment": "Shortcuts settings - Description of the command that returns a grouped tab to its start page",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Take the focused grouped tab back to its start page."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den fokussierten Tab in einer Tab-Gruppe zu seiner Startseite zurückbringen."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ramener l’onglet actif d’un groupe d’onglets à sa page de départ."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブグループ内のフォーカス中のタブを開始ページに戻します。"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将标签页组中的当前标签页返回其起始页。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將分頁群組中的目前分頁返回其起始頁。"
           }
         }
       }

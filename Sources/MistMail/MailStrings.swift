@@ -31,6 +31,12 @@ enum MailStrings {
     static var normal: String { NSLocalizedString("mail.compose.normal", value: "Normal", comment: "Mail compose - Normal text size") }
     static var large: String { NSLocalizedString("mail.compose.large", value: "Large", comment: "Mail compose - Large text size") }
     static var huge: String { NSLocalizedString("mail.compose.huge", value: "Huge", comment: "Mail compose - Largest text size") }
+    static var signature: String { NSLocalizedString("mail.account.signature", value: "Signature", comment: "Mail - Account signature section and editor label") }
+    static var signatureTooLong: String { NSLocalizedString("mail.account.signatureTooLong", value: "This signature is too long.", comment: "Mail - Account signature exceeded its UTF-8 size limit") }
+    static var font: String { NSLocalizedString("mail.compose.font", value: "Font", comment: "Mail - Formatting toolbar font picker") }
+    static var defaultFont: String { NSLocalizedString("mail.compose.defaultFont", value: "Default", comment: "Mail - Default message body font") }
+    static var formattingOther: String { NSLocalizedString("mail.compose.otherFormatting", value: "Other…", comment: "Mail - Open the system font or color panel") }
+    static var customColor: String { NSLocalizedString("mail.compose.customColor", value: "Custom", comment: "Mail - Selected text color outside the palette") }
     static var textColor: String { NSLocalizedString("mail.compose.textColor", value: "Text Color", comment: "Mail compose - Text color picker") }
     static var defaultColor: String { NSLocalizedString("mail.compose.defaultColor", value: "Default", comment: "Mail compose - Default black text color") }
     static var gray: String { NSLocalizedString("mail.compose.gray", value: "Gray", comment: "Mail compose - Gray text color") }

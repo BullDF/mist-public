@@ -3,13 +3,13 @@ import Foundation
 enum AgentTaskFinishStatus: String, Codable, Sendable { case done, blocked }
 
 struct AgentMessageSender: Codable, Equatable, Sendable {
-    enum Kind: String, Codable, Sendable { case peer, parent, report, question, slack, task }
+    enum Kind: String, Codable, Sendable { case peer, parent, report, question, slack, task, schedule }
     let id: String
     let title: String
     var kind: Kind = .peer
     var reportsPaused = false
     var taskStatus: AgentTaskFinishStatus?
-    /// A Slack message's whole note (`slackNote`).
+    /// The note for a Slack, task or scheduled message.
     var note: String?
     /// Set on a message that wakes a Slack thread's chat whose turn will post to that thread.
     var postsToSlack = false
@@ -19,6 +19,9 @@ struct AgentMessageSender: Codable, Equatable, Sendable {
         switch kind {
         case .task: text = note ?? "Background task \(label)"
         case .slack: return "[" + (note ?? Self.slackNote(place: "in his DM with you", publicThread: false)) + "]"
+        case .schedule:
+            let header = note ?? "[Scheduled prompt \(label)]"
+            return header + (postsToSlack ? " [" + Self.slackWakeNote + "]" : "")
         case .peer: text = "Message from chat \(label); reply with message_agent"
         case .parent: text = "Message from your parent chat \(label); report back to it only with finish_task, when your task is done or you're blocked"
         case .report:

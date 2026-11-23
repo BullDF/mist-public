@@ -37,17 +37,105 @@ extension AgentSpaceRouter {
                   let caller = AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId) else {
                 return failure("unknown_browser_agent")
             }
-            let listing = AgentChatStore.shared.agentListing(caller: caller)
-            let agents: [[String: Any]] = listing.map { chat in
-                var value: [String: Any] = ["id": chat.id, "title": chat.title, "engine": chat.engine,
-                                            "model": chat.model, "status": chat.status]
-                if chat.isCaller { value["self"] = true }
-                if let parent = chat.parent { value["parent"] = parent }
-                if !chat.children.isEmpty { value["children"] = chat.children }
-                return value
-            }
-            return encode(["ok": true, "self": listing.first { $0.isCaller }?.id ?? AgentChatShortID.short(caller), "agents": agents])
+            return listAgentChats(caller: caller, store: .shared, findTab: liveAgentHostTab)
         }
+    }
+
+    @MainActor
+    static func listAgentChats(caller: UUID, store: AgentChatStore, findTab: (Int) -> Tab?) -> String {
+        let listing = store.agentListing(caller: caller)
+        let agents: [[String: Any]] = listing.map { chat in
+            var value: [String: Any] = ["id": chat.id, "title": chat.title, "engine": chat.engine,
+                                        "model": chat.model, "status": chat.status]
+            if chat.isCaller {
+                value["self"] = true
+                if let host = store.panelHost(of: caller), let tab = findTab(host) {
+                    value["mountedTo"] = agentHostDescription(tabId: host, tab: tab)
+                }
+            }
+            if let parent = chat.parent { value["parent"] = parent }
+            if !chat.children.isEmpty { value["children"] = chat.children }
+            return value
+        }
+        return encode(["ok": true, "self": listing.first { $0.isCaller }?.id ?? AgentChatShortID.short(caller), "agents": agents])
+    }
+
+    static func handleAgentsMount(context: ExtensionMessageContext) -> String? {
+        MainActor.assumeIsolated {
+            guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: context.driverPrincipalId),
+                  let caller = AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId) else {
+                return failure("unknown_browser_agent")
+            }
+            guard let payload = json(context.payload), let windowId = payload["windowId"] as? Int,
+                  let tabId = payload["tabId"] as? Int else { return invalid() }
+            guard let state = windowSpace(windowId: windowId)?.state else {
+                return failure("This window is no longer open.")
+            }
+            return mountAgentChat(caller, to: tabId, in: state, store: .shared, findTab: liveAgentHostTab)
+        }
+    }
+
+    @MainActor
+    static func mountAgentChat(_ caller: UUID, to tabId: Int, in state: BrowserState,
+                               store: AgentChatStore, findTab: (Int) -> Tab?) -> String {
+        if let host = store.panelHost(of: caller) {
+            let title = agentHostTitle(tabId: host, tab: findTab(host))
+            return failure("This chat is mounted to \(title) (tab \(host)). Call unmount_from_tab first.")
+        }
+        guard let tab = state.tabs.first(where: { $0.guid == tabId }) else {
+            return failure("No tab with ID \(tabId) in this window. Call list_tabs.")
+        }
+        guard state.canShowChatPanel(for: tab) else {
+            return failure("That tab can't show a Chat panel.")
+        }
+        guard !store.hasPanelChat(tabId) else {
+            return failure("That tab's Chat panel already shows another chat.")
+        }
+        guard store.mount(caller, to: tabId) else { return failure("Could not mount this chat to that tab.") }
+        let focusedTabId = state.focusingTab?.guid
+        let splitPartner = state.splitGroup(forTabId: tabId)?.partnerTabId(of: tabId)
+        // Expanding mirrors to the split partner and closes a window's extension side panel.
+        if tab.aiChatCollapsed, focusedTabId != tabId, splitPartner == nil || splitPartner != focusedTabId,
+           state.extensionSidePanel == nil {
+            state.setAIChatCollapsed(for: tab, collapsed: false)
+        }
+        return encode(["ok": true, "mountedTo": agentHostDescription(tabId: tabId, tab: tab)])
+    }
+
+    static func handleAgentsUnmount(context: ExtensionMessageContext) -> String? {
+        MainActor.assumeIsolated {
+            guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: context.driverPrincipalId),
+                  let caller = AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId) else {
+                return failure("unknown_browser_agent")
+            }
+            return unmountAgentChat(caller, store: .shared, findTab: liveAgentHostTab)
+        }
+    }
+
+    @MainActor
+    static func unmountAgentChat(_ caller: UUID, store: AgentChatStore, findTab: (Int) -> Tab?) -> String {
+        guard let host = store.panelHost(of: caller) else { return failure("This chat isn't mounted to a tab.") }
+        let description = agentHostDescription(tabId: host, tab: findTab(host))
+        store.unmount(caller)
+        return encode(["ok": true, "unmountedFrom": description])
+    }
+
+    private static func agentHostDescription(tabId: Int, tab: Tab?) -> [String: Any] {
+        ["tabId": tabId, "title": agentHostTitle(tabId: tabId, tab: tab)]
+    }
+
+    private static func agentHostTitle(tabId: Int, tab: Tab?) -> String {
+        if let title = tab?.title, !title.isEmpty { return title }
+        if let url = tab?.url, !url.isEmpty { return url }
+        return "Tab \(tabId)"
+    }
+
+    @MainActor
+    private static func liveAgentHostTab(_ tabId: Int) -> Tab? {
+        for controller in SpaceSessionControllersManager.shared.getAllWindows() {
+            if let tab = controller.browserState.tabs.first(where: { $0.guid == tabId }) { return tab }
+        }
+        return nil
     }
 
     static func handleAgentsSpawn(context: ExtensionMessageContext) -> String? {

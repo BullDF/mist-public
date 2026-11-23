@@ -1,27 +1,19 @@
 import AppKit
 
 extension SlackAgentBridge {
-    private static func window() -> SpaceSessionController? {
-        let manager = SpaceSessionControllersManager.shared
-        func eligible(_ controller: SpaceSessionController) -> Bool {
-            controller.browserType == .normal && !controller.isDormant
-                && !controller.browserState.isIncognito && !controller.browserState.isAgentSpace
-        }
-        if let active = manager.activeWindowController, eligible(active) { return active }
-        return manager.getAllWindows().first(where: eligible)
-    }
-
     static let shared = SlackAgentBridge(store: .shared, threads: SlackAgentConnection.shared.threads,
         call: { try await SlackAgentConnection.shared.botCall($0, $1) },
         startChat: { prompt, sender, config in
-            guard let controller = window() else { throw StartError.noWindow }
+            guard let controller = AgentChatStore.externalChatWindow() else { throw StartError.noWindow }
             return try AgentChatStore.shared.launchBrowserChat(prompt: prompt, attachments: [], mentions: [],
                 config: config, in: controller.browserState, tabId: -1, createBackgroundTab: true, sender: sender).id
         }, models: { await DrifterModel.load().models }, launchConfig: { DrifterLaunchSettings().config },
         reopenChat: { id in
-            guard let controller = window() else { return false }
+            guard let controller = AgentChatStore.externalChatWindow() else { return false }
             return await withCheckedContinuation { continuation in
-                AgentChatStore.shared.openChatInBackground(id, in: controller.browserState) { continuation.resume(returning: $0) }
+                AgentChatStore.shared.openChatInBackground(id, in: controller.browserState) { opened, _ in
+                    continuation.resume(returning: opened)
+                }
             }
         }, channelName: { SlackAgentAccess.directory.name(forChannel: $0)?.name },
         owner: { SlackAgentConnection.shared.owner }, botUserID: { SlackAgentConnection.shared.botUserID },

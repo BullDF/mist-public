@@ -87,7 +87,6 @@ final class AgentConversation: ObservableObject, Identifiable {
     @Published var contextWindowSize: Int?
     @Published var memoryFolders: [URL] = []
     @Published var skillFolders: [URL] = []
-    var usesClaudePresentation = true
     @Published private(set) var workingWord = Int.random(in: 0..<12)
 
     /// No message sent yet: a chat /clear started, still waiting for its first message.

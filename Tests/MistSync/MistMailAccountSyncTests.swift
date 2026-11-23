@@ -55,6 +55,15 @@ enum MistMailAccountSyncTests {
         try await reordering()
         try await failedAdoption()
         try await initialReadFailure()
+        try signatureFitsRelayBlob()
+    }
+
+    static func signatureFitsRelayBlob() throws {
+        var value = account()
+        value.signatureHTML = String(repeating: "é", count: 16_384)
+        try expectSync(try MistMailAccountSyncSource.fitsBlobLimit(value), "A 32 KiB signature fits with typical JSON overhead")
+        value.signatureHTML = String(repeating: "\"", count: 32_768)
+        try expectSync(try !MistMailAccountSyncSource.fitsBlobLimit(value), "JSON escapes can overflow the relay blob")
     }
 
     static func localChanges() async throws {
@@ -73,7 +82,7 @@ enum MistMailAccountSyncTests {
             "displayName": .string("Personal"), "senderName": .string("Johnny"), "email": .string("johnny@example.com"),
             "username": .string("johnny"), "imap": .object(["host": .string("imap.example.com"), "port": .number(993), "security": .string("tls")]),
             "smtp": .object(["host": .string("smtp.example.com"), "port": .number(587), "security": .string("startTLS")]),
-            "sortOrder": .number(3), "isGmail": .bool(true), "password": .string("secret")], "Every account field is serialized")
+            "sortOrder": .number(3), "isGmail": .bool(true), "password": .string("secret"), "signature": .null], "Every account field is serialized")
         let added = account("Work")
         store.localEdit { $0.append(added) }
         try await drain(source)
@@ -109,6 +118,7 @@ enum MistMailAccountSyncTests {
         remote.displayName = "Remote"; remote.senderName = "Other sender"; remote.username = "new user"
         remote.email = "new@example.com"; remote.imap.port = 143; remote.imap.security = "plaintext"
         remote.smtp.host = "other.example.com"; remote.sortOrder = -2; remote.isGmail = false; remote.password = "new"
+        remote.signatureHTML = "<b>Example Sender</b>"
         try await source.apply(source.record(remote)); try await drain(source)
         try expectSync(store.accounts == [remote] && changes.isEmpty, "Remote update round-trips all fields without echo")
         var withoutPassword = source.record(remote)
@@ -116,8 +126,10 @@ enum MistMailAccountSyncTests {
         try await source.apply(withoutPassword); try await drain(source)
         try expectSync(store.accounts[0].password == "new" && changes.isEmpty, "Null password preserves credentials")
         withoutPassword.payload["password"] = nil
+        withoutPassword.payload["signature"] = nil
         try await source.apply(withoutPassword); try await drain(source)
         try expectSync(store.accounts[0].password == "new" && changes.isEmpty, "Absent password preserves credentials")
+        try expectSync(store.accounts[0].signatureHTML == nil, "Absent signature decodes as nil")
         let missing = account("Missing", password: nil)
         try await source.apply(source.record(missing)); try await drain(source)
         try expectSync(store.accounts.last == missing && changes.isEmpty, "New account may have no password")

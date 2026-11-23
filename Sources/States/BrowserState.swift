@@ -146,6 +146,9 @@ class BrowserState {
     }
     /// Pending insertion state for tabs created by drag/drop into the normal-tab section.
     private var pendingNormalTabInsertion: PendingNormalTabInsertion?
+    /// When each Mail link still waiting for its tab was opened, oldest first (`mailLinkArrivalContext`).
+    private var pendingMailLinkRequests: [Date] = []
+    private static let mailLinkArrivalTimeoutSeconds: TimeInterval = 2
 
     private struct NewRowReopenRequest {
         let requestedAt: Date
@@ -721,20 +724,14 @@ class BrowserState {
         }
     }
 
-    /// Retargets an open pinned tab in place. custom_value must be cleared
-    /// around the navigation or `CrossDomainNewTabNavigationThrottle` bounces
-    /// a cross-domain load into a new tab.
+    /// Retargets an open pinned tab in place: the load stays in the tab even
+    /// when `url` is on another site, and the tab's binding is not touched.
     private func navigateOpenPinnedTab(_ tab: Tab, to url: String?) {
         guard let url, tab.isOpenned, let wrapper = tab.webContentWrapper else { return }
         if tab.url != url {
             tab.url = url
         }
-        wrapper.updateTabCustomValue("")
-        wrapper.navigate(toURL: url)
-        guard let pinnedGuid = tab.guidInLocalDB else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            wrapper.updateTabCustomValue(pinnedGuid)
-        }
+        wrapper.navigateInPlace(toURL: url)
     }
 
     @MainActor
@@ -1226,6 +1223,28 @@ class BrowserState {
               tab.canReturnToGroupStartPage,
               let startPage = tab.groupStartPage else { return }
         tab.webContentWrapper?.navigate(toURL: startPage)
+    }
+
+    /// The focused tab when a Tab menu start page command can act on it. Sidebar layouts only, like the tab
+    /// context menu: the horizontal strip shows no start page.
+    func startPageCommandTab(_ command: CommandWrapper) -> Tab? {
+        guard !layoutMode.isTraditional, let tab = focusingTab else { return nil }
+        switch command {
+        case .PHI_SET_START_PAGE: return tab.canSetGroupStartPage ? tab : nil
+        case .PHI_RETURN_TO_START_PAGE: return tab.canReturnToGroupStartPage ? tab : nil
+        default: return nil
+        }
+    }
+
+    @discardableResult
+    func performStartPageCommand(_ command: CommandWrapper) -> Bool {
+        guard let tab = startPageCommandTab(command) else { return false }
+        if command == .PHI_SET_START_PAGE {
+            tab.setCurrentPageAsGroupStartPage()
+        } else {
+            navigateGroupedTabToStartPage(tab)
+        }
+        return true
     }
 
     /// Preserves a pinned tab's current page as a normal background tab,
@@ -3049,6 +3068,7 @@ class BrowserState {
     }
 
     func handleNewTabFromChromium(_ tab: Tab, context: NativeTabCreationContext? = nil) {
+        let context = mailLinkArrivalContext(context) ?? context
         if Self.isRetiredPhiAITabGuid(tab.guidInLocalDB) {
             tab.webContentWrapper?.close()
             return
@@ -3323,6 +3343,25 @@ class BrowserState {
                     self.closePeek(forOpener: openerTabId)
                 }
             }
+    }
+
+    /// Whether a new foreground tab that `openerTabId` opens for `urlString`
+    /// opens in the Peek panel on its own: the automatic path of
+    /// `maybeDivertPeekCandidate` and `resolvePeekCandidate`, answered before
+    /// the tab exists. Chromium asks as it creates such a tab and keeps its
+    /// first load in this window when the answer is yes, because the Peek is
+    /// marked only after that load has started. Keep in step with those two.
+    func opensAutoPeek(forLinkFrom openerTabId: Int, urlString: String) -> Bool {
+        let isAgentSpaceWindow = MainActor.assumeIsolated {
+            AgentSpaceManager.shared.isAgentSpace(spaceId)
+        }
+        guard !isIncognito, !isAgentSpaceWindow, !layoutMode.isTraditional,
+              PhiPreferences.GeneralSettings.peekViewEnabled.loadValue(),
+              PhiPreferences.GeneralSettings.autoPeekViewEnabled.loadValue(),
+              let boundURLString = boundURLStringForPeekOpener(openerTabId) else { return false }
+        let scheme = URL(string: urlString)?.scheme?.lowercased() ?? ""
+        guard scheme == "http" || scheme == "https" else { return false }
+        return !peekIsSameSite(boundURLString, urlString)
     }
 
     /// Diverts a freshly arrived Chromium tab into the Peek pipeline when it
@@ -5567,8 +5606,20 @@ class BrowserState {
     @MainActor func openMailLink(_ url: URL) {
         guard !isIncognito, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
         performWithBrowser {
+            self.pendingMailLinkRequests.append(Date())
             ChromiumLauncher.sharedInstance().bridge?.createNewTab(withUrl: url.absoluteString, at: -1, windowId: self.windowId, customGuid: nil)
         }
+    }
+
+    /// Chromium reports a `createNewTab(withUrl:at:)` tab with no creation
+    /// kind, at strip index 0, so an unknown-kind arrival shortly after a
+    /// Mail link request is that link's tab, placed as a typed new tab.
+    private func mailLinkArrivalContext(_ context: NativeTabCreationContext?) -> NativeTabCreationContext? {
+        pendingMailLinkRequests.removeAll { $0.timeIntervalSinceNow < -Self.mailLinkArrivalTimeoutSeconds }
+        guard !pendingMailLinkRequests.isEmpty, (context?.creationKind ?? .unknown) == .unknown else { return nil }
+        pendingMailLinkRequests.removeFirst()
+        return NativeTabCreationContext(isActiveAtCreation: context?.isActiveAtCreation ?? true,
+                                        creationKind: .typedNewTab)
     }
 
     func createQuickLookupTab(customGuid: String? = nil) {

@@ -16,6 +16,8 @@ final class MailComposeModel: ObservableObject {
     var onError: ((String) -> Void)?
     var onFinish: (() -> Void)?
     private let discardIfUntouched: Bool
+    private(set) var automaticSignature: String?
+    private var hasOnlyUntouchedSignature: Bool
     private var generation = 0, savedGeneration = 0
     private var debounce: Task<Void, Never>?
     private var saveTask: Task<Void, Error>?
@@ -24,8 +26,12 @@ final class MailComposeModel: ObservableObject {
     private var finished = false
     private var actionInFlight = false
 
-    init(draft: MailDraft, source: any MailPageDataSource, discardIfUntouched: Bool = true, initialFocus: InitialFocus = .recipients) {
+    init(draft: MailDraft, source: any MailPageDataSource, discardIfUntouched: Bool = true,
+         initialFocus: InitialFocus = .recipients, automaticSignature: String? = nil) {
         self.draft = draft; self.source = source; self.discardIfUntouched = discardIfUntouched; self.initialFocus = initialFocus
+        self.automaticSignature = automaticSignature
+        hasOnlyUntouchedSignature = automaticSignature != nil &&
+            draft.html == MailComposeFormatting.messageBody("", signature: automaticSignature).html
         self.draft.html = MailComposeFormatting.document(html: draft.html, plainText: draft.plainText)
         suggestionTask = Task { [weak self, source] in self?.suggestions = (try? await source.addressSuggestions()) ?? [] }
     }
@@ -34,7 +40,14 @@ final class MailComposeModel: ObservableObject {
         for file in temporaryFiles { try? FileManager.default.removeItem(at: file) }
     }
     var hasUnsavedChanges: Bool { !finished && (generation != savedGeneration || saveTask != nil) }
-    var hasContent: Bool { !draft.isEmpty }
+    var hasContent: Bool {
+        if draft.isEmpty { return false }
+        return !hasOnlyUntouchedSignature || !draft.to.isEmpty || !draft.cc.isEmpty || !draft.bcc.isEmpty
+            || !draft.subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.attachments.isEmpty
+    }
+    func signatureSwapped(to html: String?) {
+        if discardIfUntouched, draft.replyContext == nil { automaticSignature = html }
+    }
     func update(_ change: (inout MailDraft) -> Void) {
         guard !isSending, !finished else { return }
         let previous = draft; change(&draft)
@@ -67,8 +80,9 @@ final class MailComposeModel: ObservableObject {
     }
     private func saveLoop() async throws {
         repeat {
-            try await refreshEditor()
             let revision = generation
+            try await refreshEditor()
+            guard generation == revision else { continue }
             var snapshot = draft
             let referenced = MailComposeFormatting.referencedCIDs(snapshot.html ?? "")
             snapshot.attachments.removeAll { $0.contentID.map { !referenced.contains(MailBodyPreparation.normalizedCID($0)) } ?? false }
@@ -111,7 +125,7 @@ final class MailComposeModel: ObservableObject {
         actionInFlight = true; defer { actionInFlight = false }
         try await saveNow()
         // An empty draft is deleted rather than kept, whether it started empty or was emptied.
-        if draft.isEmpty { try await removeDraft(); return }
+        if !hasContent { try await removeDraft(); return }
         let source = source, id = draft.id, onError = onError
         finish()
         Task { do { try await source.flushDraft(id) } catch { onError?(MailPresentation.errorMessage(error)) } }
@@ -121,6 +135,7 @@ final class MailComposeModel: ObservableObject {
         if let exportEditor {
             let value = try await exportEditor()
             draft.html = value.html; draft.plainText = value.plainText
+            hasOnlyUntouchedSignature = value.hasOnlyUntouchedSignature
         }
     }
     func addFiles(_ urls: [URL]) {

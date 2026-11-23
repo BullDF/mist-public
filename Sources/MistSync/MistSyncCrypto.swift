@@ -40,6 +40,11 @@ struct MistSyncCrypto {
         MistSyncBase64.encode(Data(HMAC<SHA256>.authenticationCode(for: Data("\(kind)/\(id)".utf8), using: identity)))
     }
 
+    static func fitsBlobLimit(_ record: MistSyncRecord) throws -> Bool {
+        // The relay caps the base64 string, which encodes JSON plus the AES-GCM nonce and tag.
+        try JSONEncoder().encode(record).count + 12 + 16 <= 65_536 / 4 * 3
+    }
+
     func seal(_ record: MistSyncRecord) throws -> MistSyncWireRecord {
         guard let bytes = try AES.GCM.seal(JSONEncoder().encode(record), using: encryption).combined,
               bytes.base64EncodedString().utf8.count <= 65_536 else { throw MistSyncError.invalidRecord }

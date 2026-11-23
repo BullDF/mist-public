@@ -29,6 +29,7 @@ import Foundation
 /// is confined to the main actor.
 final class AppDevToolsPageSession: @unchecked Sendable {
     @MainActor var onEvent: ((String, [String: Any]) -> Void)?
+    @MainActor var onClose: (() -> Void)?
 
     enum SessionError: Error {
         /// The bridge is absent or the DevTools injection transport is not
@@ -339,6 +340,7 @@ final class AppDevToolsPageSession: @unchecked Sendable {
     private func teardown() {
         guard !closed else { return }
         closed = true
+        DispatchQueue.main.async { [self] in onClose?() }
         timeoutItem?.cancel()
         timeoutItem = nil
         if let cont = handshakeCont {

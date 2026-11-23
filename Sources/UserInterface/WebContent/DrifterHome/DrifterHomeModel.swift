@@ -10,6 +10,7 @@ import SwiftUI
     weak var state: BrowserState?
     var tabId: Int = -1
     @Published private(set) var ongoing: [DrifterHomeChat] = []
+    @Published private(set) var schedules: [DrifterSchedule] = []
     @Published private(set) var history: [AgentChatHistory.Chat] = []
     @Published var query = "" {
         didSet { if query != oldValue { historyLimit = DrifterHomeList.historyPageSize } }
@@ -49,7 +50,18 @@ import SwiftUI
             .sink { [weak self] in self?.changes.send() }.store(in: &subscriptions)
         state?.$tabs.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.changes.send() }.store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: DrifterScheduleStore.didChange, object: DrifterScheduleStore.shared)
+            .sink { [weak self] _ in self?.refreshSchedules(animated: true) }.store(in: &subscriptions)
+        refreshSchedules(animated: false)
         refresh()
+    }
+
+    private func refreshSchedules(animated: Bool) {
+        let latest = (try? DrifterScheduleStore.shared.list()) ?? []
+        guard schedules != latest else { return }
+        MistMotion.changeList(animated: animated && schedules.map(\.id) != latest.map(\.id)) {
+            schedules = latest
+        }
     }
 
     func disappear() {

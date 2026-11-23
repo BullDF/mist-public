@@ -69,6 +69,10 @@ class WebContentContainerViewController: NSViewController {
     /// `WebContentViewController.webPanelSize`.
     var currentWebPanelSize: CGSize? { currentWebContentController?.webPanelSize }
 
+    private var currentWebPanelSizeWithoutChatPanel: CGSize? {
+        currentWebContentController?.webPanelSizeWithoutChatPanel
+    }
+
     /// The visible tab's rounded page card, or nil when nothing is mounted.
     /// The Reader overlay panel sizes itself to this — the container's own
     /// view also spans the window margins and the tab strip, which the card
@@ -1326,7 +1330,7 @@ class WebContentContainerViewController: NSViewController {
             return
         }
         if preview.cardAspect == nil {
-            let size = currentWebPanelSize
+            let size = currentWebPanelSizeWithoutChatPanel
             let aspect = size.flatMap { $0.width > 0 && $0.height > 0 ? $0.height / $0.width : nil } ?? 10 / 16
             preview.cardAspect = min(2.5, max(0.3, aspect))
             AgentChatStore.shared.setBrowserPreviewCardAspect(id, aspect: preview.cardAspect!)
@@ -1369,6 +1373,7 @@ class WebContentContainerViewController: NSViewController {
     private var hasBrowserAgentPreviewWork: Bool {
         if presentedBrowserAgentPreviewStack != nil || browserState?.browserAgentPreview?.hasActivity == true { return true }
         if let state = browserState, !AgentChatStore.shared.activeBrowserPreviews(windowId: state.windowId).isEmpty { return true }
+        if let state = browserState, !AgentChatStore.shared.activeBrowserReadTabs(windowId: state.windowId).isEmpty { return true }
         return webContentControllers.values.contains {
             guard $0.browserAgentPreviewStack != nil, let tab = $0.associatedTab,
                   let id = MistApps.address(tab.url)?.chatId,
@@ -1385,13 +1390,22 @@ class WebContentContainerViewController: NSViewController {
         }
     }
 
+    private var activeReadTabs: [Tab] {
+        guard let state = browserState else { return [] }
+        return AgentChatStore.shared.activeBrowserReadTabs(windowId: state.windowId).compactMap { id in
+            state.tabs.first(where: { $0.guid == id })
+        }
+    }
+
     private func updateBrowserAgentMounts() {
         guard let state = browserState else { return }
-        let tabs = activeWorkingTabs
+        var seen = Set<Int>()
+        let tabs = (activeWorkingTabs + activeReadTabs + BrowserAgentRecordings.shared.recordedTabs(windowId: state.windowId))
+            .filter { seen.insert($0.guid).inserted }
         guard !tabs.isEmpty || state.browserAgentPreview != nil else { return }
         let owner = state.ensureBrowserAgentPreview()
         owner.holder = { [weak self] in self?.browserAgentPageHolder }
-        owner.realSize = { [weak self] in self?.currentWebPanelSize }
+        owner.realSize = { [weak self] in self?.currentWebPanelSizeWithoutChatPanel }
         owner.updateMounts(tabs)
     }
 

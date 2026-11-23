@@ -19,7 +19,8 @@ final class FixtureMailPageDataSource: MailPageDataSource {
     private(set) var openCalls: [UUID] = []
 
     init(empty: Bool = false) {
-        let gmail = MailAccount(config: .init(displayName: "Personal", senderName: "Johnny", email: "johnny@example.com", username: "johnny@example.com", imap: MailAccountPreset.gmail.imap!, smtp: MailAccountPreset.gmail.smtp!), isGmail: true)
+        let signature = "<div>Best,</div><div style=\"font-family: Georgia, serif; color: #265a87\">Example Sender</div>"
+        let gmail = MailAccount(config: .init(displayName: "Personal", senderName: "Johnny", email: "johnny@example.com", username: "johnny@example.com", imap: MailAccountPreset.gmail.imap!, smtp: MailAccountPreset.gmail.smtp!, signatureHTML: signature), isGmail: true)
         let school = MailAccount(config: .init(displayName: "UofT CS", senderName: "Johnny", email: "johnny@cs.example.edu", username: "johnny", imap: MailAccountPreset.uoftCS.imap!, smtp: MailAccountPreset.uoftCS.smtp!, sortOrder: 1))
         var boxes = [Mailbox(accountID: gmail.id, name: "INBOX", role: .inbox),
                      Mailbox(accountID: gmail.id, name: "[Gmail]", attributes: ["\\Noselect"]),
@@ -169,8 +170,6 @@ final class FixtureMailPageDataSource: MailPageDataSource {
         emit(.draftsChanged)
     }
     func send(_ id: UUID) async throws { if let sendError { throw sendError }; sent.append(try await draft(id)); try await discardDraft(id) }
-    func makeReply(to id: UUID, all: Bool) async throws -> MailDraft { try await saveDraft(replyDraft(to: id, all: all)) }
-    func makeForward(_ id: UUID) async throws -> MailDraft { try await saveDraft(forwardDraft(id)) }
     func replyDraft(to id: UUID, all: Bool) async throws -> MailDraft { try await quotedDraft(id, kind: all ? .replyAll : .reply) }
     func forwardDraft(_ id: UUID) async throws -> MailDraft { try await quotedDraft(id, kind: .forward) }
     private func quotedDraft(_ id: UUID, kind: MailReplyKind) async throws -> MailDraft {
@@ -184,7 +183,7 @@ final class FixtureMailPageDataSource: MailPageDataSource {
         let intro = String(format: MailStrings.quoteIntro, DateFormatter.localizedString(from: headers.date, dateStyle: .medium, timeStyle: .short), MailPresentation.addresses(headers.from))
         let quote = (detail.plainText ?? "").components(separatedBy: .newlines).map { "> " + $0 }.joined(separator: "\n")
         var value = MailDraft(accountID: detail.summary.accountID, to: to, cc: cc, subject: (kind == .forward ? "Fwd: " : "Re: ") + subject,
-                              plainText: "\n\n\(intro)\n\(quote)", html: "<div><br></div><p>\(MailComposeFormatting.escape(intro))</p><blockquote type=\"cite\">\(detail.html ?? MailComposeFormatting.plainHTML(detail.plainText ?? ""))</blockquote>",
+                              plainText: "\n\n\(intro)\n\(quote)", html: detail.html.map { "<div><br></div><p>\(MailComposeFormatting.escape(intro))</p><blockquote type=\"cite\">\($0)</blockquote>" },
                               replyContext: .init(kind: kind, sourceMessageID: id, inReplyTo: kind == .forward ? nil : headers.messageID, references: headers.references + (headers.messageID.map { [$0] } ?? [])))
         value.attachments = try await copiedAttachments(detail, includeRegular: kind == .forward)
         return value

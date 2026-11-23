@@ -45,6 +45,10 @@ struct BrowserAgentFolderState: Equatable {
         }
     }
 
+    mutating func touch(tabId: Int, now: Date) {
+        if members[tabId] != nil { members[tabId] = now }
+    }
+
     mutating func setTurnActive(_ active: Bool, now: Date) {
         guard active != turnActive else { return }
         if !active, workedThisTurn, let tabId = workingTabId, members[tabId] != nil {

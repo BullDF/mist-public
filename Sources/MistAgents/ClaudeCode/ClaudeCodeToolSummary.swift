@@ -74,7 +74,7 @@ struct ClaudeCodeToolSummary: Equatable {
         let interruption = failed ? AgentChatStrings.toolInterruption(text, denied: denied) : nil
         if let summary = browserTool(tool, input: input, running: running, failed: failed || denied) {
             if let interruption { return Self(header: Line(summary), summary: [Line(interruption, kind: .error)]) }
-            return browserResult(tool: tool, header: summary, result: result, text: text, failed: failed || denied)
+            return browserResult(tool: tool, header: summary, result: result, text: text, failed: failed || denied, running: running)
         }
         let file = path(input["file_path"].string ?? result["filePath"].string ?? result["file"]["filePath"].string ?? "", folder: folder)
         let name: String
@@ -139,18 +139,21 @@ struct ClaudeCodeToolSummary: Equatable {
         case _ where tool == "Edit" || tool == "MultiEdit" || (tool == "Write" && result["type"].string == "update"):
             var additions = 0, removals = 0
             for patch in patches {
-                let hunkStart = formatted.preview.count
-                var old = patch["oldStart"].integer, new = patch["newStart"].integer
-                for raw in patch["lines"].array.compactMap(\.string) {
-                    let marker = raw.first
-                    if marker == "+" { additions += 1 }
-                    if marker == "-" { removals += 1 }
-                    formatted.preview.append(Line(raw, number: marker == "-" ? old : new,
-                        kind: marker == "+" ? .addition : marker == "-" ? .removal : .normal))
-                    if marker != "+" { old += 1 }
-                    if marker != "-" { new += 1 }
+                for hunk in hunks(patch["lines"].array.compactMap(\.string),
+                                  oldStart: patch["oldStart"].integer, newStart: patch["newStart"].integer) {
+                    let hunkStart = formatted.preview.count
+                    var old = hunk.oldStart, new = hunk.newStart
+                    for raw in hunk.lines {
+                        let marker = raw.first
+                        if marker == "+" { additions += 1 }
+                        if marker == "-" { removals += 1 }
+                        formatted.preview.append(Line(raw, number: marker == "-" ? old : new,
+                            kind: marker == "+" ? .addition : marker == "-" ? .removal : .normal))
+                        if marker != "+" { old += 1 }
+                        if marker != "-" { new += 1 }
+                    }
+                    DiffWordChanges.apply(to: &formatted.preview, from: hunkStart)
                 }
-                DiffWordChanges.apply(to: &formatted.preview, from: hunkStart)
             }
             // Older CLI replies may lack structured hunks. Preserve their text rather than inventing a diff.
             if patches.isEmpty {
@@ -208,8 +211,44 @@ struct ClaudeCodeToolSummary: Equatable {
         String.localizedStringWithFormat("%d", count)
     }
 
+    /// Diff lines (`+`, `-` or space first) starting at these old and new line numbers.
+    struct Hunk: Equatable {
+        var oldStart: Int
+        var newStart: Int
+        var lines: [String]
+    }
+
+    /// A hunk's changes with `context` unchanged lines around each, split where more lie between, as `diff -U3` cuts
+    /// them. Gemini reports an edit as the whole file before and after: a row holding every line of a large file
+    /// rendered for tens of milliseconds, and its card showed the file's first lines instead of the change. Hunks
+    /// already in this shape (Claude's, Codex's) come back unchanged.
+    static func hunks(_ lines: [String], oldStart: Int, newStart: Int, context: Int = 3) -> [Hunk] {
+        var ranges: [ClosedRange<Int>] = []
+        for index in lines.indices where !(lines[index].isEmpty || lines[index].hasPrefix(" ")) {
+            let range = max(0, index - context)...min(lines.count - 1, index + context)
+            if let last = ranges.last, range.lowerBound <= last.upperBound + 1 {
+                ranges[ranges.count - 1] = last.lowerBound...range.upperBound
+            } else {
+                ranges.append(range)
+            }
+        }
+        var hunks: [Hunk] = []
+        var old = oldStart, new = newStart, index = 0
+        func advance() {
+            if !lines[index].hasPrefix("+") { old += 1 }
+            if !lines[index].hasPrefix("-") { new += 1 }
+            index += 1
+        }
+        for range in ranges {
+            while index < range.lowerBound { advance() }
+            hunks.append(Hunk(oldStart: old, newStart: new, lines: Array(lines[range])))
+            while index <= range.upperBound { advance() }
+        }
+        return hunks
+    }
+
     private static func browserResult(tool: String, header: String, result: ClaudeCodeJSON,
-                                      text: String, failed: Bool) -> Self {
+                                      text: String, failed: Bool, running: Bool) -> Self {
         func decode(_ text: String) -> ClaudeCodeJSON? {
             try? JSONDecoder().decode(ClaudeCodeJSON.self, from: Data(text.utf8))
         }
@@ -224,10 +263,27 @@ struct ClaudeCodeToolSummary: Equatable {
             formatted.preview = lines(error).map { Line($0, kind: .error) }
         } else if failed {
             formatted.preview = lines(text).map { Line($0, kind: .error) }
-        } else if tool.hasSuffix("__save_screenshot"), let path = payload["path"].string {
+        } else if !running, tool.hasSuffix("__start_recording"),
+                  let title = payload["tab"]["title"].string, !title.isEmpty {
+            let format = NSLocalizedString("browser.agent.tool.startRecording", value: "Recording %@", comment: "Browser Agent - Recording the tab with this title")
+            formatted.header = Line(String(format: format, title))
+        } else if tool.hasSuffix("__save_screenshot") || (!running && (tool.hasSuffix("__stop_recording") || tool.hasSuffix("__export_bookmarks"))),
+                  let path = payload["path"].string {
+            if !tool.hasSuffix("__save_screenshot") {
+                let format = tool.hasSuffix("__export_bookmarks")
+                    ? NSLocalizedString("browser.agent.tool.exportBookmarks.file", value: "Exported bookmarks to %@", comment: "Browser Agent - %@ is the exported bookmarks file name")
+                    : NSLocalizedString("browser.agent.tool.stopRecording", value: "Saved %@", comment: "Browser Agent - Saved recording file name")
+                formatted.header = Line(String(format: format, (path as NSString).lastPathComponent))
+            }
             var line = Line(path)
             line.spans = [Span(text: path, link: URL(fileURLWithPath: path))]
             formatted.summary = [line]
+        } else if !running, tool.hasSuffix("__mount_to_tab"), let title = payload["mountedTo"]["title"].string {
+            let format = NSLocalizedString("browser.agent.tool.mountToTab.title", value: "Mounted to %@", comment: "Browser Agent - %@ is the title of the tab the chat was mounted to")
+            formatted.header = Line(String(format: format, title))
+        } else if !running, tool.hasSuffix("__unmount_from_tab"), let title = payload["unmountedFrom"]["title"].string {
+            let format = NSLocalizedString("browser.agent.tool.unmountFromTab.title", value: "Unmounted from %@", comment: "Browser Agent - %@ is the title of the tab the chat was unmounted from")
+            formatted.header = Line(String(format: format, title))
         } else if tool.hasSuffix("__read_page") || tool.hasSuffix("__snapshot") {
             if let content = payload["result"].string {
                 formatted.preview = lines(content).filter {
@@ -445,6 +501,31 @@ struct ClaudeCodeToolSummary: Equatable {
                 : NSLocalizedString("browser.agent.tool.saveScreenshot", value: "Saved %@", comment: "Browser Agent - Screenshot file name")
             return String(format: format, file)
         }
+        if name == "export_bookmarks" {
+            return failed ? NSLocalizedString("browser.agent.tool.exportBookmarks.failed", value: "Couldn't export bookmarks", comment: "Browser Agent - Bookmark export failed")
+                : running ? NSLocalizedString("browser.agent.tool.exportBookmarks.running", value: "Exporting bookmarks", comment: "Browser Agent - Bookmark export in progress")
+                : NSLocalizedString("browser.agent.tool.exportBookmarks", value: "Exported bookmarks", comment: "Browser Agent - Exported bookmarks without a file name in the result")
+        }
+        if name == "mount_to_tab" {
+            return failed ? NSLocalizedString("browser.agent.tool.mountToTab.failed", value: "Couldn't mount to tab", comment: "Browser Agent - Mounting the chat to a tab failed")
+                : running ? NSLocalizedString("browser.agent.tool.mountToTab.running", value: "Mounting to tab", comment: "Browser Agent - Mounting the chat to a tab")
+                : NSLocalizedString("browser.agent.tool.mountToTab", value: "Mounted to tab", comment: "Browser Agent - Mounted to a tab without a title in the result")
+        }
+        if name == "unmount_from_tab" {
+            return failed ? NSLocalizedString("browser.agent.tool.unmountFromTab.failed", value: "Couldn't unmount from tab", comment: "Browser Agent - Unmounting the chat from a tab failed")
+                : running ? NSLocalizedString("browser.agent.tool.unmountFromTab.running", value: "Unmounting from tab", comment: "Browser Agent - Unmounting the chat from a tab")
+                : NSLocalizedString("browser.agent.tool.unmountFromTab", value: "Unmounted from tab", comment: "Browser Agent - Unmounted from a tab without a title in the result")
+        }
+        if name == "start_recording" {
+            return failed ? NSLocalizedString("browser.agent.tool.startRecording.failed", value: "Couldn't start recording", comment: "Browser Agent - Could not start a tab recording")
+                : running ? NSLocalizedString("browser.agent.tool.startRecording.running", value: "Starting recording", comment: "Browser Agent - Starting a tab recording")
+                : NSLocalizedString("browser.agent.tool.startRecording.untitled", value: "Recording tab", comment: "Browser Agent - Recording a tab without a title")
+        }
+        if name == "stop_recording" {
+            return failed ? NSLocalizedString("browser.agent.tool.stopRecording.failed", value: "Couldn't save recording", comment: "Browser Agent - Could not save a tab recording")
+                : running ? NSLocalizedString("browser.agent.tool.stopRecording.running", value: "Saving recording", comment: "Browser Agent - Saving a tab recording")
+                : NSLocalizedString("browser.agent.tool.stopRecording.saved", value: "Saved recording", comment: "Browser Agent - Saved a tab recording without a file name")
+        }
         if name == "go_back" {
             return failed ? NSLocalizedString("browser.agent.tool.goBack.failed", value: "Couldn't go back", comment: "Browser Agent - Tool summary after failure or denial: going back to the previous page in a tab's history")
                 : running ? NSLocalizedString("browser.agent.tool.goBack.running", value: "Going back", comment: "Browser Agent - Tool summary while running: going back to the previous page in a tab's history")
@@ -454,6 +535,26 @@ struct ClaudeCodeToolSummary: Equatable {
             return failed ? NSLocalizedString("browser.agent.tool.goForward.failed", value: "Couldn't go forward", comment: "Browser Agent - Tool summary after failure or denial: going forward to the next page in a tab's history")
                 : running ? NSLocalizedString("browser.agent.tool.goForward.running", value: "Going forward", comment: "Browser Agent - Tool summary while running: going forward to the next page in a tab's history")
                 : NSLocalizedString("browser.agent.tool.goForward", value: "Went forward", comment: "Browser Agent - Tool summary: went forward to the next page in a tab's history")
+        }
+        if name == "schedule_prompt" {
+            return failed ? NSLocalizedString("browser.agent.tool.schedulePrompt.failed", value: "Couldn't schedule prompt", comment: "Tool summary after scheduling a Drifter prompt failed")
+                : running ? NSLocalizedString("browser.agent.tool.schedulePrompt.running", value: "Scheduling prompt", comment: "Tool summary while scheduling a Drifter prompt")
+                : NSLocalizedString("browser.agent.tool.schedulePrompt", value: "Scheduled prompt", comment: "Tool summary after scheduling a Drifter prompt")
+        }
+        if name == "list_schedules" {
+            return failed ? NSLocalizedString("browser.agent.tool.listSchedules.failed", value: "Couldn't list schedules", comment: "Tool summary after listing Drifter schedules failed")
+                : running ? NSLocalizedString("browser.agent.tool.listSchedules.running", value: "Listing schedules", comment: "Tool summary while listing Drifter schedules")
+                : NSLocalizedString("browser.agent.tool.listSchedules", value: "Listed schedules", comment: "Tool summary after listing Drifter schedules")
+        }
+        if name == "cancel_schedule" {
+            return failed ? NSLocalizedString("browser.agent.tool.cancelSchedule.failed", value: "Couldn't cancel schedule", comment: "Tool summary after cancelling a Drifter schedule failed")
+                : running ? NSLocalizedString("browser.agent.tool.cancelSchedule.running", value: "Cancelling schedule", comment: "Tool summary while cancelling a Drifter schedule")
+                : NSLocalizedString("browser.agent.tool.cancelSchedule", value: "Cancelled schedule", comment: "Tool summary after cancelling a Drifter schedule")
+        }
+        if name == "notify" {
+            return failed ? NSLocalizedString("browser.agent.tool.notify.failed", value: "Couldn't post notification", comment: "Tool summary after posting a Drifter notification failed")
+                : running ? NSLocalizedString("browser.agent.tool.notify.running", value: "Posting notification", comment: "Tool summary while posting a Drifter notification")
+                : NSLocalizedString("browser.agent.tool.notify", value: "Posted notification", comment: "Tool summary after posting a Drifter notification")
         }
         if name == "hand_off" {
             return failed ? NSLocalizedString("browser.agent.tool.handOff.failed", value: "Couldn't ask you to take over", comment: "Browser Agent - Tool summary after failure: the agent asking the user to do a step himself, such as signing in")

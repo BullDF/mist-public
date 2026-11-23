@@ -1,7 +1,7 @@
 import Foundation
 
 @MainActor
-final class CodexSession: AgentChatSession {
+final class CodexSession: DrifterBackgroundTaskSession {
     var automaticallyAllows: ((String, Bool) -> Bool)?
     var onToolPaths: (([String]) -> Void)?
     var agentTextTransform: ((String) -> String)?
@@ -48,7 +48,6 @@ final class CodexSession: AgentChatSession {
             titleRequested = resume.sessionId != nil || !resume.items.isEmpty
             conversation.update(items: transcript.items, status: .starting)
         }
-        conversation.usesClaudePresentation = false
         conversation.onSend = { [weak self] text, attachments, mentions in self?.send(text: text, attachments: attachments, mentions: mentions) }
         conversation.onDeliver = { [weak self] message in
             guard let self else { return false }

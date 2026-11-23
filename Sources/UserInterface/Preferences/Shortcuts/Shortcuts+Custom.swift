@@ -156,7 +156,7 @@ extension Shortcuts {
     static let fixedShortcutCommands: Set<CommandWrapper> = [.IDC_EXIT]
 
     /// Mist's default differs from Chromium's built-in, so it is always exported.
-    static let productDefaultCommands: Set<CommandWrapper> = [.IDC_ZOOM_PLUS, .IDC_DUPLICATE_TAB]
+    static let productDefaultCommands: Set<CommandWrapper> = [.IDC_ZOOM_PLUS, .IDC_DUPLICATE_TAB, .IDC_DEV_TOOLS]
 
     /// Product policy: add commands here to release all their keyboard bindings.
     /// This takes precedence over defaults and saved overrides. It does not
@@ -299,6 +299,7 @@ extension Shortcuts {
                         .PHI_TOGGLE_SIDEBAR,
                         .PHI_TOGGLE_CHATBAR,
                         .PHI_SWITCH_CHAT_PANEL_AND_TAB,
+                        .PHI_CLOSE_PANEL_CHAT,
                         .PHI_DRIFTER_MODEL_MENU,
                         .PHI_DRIFTER_EFFORT_MENU,
                         .PHI_DRIFTER_PREVIOUS_MARKER,
@@ -315,7 +316,9 @@ extension Shortcuts {
                         .PHI_TAB_SWITCHER_BACKWARD,
                         .IDC_DUPLICATE_TAB,
                         .IDC_WINDOW_MUTE_SITE,
-                        .IDC_TAB_SEARCH]
+                        .IDC_TAB_SEARCH,
+                        .PHI_RETURN_TO_START_PAGE,
+                        .PHI_SET_START_PAGE]
             case .peek:
                 return [.PHI_PEEK_OPEN_IN_SPACE]
             }
@@ -669,7 +672,8 @@ extension CommandWrapper {
              .PHI_MAKE_PRIMARY_WINDOW, .PHI_NEW_DRIFTER_CHAT,
              .IDC_TAB_SEARCH, .IDC_DUPLICATE_TAB, .IDC_WINDOW_PIN_TAB,
              .IDC_DEV_TOOLS, .IDC_DEV_TOOLS_INSPECT, .IDC_DEV_TOOLS_CONSOLE,
-             .PHI_TOGGLE_CHATBAR, .PHI_SWITCH_CHAT_PANEL_AND_TAB, .PHI_NEW_CONVERSATION, .PHI_OPEN_CLIPBOARD, .PHI_OPEN_DRIFTER, .PHI_OPEN_MAIL,
+             .PHI_SET_START_PAGE, .PHI_RETURN_TO_START_PAGE,
+             .PHI_TOGGLE_CHATBAR, .PHI_SWITCH_CHAT_PANEL_AND_TAB, .PHI_CLOSE_PANEL_CHAT, .PHI_NEW_CONVERSATION, .PHI_OPEN_CLIPBOARD, .PHI_OPEN_DRIFTER, .PHI_OPEN_MAIL,
              .PHI_DRIFTER_MODEL_MENU, .PHI_DRIFTER_EFFORT_MENU,
              .PHI_DRIFTER_PREVIOUS_MARKER, .PHI_DRIFTER_NEXT_MARKER,
              .IDC_SELECT_PREVIOUS_TAB, .IDC_SELECT_NEXT_TAB,
@@ -730,7 +734,10 @@ extension CommandWrapper {
         .IDC_MOVE_TAB_TO_NEW_WINDOW: .init(title: "Move Tab to New Window", keywords: ["movetabtonewwindow"]),
         .PHI_TOGGLE_SIDEBAR: .init(title: "Toggle Sidebar", keywords: ["togglesidebar"]),
         .PHI_TOGGLE_CHATBAR: .init(title: "Toggle Chat Panel", keywords: ["togglechatbar", "chat panel", "ai"]),
-        .PHI_SWITCH_CHAT_PANEL_AND_TAB: .init(title: "Switch Between Chat Panel and Tab", keywords: ["chat panel", "chat tab", "open as tab", "show in chat panel", "drifter", "switch", "chat"]),
+        .PHI_SWITCH_CHAT_PANEL_AND_TAB: .init(title: "Switch Between Chat Panel and Tab", keywords: ["chat panel", "chat tab", "open as tab", "show in chat panel", "mount to tab", "drifter", "switch", "chat"]),
+        .PHI_CLOSE_PANEL_CHAT: .init(title: "Close Chat", keywords: ["chat panel", "close chat", "drifter", "chat"]),
+        .PHI_SET_START_PAGE: .init(title: "Set Current Page as Start Page", keywords: ["start page", "tab group", "group", "home"]),
+        .PHI_RETURN_TO_START_PAGE: .init(title: "Return to Start Page", keywords: ["start page", "tab group", "group", "home", "back"]),
         .PHI_TAB_SWITCHER_FORWARD: .init(title: "Show Tab Switcher", keywords: ["tab switcher", "forward"]),
         .PHI_TAB_SWITCHER_BACKWARD: .init(title: "Show Tab Switcher(Reverse)", keywords: ["tab switcher", "backward"]),
         .PHI_NEW_CONVERSATION: .init(title: "New Chat", keywords: ["new conversation", "new chat", "chat panel", "ai", "chat"]),

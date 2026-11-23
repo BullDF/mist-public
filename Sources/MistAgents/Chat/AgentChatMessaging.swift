@@ -116,3 +116,32 @@ struct AgentSpawnResult {
     let model: String
     let effort: String
 }
+
+extension DrifterModel {
+    static func resolveSpawnConfig(from parent: DrifterConfig, models: [Self], model: String?, effort: String?)
+        -> Result<DrifterConfig, AgentSpawnError> {
+        var config = parent
+        let scope = spawnScope(parent)
+        if let model {
+            guard let resolved = spawnModel(model) else { return .failure(.unknownModel) }
+            let allowed = switch scope {
+            case .any: true
+            case .gpt: resolved.engine == .codex
+            case .own: resolved.engine == parent.engine && resolved.model == parent.model
+            }
+            guard allowed else { return .failure(.restricted(parent)) }
+            config.engine = resolved.engine
+            config.model = resolved.model
+        }
+        if let effort, scope == .own, effort != parent.effort { return .failure(.restricted(parent)) }
+        let picked = forSpawn(config, models: models)
+        if let effort {
+            guard picked.efforts.contains(effort) else { return .failure(.invalidEffort(picked.efforts)) }
+            config.effort = effort
+        } else {
+            config.effort = picked.effort(config.effort)
+        }
+        config.folder = DrifterHome.current.folder
+        return .success(config)
+    }
+}

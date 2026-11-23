@@ -1,4 +1,5 @@
 import XCTest
+import MistMailCore
 @testable import Phi
 
 @MainActor
@@ -73,6 +74,7 @@ final class MailAgentToolsTests: XCTestCase {
         do { _ = try await tools.send(["account": "Personal", "to": []]); XCTFail("No recipients") } catch {}
         _ = try await tools.send(["account": "Personal", "to": ["Ada <ada@example.com>"], "subject": "Hello", "body": "Text"])
         XCTAssertEqual(source.sent.last?.to.first?.email, "ada@example.com")
+        XCTAssertTrue(source.sent.last?.html?.contains("Example Sender") == true)
         source.sendError = .offline
         do { _ = try await tools.send(["account": "Personal", "to": ["ada@example.com"]]); XCTFail("Send should fail") }
         catch { XCTAssertTrue(MailAgentTools.errorMessage(error).contains("Draft ID:")) }
@@ -98,6 +100,30 @@ final class MailAgentToolsTests: XCTestCase {
         let archiveMessage = try XCTUnwrap(messages.first { $0.id != first.id && $0.id != other.id })
         let archived = try await tools.update(ids: [archiveMessage.id.uuidString], action: "archive", mailbox: nil)
         XCTAssertEqual((archived["done"] as? [String])?.count, 1)
+    }
+    func testNewReplyAndRevisedBodiesCarryTheAccountSignature() async throws {
+        let source = FixtureMailPageDataSource(), tools = MailAgentTools(source: source)
+        let state = try await source.snapshot(), account = state.accounts[0]
+        let signature = try XCTUnwrap(account.config.signatureHTML)
+        let fresh = try await tools.writeDraft(["account": account.config.displayName, "body": "New message"])
+        let freshID = try XCTUnwrap((fresh["draftId"] as? String).flatMap(UUID.init(uuidString:)))
+        let draft = try await source.draft(freshID)
+        XCTAssertEqual(draft.plainText, "New message\n\n" + MailText.readable(signature))
+        XCTAssertTrue(draft.html?.contains(signature) == true)
+
+        let messages = try await source.messages(in: .unifiedInbox, before: nil, limit: 20)
+        let message = try XCTUnwrap(messages.first { $0.accountID == account.id })
+        let result = try await tools.writeDraft(["replyTo": message.id.uuidString, "body": "Reply"])
+        let replyID = try XCTUnwrap((result["draftId"] as? String).flatMap(UUID.init(uuidString:)))
+        let reply = try await source.draft(replyID)
+        XCTAssertTrue(reply.plainText.hasPrefix("Reply\n\n" + MailText.readable(signature) + "\n\n"))
+        XCTAssertTrue(reply.html?.contains(signature) == true)
+
+        _ = try await tools.writeDraft(["draftId": replyID.uuidString, "body": "Revised"])
+        let revised = try await source.draft(replyID)
+        XCTAssertTrue(revised.plainText.hasPrefix("Revised\n\n" + MailText.readable(signature) + "\n\n"))
+        XCTAssertEqual(revised.html?.components(separatedBy: signature).count, 2)
+        XCTAssertEqual(revised.replyContext, reply.replyContext)
     }
     func testAccountsPagingScopesSearchAndRead() async throws {
         let source = FixtureMailPageDataSource()

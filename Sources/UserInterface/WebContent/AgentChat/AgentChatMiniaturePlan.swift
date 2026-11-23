@@ -32,11 +32,12 @@ enum AgentChatMiniaturePlan {
         return (body.height * sourceWidth / body.width / 100).rounded(.up) * 100
     }
 
-    /// The picture of a transcript's last `rendered` points, out of `content`, filling the body's width:
-    /// a transcript that fits starts at the top, as in its tab; a longer one ends at the bottom.
-    static func pictureFrame(rendered: CGFloat, content: CGFloat, body: CGSize) -> CGRect {
+    /// The picture of a transcript's last `rendered` points, filling the body's width: a picture that fits the body
+    /// starts at the top, as in its tab; a taller one ends at the bottom. A whole transcript can be taller than the
+    /// body yet within `sourceHeight`, which is rounded up, and still has to show its end.
+    static func pictureFrame(rendered: CGFloat, body: CGSize) -> CGRect {
         let height = rendered * body.width / sourceWidth
-        return CGRect(x: 0, y: content > rendered ? body.height - height : 0, width: body.width, height: height)
+        return CGRect(x: 0, y: min(0, body.height - height), width: body.width, height: height)
     }
 
     /// The end of a long message, from a line start. A markdown code fence left open above the cut opens again,

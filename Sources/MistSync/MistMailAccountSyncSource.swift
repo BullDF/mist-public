@@ -17,6 +17,7 @@ struct MistMailSyncAccount: Equatable {
     var sortOrder: Int
     var isGmail: Bool
     var password: String?
+    var signatureHTML: String? = nil
 }
 
 @MainActor
@@ -133,6 +134,17 @@ final class MistMailAccountSyncSource: MistSyncSource {
 
     func record(_ account: MistMailSyncAccount) -> MistSyncRecord {
         let id = aliases.first { $0.value == account.id }?.key ?? account.id.uuidString
+        return Self.record(account, id: id)
+    }
+
+    static func fitsBlobLimit(_ account: MistMailSyncAccount) throws -> Bool {
+        var record = record(account, id: account.id.uuidString)
+        var clock = MistSyncClock()
+        record.hlc = try clock.tick(deviceID: account.id.uuidString)
+        return try MistSyncCrypto.fitsBlobLimit(record)
+    }
+
+    private static func record(_ account: MistMailSyncAccount, id: String) -> MistSyncRecord {
         func server(_ value: MistMailSyncServer) -> MistSyncValue {
             .object(["host": .string(value.host), "port": .number(Double(value.port)), "security": .string(value.security)])
         }
@@ -140,7 +152,8 @@ final class MistMailAccountSyncSource: MistSyncSource {
             "displayName": .string(account.displayName), "senderName": .string(account.senderName),
             "email": .string(account.email), "username": .string(account.username),
             "imap": server(account.imap), "smtp": server(account.smtp), "sortOrder": .number(Double(account.sortOrder)),
-            "isGmail": .bool(account.isGmail), "password": account.password.map(MistSyncValue.string) ?? .null])
+            "isGmail": .bool(account.isGmail), "password": account.password.map(MistSyncValue.string) ?? .null,
+            "signature": account.signatureHTML.map(MistSyncValue.string) ?? .null])
     }
 
     func apply(_ record: MistSyncRecord) async throws {
@@ -231,9 +244,15 @@ final class MistMailAccountSyncSource: MistSyncSource {
         case .null, nil: password = nil
         default: throw MistSyncError.invalidRecord
         }
+        let signature: String?
+        switch record.payload["signature"] {
+        case .string(let value) where value.utf8.count <= 32 * 1024: signature = value
+        case .null, nil: signature = nil
+        default: throw MistSyncError.invalidRecord
+        }
         return try MistMailSyncAccount(id: id, displayName: string(record.payload, "displayName"),
             senderName: string(record.payload, "senderName"), email: string(record.payload, "email"),
             username: string(record.payload, "username"), imap: server("imap"), smtp: server("smtp"),
-            sortOrder: integer(record.payload["sortOrder"]), isGmail: gmail, password: password)
+            sortOrder: integer(record.payload["sortOrder"]), isGmail: gmail, password: password, signatureHTML: signature)
     }
 }

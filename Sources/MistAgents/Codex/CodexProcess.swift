@@ -1,8 +1,9 @@
 import Foundation
 import Darwin
 
-/// A private stdio app-server. All launch, reads, writes, and response correlation run off the main actor.
+/// A private stdio JSON transport. All reads, writes, and response correlation run off the main actor.
 final class CodexProcess: @unchecked Sendable {
+    enum Wire { case appServer, acp }
     var processIdentifier: Int32 { process.processIdentifier }
     enum Output: Sendable {
         case message(CodexJSON)
@@ -29,23 +30,28 @@ final class CodexProcess: @unchecked Sendable {
     private let control = DispatchQueue(label: "mist.codex.lifecycle")
     private let delivery = DispatchQueue(label: "mist.codex.events")
     private let readers = DispatchGroup()
+    private let wire: Wire
     private var stderrTail = Data() // Delivery queue only.
     private var pending: [Int: CheckedContinuation<CodexJSON, Error>] = [:]
     private var nextId = 0
     private var exited = false
     private var closing = false // Control queue only.
 
-    init(executable: URL, arguments: [String] = CodexProtocol.arguments, folder: URL, environment: [String: String]) throws {
+    init(executable: URL, arguments: [String] = CodexProtocol.arguments, folder: URL, environment: [String: String],
+         wire: Wire = .appServer) throws {
+        self.wire = wire
         var continuation: AsyncStream<Output>.Continuation!
         output = AsyncStream { continuation = $0 }
         self.continuation = continuation
         process.executableURL = executable
         process.arguments = arguments
         process.currentDirectoryURL = folder
-        process.environment = CodexProtocol.environment(environment)
-        process.standardInput = input; process.standardOutput = stdout; process.standardError = stderr
+        process.environment = wire == .acp ? environment : CodexProtocol.environment(environment)
+        process.standardInput = input; process.standardOutput = stdout
+        process.standardError = wire == .acp ? FileHandle.nullDevice : stderr
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-        readers.enter(); readers.enter()
+        readers.enter()
+        if wire == .appServer { readers.enter() }
         process.terminationHandler = { [weak self] process in
             guard let self else { return }
             let code = process.terminationStatus
@@ -58,10 +64,18 @@ final class CodexProcess: @unchecked Sendable {
             }
         }
         do { try process.run() }
-        catch { readers.leave(); readers.leave(); continuation.finish(); throw error }
-        try? input.fileHandleForReading.close(); try? stdout.fileHandleForWriting.close(); try? stderr.fileHandleForWriting.close()
+        catch {
+            readers.leave()
+            if wire == .appServer { readers.leave() }
+            continuation.finish()
+            throw error
+        }
+        try? input.fileHandleForReading.close(); try? stdout.fileHandleForWriting.close()
         read(stdout.fileHandleForReading, isStdout: true)
-        read(stderr.fileHandleForReading, isStdout: false)
+        if wire == .appServer {
+            try? stderr.fileHandleForWriting.close()
+            read(stderr.fileHandleForReading, isStdout: false)
+        }
     }
 
     func request(_ method: String, _ params: CodexJSON, timeout: TimeInterval = 30) async throws -> CodexJSON {
@@ -71,7 +85,7 @@ final class CodexProcess: @unchecked Sendable {
                 nextId += 1
                 let id = nextId
                 pending[id] = reply
-                write(.object(["id": .number(Double(id)), "method": .string(method), "params": params]))
+                write(["id": .number(Double(id)), "method": .string(method), "params": params])
                 delivery.asyncAfter(deadline: .now() + timeout) { [self] in
                     pending.removeValue(forKey: id)?.resume(throwing: TransportError.timedOut)
                 }
@@ -80,15 +94,23 @@ final class CodexProcess: @unchecked Sendable {
     }
 
     func notify(_ method: String, _ params: CodexJSON = .object([:])) {
-        write(.object(["method": .string(method), "params": params]))
+        write(["method": .string(method), "params": params])
     }
 
-    func reply(id: CodexJSON, result: CodexJSON) { write(.object(["id": id, "result": result])) }
+    /// ACP prompt replies share the notification stream so the final update always precedes the reply.
+    func requestInStream(id: String, method: String, params: CodexJSON) {
+        write(["id": .string(id), "method": .string(method), "params": params])
+    }
+
+    func reply(id: CodexJSON, result: CodexJSON) { write(["id": id, "result": result]) }
     func reject(id: CodexJSON) {
-        write(.object(["id": id, "error": .object(["code": .number(-32601), "message": .string("Unsupported by Mist")])]))
+        write(["id": id, "error": .object(["code": .number(-32601), "message": .string("Unsupported by Mist")])])
     }
 
-    private func write(_ value: CodexJSON) {
+    private func write(_ fields: [String: CodexJSON]) {
+        var fields = fields
+        if wire == .acp { fields["jsonrpc"] = .string("2.0") }
+        let value = CodexJSON.object(fields)
         writer.async { [self] in
             do { try input.fileHandleForWriting.write(contentsOf: Data((value.json() + "\n").utf8)) }
             catch {
@@ -142,7 +164,8 @@ final class CodexProcess: @unchecked Sendable {
     private func decode(_ line: Data) {
         delivery.async { [self] in
             guard let value = try? JSONDecoder().decode(CodexJSON.self, from: line) else { return }
-            if value["method"].string != nil { continuation.yield(.message(value)) }
+            if wire == .acp, value["jsonrpc"].string != "2.0" { return }
+            if value["method"].string != nil || (wire == .acp && value["id"].string != nil) { continuation.yield(.message(value)) }
             else if case .number = value["id"], let reply = pending.removeValue(forKey: value["id"].integer) {
                 if value["error"] != .null { reply.resume(throwing: TransportError.server(value["error"])) }
                 else { reply.resume(returning: value["result"]) }

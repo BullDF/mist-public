@@ -316,6 +316,9 @@ extension AgentSpaceRouter {
                 if entry.tab.crashState != nil {
                     row["crashed"] = true
                 }
+                if entry.tab.appAddress?.app.hostsChatPanel == true, state.canShowChatPanel(for: entry.tab) {
+                    row["mountOnly"] = true
+                }
                 if let token = entry.tab.groupToken, let group = state.groups[token] {
                     row["group"] = [
                         "token": token,
@@ -351,13 +354,26 @@ extension AgentSpaceRouter {
         guard let obj = json(context.payload),
               let spaceId = obj["spaceId"] as? String,
               let url = obj["url"] as? String, !url.isEmpty else { return invalid() }
+        let placement: AgentUserSpaceDriveRegistry.OpenTabPlacement
+        if let requested = obj["placement"] {
+            guard let requested = requested as? [String: Any] else { return invalid() }
+            switch requested["kind"] as? String {
+            case "group":
+                guard let token = requested["token"] as? String, !token.isEmpty else { return invalid() }
+                placement = .group(token: token)
+            case "tabList": placement = .tabList
+            default: return invalid()
+            }
+        } else {
+            placement = .folder
+        }
         let activate = obj["activate"] as? Bool ?? true
         let windowId = obj["windowId"] as? Int
         let requestId = context.requestId
         return MainActor.assumeIsolated { () -> String? in
             if let target = spaceWindow(spaceId: spaceId, windowId: windowId) {
                 createUserSpaceTab(url: url, spaceId: spaceId, windowId: target.windowId,
-                                   activate: activate, context: context)
+                                   activate: activate, placement: placement, context: context)
                 return encode(["ok": true, "windowId": target.windowId])
             }
             guard windowId == nil else { return failure("window_not_open") }
@@ -375,7 +391,7 @@ extension AgentSpaceRouter {
                     }
                     if !url.isNTP {
                         createUserSpaceTab(url: url, spaceId: spaceId, windowId: openedWindowId,
-                                           activate: activate, context: context)
+                                           activate: activate, placement: placement, context: context)
                     }
                     ExtensionMessaging.shared.sendResponse(
                         encode(["ok": true, "windowId": openedWindowId, "windowOpened": true]),
@@ -414,6 +430,37 @@ extension AgentSpaceRouter {
                 return nil
             }
             return encode(["ok": true])
+        }
+    }
+
+    static func handleSpacesReadTab(context: ExtensionMessageContext) -> String? {
+        MainActor.assumeIsolated {
+            guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: context.driverPrincipalId),
+                  let id = AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId),
+                  let preview = AgentChatStore.shared.entry(for: id)?.browserPreview else {
+                return encode(["ok": true, "ignored": true])
+            }
+            guard let obj = json(context.payload), let windowId = obj["windowId"] as? Int,
+                  windowId == preview.windowId, let tabId = obj["tabId"] as? Int,
+                  let phase = obj["phase"] as? String, phase == "start" || phase == "end" else { return invalid() }
+            guard let state = windowSpace(windowId: windowId)?.state,
+                  let tab = state.tabs.first(where: { $0.guid == tabId }),
+                  MistApps.address(tab.url) == nil else { return failure("unknown_tab") }
+            if phase == "start" {
+                AgentChatStore.shared.reportReadTab(principalId: context.driverPrincipalId, tabId: tabId, reading: true)
+                return encode(["ok": true])
+            }
+            guard preview.readingTabIds.contains(tabId), preview.tabId != tabId else { return encode(["ok": true]) }
+            Task { @MainActor in
+                // Unmount before capturing: mounted out of sight, the page left its first capture unanswered
+                // for seconds; unmounted, it keeps its real size and answers at once.
+                AgentChatStore.shared.reportReadTab(principalId: context.driverPrincipalId, tabId: tabId, reading: false)
+                if AgentChatStore.shared.entry(for: id)?.browserPreview?.cards.contains(where: { $0.tabId == tabId }) == true {
+                    await state.ensureBrowserAgentPreview().captureStill(tab)
+                }
+                ExtensionMessaging.shared.sendResponse(encode(["ok": true]), requestId: context.requestId)
+            }
+            return nil
         }
     }
 
@@ -472,6 +519,69 @@ extension AgentSpaceRouter {
         }
     }
 
+    static func handleSpacesExportBookmarks(context: ExtensionMessageContext) -> String? {
+        MainActor.assumeIsolated {
+            guard AgentDriverSessionRegistry.shared.isLiveBrowserAgent(principalId: context.driverPrincipalId),
+                  AgentChatStore.shared.browserChat(principalId: context.driverPrincipalId) != nil else {
+                return failure("unknown_browser_agent")
+            }
+            guard let payload = json(context.payload), let windowId = payload["windowId"] as? Int,
+                  payload["space"] == nil || payload["space"] is String,
+                  payload["path"] == nil || payload["path"] is String else { return invalid() }
+            let spaces = SpaceManager.shared.spaces.filter { !$0.isAgentSpace && !SpaceManager.isIncognitoSpaceId($0.spaceId) }
+            let spaceName: String
+            let state: BrowserState
+            if let name = payload["space"] as? String {
+                let matches = spaces.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+                guard !matches.isEmpty else {
+                    let available = spaces.map(\.name).joined(separator: ", ")
+                    return failure("No Space named \(name). Spaces: \(available).")
+                }
+                guard matches.count == 1, let space = matches.first else {
+                    return failure("More than one Space is named \(name). Use a different Space name.")
+                }
+                guard let target = spaceWindow(spaceId: space.spaceId, windowId: windowId)?.state
+                    ?? spaceWindow(spaceId: space.spaceId)?.state else {
+                    return failure("\(space.name) isn't open in a window. Open it, then retry.")
+                }
+                spaceName = space.name
+                state = target
+            } else {
+                guard let target = windowSpace(windowId: windowId), let browserState = target.state,
+                      let space = spaces.first(where: { $0.spaceId == target.spaceId }) else {
+                    return failure("This chat's Space isn't open in a window.")
+                }
+                spaceName = space.name
+                state = browserState
+            }
+            let url: URL
+            if let path = payload["path"] as? String {
+                guard path.hasPrefix("/") else { return invalid() }
+                url = URL(fileURLWithPath: path, isDirectory: false)
+            } else {
+                url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+                    .appendingPathComponent(BookmarkHTMLExporter.defaultFilename(spaceName: spaceName, date: Date()))
+            }
+            let requestId = context.requestId
+            do {
+                try BookmarkHTMLExporter.export(from: state, to: url, overwrite: payload["overwrite"] as? Bool ?? false,
+                                                createParentDirectories: true) { result in
+                    let response: String
+                    switch result {
+                    case .success(let counts):
+                        response = encode(["ok": true, "path": url.path, "space": spaceName,
+                                           "bookmarks": counts.bookmarks, "pinnedTabs": counts.pinnedTabs])
+                    case .failure(let error): response = failure(error.localizedDescription)
+                    }
+                    ExtensionMessaging.shared.sendResponse(response, requestId: requestId)
+                }
+                return nil
+            } catch {
+                return failure(error.localizedDescription)
+            }
+        }
+    }
+
     /// Load restored, discarded, or crashed contents in place. Never activate the tab or its window.
     static func handleSpacesWakeTab(context: ExtensionMessageContext) -> String? {
         guard let obj = json(context.payload), let windowId = obj["windowId"] as? Int,
@@ -518,14 +628,16 @@ extension AgentSpaceRouter {
     /// their own mask from the task.
     @MainActor
     private static func createUserSpaceTab(url: String, spaceId: String, windowId: Int,
-                                           activate: Bool, context: ExtensionMessageContext) {
+                                           activate: Bool, placement: AgentUserSpaceDriveRegistry.OpenTabPlacement,
+                                           context: ExtensionMessageContext) {
         let isAgentSpace = SpaceManager.shared.spaces
             .first { $0.spaceId == spaceId }?.isAgentSpace ?? false
         if !isAgentSpace {
             AgentUserSpaceDriveRegistry.shared.agentWillOpenTab(
                 inWindow: windowId,
                 principalId: context.driverPrincipalId,
-                driverName: context.agentName)
+                driverName: context.agentName,
+                placement: placement)
         }
         ChromiumLauncher.sharedInstance().bridge?
             .createNewTab(withUrl: url,
@@ -947,7 +1059,7 @@ extension AgentSpaceRouter {
     /// user Space it shows. Nil for unknown ids and for agent-Space windows
     /// (ownership-guarded — taskId path only, same as `spaceWindow`).
     @MainActor
-    private static func windowSpace(windowId: Int)
+    static func windowSpace(windowId: Int)
         -> (windowId: Int, state: BrowserState?, spaceId: String)? {
         guard let chosen = SpaceSessionControllersManager.shared.getAllWindows()
             .first(where: { $0.windowId == windowId }),

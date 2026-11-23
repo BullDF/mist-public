@@ -24,13 +24,31 @@ final class MistChatPanelTests: XCTestCase {
             panelOpen: false, store: store))
         XCTAssertEqual(MistChatPanelViewController.panelTabSwitch(focusedTabId: 8, focusedChatId: nil,
             panelOpen: true, store: store), .openAsTab(hostTabId: 8), "An open panel's new-chat screen")
-        XCTAssertNil(MistChatPanelViewController.panelTabSwitch(focusedTabId: 43, focusedChatId: unmounted,
-            panelOpen: false, store: store))
+        XCTAssertEqual(MistChatPanelViewController.panelTabSwitch(focusedTabId: 43, focusedChatId: unmounted,
+            panelOpen: false, store: store), .mountToTab(chatTabId: 43))
         XCTAssertTrue(store.mount(unmounted, to: 42))
         XCTAssertEqual(MistChatPanelViewController.panelTabSwitch(focusedTabId: 42, focusedChatId: mounted,
             panelOpen: true, store: store), .showInPanel(chatId: mounted))
         XCTAssertNil(MistChatPanelViewController.panelTabSwitch(focusedTabId: nil, focusedChatId: nil,
             panelOpen: false, store: store))
+    }
+
+    func testCloseChatTargetsTheFocusedTabsOpenPanelChat() throws {
+        let state = state()
+        let tab = host(in: state)
+        let store = AgentChatStore(route: .init(baseDirectory: directory), tabExists: { $0 == tab.guid },
+            browserSessionFactory: { _, _, _ in NSObject() })
+        chatStores.append(store)
+        tab.aiChatCollapsed = false
+        XCTAssertNil(MistChatPanelViewController.closeChatHost(in: state, store: store), "The new-chat screen")
+        let chat = try store.create(request: .init(prompt: "Chat", attachments: [], config: .init(folder: directory), windowId: 1), tabId: 72)
+        store.setPanelChat(chat.id, for: tab.guid)
+        XCTAssertEqual(MistChatPanelViewController.closeChatHost(in: state, store: store), tab.guid)
+        tab.aiChatCollapsed = true
+        XCTAssertNil(MistChatPanelViewController.closeChatHost(in: state, store: store), "A closed panel")
+        tab.aiChatCollapsed = false
+        state.focusingTab = nil
+        XCTAssertNil(MistChatPanelViewController.closeChatHost(in: state, store: store))
     }
 
     func testClearRebindsPanelAndInsertsHostMentionIntoFreshComposer() async throws {
@@ -208,9 +226,10 @@ final class MistChatPanelTests: XCTestCase {
     private func store(onLaunch: ((DrifterLaunchRequest, AgentConversation) -> Void)? = nil,
                        tabExists: @escaping (Int) -> Bool = { _ in false }, windowId: @escaping (Int) -> Int? = { _ in nil },
                        openChatTab: @escaping (UUID, Int) -> Void = { _, _ in },
-                       closeChatTab: @escaping (Int) -> Void = { _ in }) -> AgentChatStore {
+                       closeChatTab: @escaping (Int) -> Void = { _ in }, collapsePanel: @escaping (Int) -> Void = { _ in },
+                       chatTabs: @escaping () -> [(chatId: UUID, tabId: Int)] = { [] }) -> AgentChatStore {
         let store = AgentChatStore(route: .init(baseDirectory: directory), tabExists: tabExists, windowId: windowId,
-            openChatTab: openChatTab, closeChatTab: closeChatTab,
+            openChatTab: openChatTab, closeChatTab: closeChatTab, collapsePanel: collapsePanel, chatTabs: chatTabs,
             browserSessionFactory: { request, conversation, _ in
                 onLaunch?(request, conversation)
                 return NSObject()
@@ -401,17 +420,146 @@ final class MistChatPanelTests: XCTestCase {
 
     /// A store whose `openChatTab` and `closeChatTab` open a background tab in `state` and close one, like the shared
     /// store's.
-    private func tabOpeningStore(_ state: PanelBrowserState, onLaunch: ((DrifterLaunchRequest, AgentConversation) -> Void)? = nil) -> AgentChatStore {
+    private func tabOpeningStore(_ state: PanelBrowserState, onLaunch: ((DrifterLaunchRequest, AgentConversation) -> Void)? = nil,
+                                 deferTabCreation: Bool = false, collapsePanel: @escaping (Int) -> Void = { _ in }) -> AgentChatStore {
+        let route = AgentChatRoute(baseDirectory: directory)
         var opener: AgentChatStore?
         let store = store(onLaunch: onLaunch, tabExists: { id in state.tabs.contains { $0.guid == id } }, windowId: { _ in 771 },
                           openChatTab: { id, _ in
                               guard let opener else { return }
-                              let url = opener.route.placeholderURL(for: id).absoluteString
+                              let url = route.placeholderURL(for: id).absoluteString
                               opener.bindNextTab(id, in: state, url: url)
-                              state.createTab(url, focusAfterCreate: false)
-                          }, closeChatTab: { id in state.tabs.removeAll { $0.guid == id } })
+                              if !deferTabCreation { state.createTab(url, focusAfterCreate: false) }
+                          }, closeChatTab: { id in state.tabs.removeAll { $0.guid == id } }, collapsePanel: collapsePanel,
+                          chatTabs: {
+                              state.tabs.compactMap { tab in
+                                  route.conversationId(for: tab.url).map { (chatId: $0, tabId: tab.guid) }
+                              }
+                          })
         opener = store
         return store
+    }
+
+    private func recordExists(_ id: UUID, in store: AgentChatStore) -> Bool {
+        FileManager.default.fileExists(atPath: store.route.recordURL(for: id).path)
+    }
+
+    func testCloseChatClosesTabAndPanelAndKeepsRecord() throws {
+        let state = state()
+        let host = host(in: state)
+        var collapsed: [Int] = []
+        let store = tabOpeningStore(state, collapsePanel: { collapsed.append($0) })
+        let chat = try store.create(request: DrifterLaunchRequest(prompt: "Read", config: .init(), windowId: 771), tabId: 901)
+        chat.update(items: [.init(id: "user", kind: .userMessage(text: "Read", images: []))], status: .running)
+        var closes = 0
+        chat.onClose = { closes += 1 }
+        state.createTab(store.route.placeholderURL(for: chat.id).absoluteString, focusAfterCreate: false)
+        store.setPanelChat(chat.id, for: host.guid)
+        let panel = MistChatPanelViewController(with: state, tab: host, store: store)
+        panel.setExpanded(true)
+
+        panel.closeChat()
+
+        XCTAssertEqual(state.tabs.map(\.guid), [host.guid])
+        XCTAssertNil(store.conversation(for: chat.id))
+        XCTAssertTrue(recordExists(chat.id, in: store))
+        XCTAssertEqual(closes, 1)
+        XCTAssertEqual(collapsed, [host.guid])
+        XCTAssertNil(store.panelChat(for: host.guid))
+    }
+
+    func testCloseChatClosesDuplicateTabs() throws {
+        let state = state()
+        let host = host(in: state)
+        var collapsed: [Int] = []
+        let store = tabOpeningStore(state, collapsePanel: { collapsed.append($0) })
+        let chat = try store.create(request: DrifterLaunchRequest(prompt: "Read", config: .init(), windowId: 771), tabId: 901)
+        chat.update(items: [.init(id: "user", kind: .userMessage(text: "Read", images: []))], status: .idle)
+        let url = store.route.placeholderURL(for: chat.id).absoluteString
+        state.createTab(url, focusAfterCreate: false)
+        state.createTab(url, focusAfterCreate: false)
+        store.setPanelChat(chat.id, for: host.guid)
+        let panel = MistChatPanelViewController(with: state, tab: host, store: store)
+        panel.setExpanded(true)
+
+        panel.closeChat()
+
+        XCTAssertEqual(state.tabs.map(\.guid), [host.guid])
+        XCTAssertNil(store.conversation(for: chat.id))
+        XCTAssertTrue(recordExists(chat.id, in: store))
+        XCTAssertEqual(collapsed, [host.guid])
+        XCTAssertNil(store.panelChat(for: host.guid))
+    }
+
+    func testCloseChatDeletesEmptyChatAfterTabArrives() async throws {
+        let state = state()
+        let host = host(in: state)
+        var collapsed: [Int] = []
+        let store = tabOpeningStore(state, collapsePanel: { collapsed.append($0) })
+        let panel = MistChatPanelViewController(with: state, tab: host, store: store)
+        panel.setExpanded(true)
+        panel.newChat()
+        let chat = try XCTUnwrap(panel.chatController?.conversation)
+        try await Task.sleep(nanoseconds: 20_000_000)
+        let chatTab = try XCTUnwrap(state.tabs.first { $0 !== host })
+        XCTAssertEqual(store.entry(for: chat.id)?.tabId, chatTab.guid)
+        XCTAssertTrue(recordExists(chat.id, in: store))
+
+        panel.closeChat()
+
+        XCTAssertEqual(state.tabs.map(\.guid), [host.guid])
+        XCTAssertEqual(collapsed, [host.guid])
+        XCTAssertFalse(recordExists(chat.id, in: store))
+    }
+
+    func testCloseChatDeletesEmptyChatBeforeTabArrives() async throws {
+        let state = state()
+        let host = host(in: state)
+        var collapsed: [Int] = []
+        let store = tabOpeningStore(state, deferTabCreation: true, collapsePanel: { collapsed.append($0) })
+        let panel = MistChatPanelViewController(with: state, tab: host, store: store)
+        panel.setExpanded(true)
+        panel.newChat()
+        let chat = try XCTUnwrap(panel.chatController?.conversation)
+        let url = store.route.placeholderURL(for: chat.id)
+        XCTAssertTrue(store.isOpeningTab(for: chat.id))
+        XCTAssertEqual(state.tabs.map(\.guid), [host.guid])
+
+        panel.closeChat()
+
+        XCTAssertEqual(collapsed, [host.guid])
+        XCTAssertFalse(recordExists(chat.id, in: store))
+        state.createTab(url.absoluteString, focusAfterCreate: false)
+        let chatTab = try XCTUnwrap(state.tabs.first { $0 !== host })
+        XCTAssertFalse(store.restoreIfNeeded(chat.id, tabId: chatTab.guid))
+        XCTAssertFalse(store.recreate(chat.id, tabId: chatTab.guid, at: url))
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(state.tabs.map(\.guid), [host.guid])
+        XCTAssertFalse(store.isOpeningTab(for: chat.id))
+        XCTAssertNil(store.conversation(for: chat.id))
+        XCTAssertFalse(recordExists(chat.id, in: store))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testCloseChatKeepsEarlierPanelHistoryAndCollapsesPanel() throws {
+        let state = state()
+        let host = host(in: state)
+        var collapsed: [Int] = []
+        let store = tabOpeningStore(state, collapsePanel: { collapsed.append($0) })
+        let first = try store.create(request: DrifterLaunchRequest(prompt: "First", config: .init(), windowId: 771), tabId: 901)
+        state.createTab(store.route.placeholderURL(for: first.id).absoluteString, focusAfterCreate: false)
+        store.setPanelChat(first.id, for: host.guid)
+        let panel = MistChatPanelViewController(with: state, tab: host, store: store)
+        panel.setExpanded(true)
+        panel.newChat()
+        let second = try XCTUnwrap(panel.chatController?.conversation)
+
+        panel.closeChat()
+
+        XCTAssertEqual(store.panelChat(for: host.guid), first.id)
+        XCTAssertEqual(store.panelChatHistory(for: host.guid).map(\.id), [first.id])
+        XCTAssertNil(store.conversation(for: second.id))
+        XCTAssertEqual(collapsed, [host.guid])
     }
 
     func testNewChatOpensAnEmptyChatInItsOwnBackgroundTab() async throws {
@@ -419,7 +567,6 @@ final class MistChatPanelTests: XCTestCase {
         let tab = host(in: state)
         var requests: [DrifterLaunchRequest] = []
         let store = tabOpeningStore(state, onLaunch: { request, _ in requests.append(request) })
-        func recordExists(_ id: UUID) -> Bool { FileManager.default.fileExists(atPath: store.route.recordURL(for: id).path) }
         let panel = MistChatPanelViewController(with: state, tab: tab, store: store)
         panel.setExpanded(true)
         panel.launchComposer.applyLaunchDraft(AgentComposerDraft(text: "Summarize this"))
@@ -428,7 +575,7 @@ final class MistChatPanelTests: XCTestCase {
         XCTAssertEqual(store.panelChat(for: tab.guid), first.id)
         XCTAssertTrue(store.isEmpty(first.id))
         XCTAssertTrue(store.agentChats().contains(first.id), "Other chats can message it")
-        XCTAssertTrue(recordExists(first.id))
+        XCTAssertTrue(recordExists(first.id, in: store))
         XCTAssertEqual(panel.composer.editor.text, "Summarize this", "The new-chat screen's draft moves into the chat")
         XCTAssertEqual(panel.launchComposer.editor.text, "")
         XCTAssertEqual(state.created.map(\.focused), [false])
@@ -442,7 +589,7 @@ final class MistChatPanelTests: XCTestCase {
         let second = try XCTUnwrap(panel.chatController?.conversation)
         XCTAssertNotEqual(second.id, first.id)
         XCTAssertNil(store.conversation(for: first.id), "The next New Chat closes the empty one")
-        XCTAssertFalse(recordExists(first.id))
+        XCTAssertFalse(recordExists(first.id, in: store))
         XCTAssertFalse(state.tabs.contains { $0 === firstTab }, "Its tab closes too")
         try await Task.sleep(nanoseconds: 20_000_000)
         let secondTab = try XCTUnwrap(state.tabs.last)

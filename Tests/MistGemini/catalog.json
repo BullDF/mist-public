@@ -1,0 +1,25 @@
+{
+  "models": [
+    {"name":"models/gemini-3-aurora","displayName":"Aurora 3","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-4-comet","displayName":"Comet 4","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-4.1-aurora-preview","displayName":"Aurora 4.1 Preview","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-4-carbon","displayName":"Gemini 4 Carbon","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-4-argon","displayName":"Gemini 4 Argon","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-4-hydrogen","displayName":"Gemini 4 Hydrogen","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-4-neon-preview","displayName":"Gemini 4 Neon Preview","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-4-neon","displayName":"Gemini 4 Neon","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-3.8-flash","displayName":"Gemini 3.8 Flash","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-3.10-flash-preview","displayName":"Gemini 3.10 Flash Preview","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-3.5-flash-lite","displayName":"Gemini 3.5 Flash Lite","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-3.1-pro-preview","displayName":"Gemini 3.1 Pro Preview","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-6-neon-image","displayName":"Neon Image","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-9-tts","displayName":"TTS","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-5-computer-use-preview","displayName":"Computer Use","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-6-transcribe","displayName":"Transcribe","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-6-customtools","displayName":"Custom Tools","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-6-live","displayName":"Gemini Live","thinking":true,"supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-5-no-generate","displayName":"Wrong generation method","thinking":true,"supportedGenerationMethods":["countTokens"]},
+    {"name":"models/gemini-5-no-thinking","displayName":"No Thinking","supportedGenerationMethods":["generateContent"]},
+    {"name":"models/gemini-flash-latest","displayName":"Alias","thinking":true,"supportedGenerationMethods":["generateContent"]}
+  ]
+}

@@ -18,7 +18,8 @@ import XCTest
                                          defaults: makeTestDefaults().defaults)
         source.onChange = { _ in }
         syncSetUp = CurrentValueSubject(false)
-        model = ClipboardPageModel(source: source, syncSetUp: syncSetUp.eraseToAnyPublisher(), pasteboard: pasteboard)
+        model = ClipboardPageModel(source: source, syncSetUp: syncSetUp.eraseToAnyPublisher(), pasteboard: pasteboard,
+                                   downloadsFolder: directory.appendingPathComponent("Downloads", isDirectory: true))
     }
 
     override func tearDownWithError() throws {
@@ -81,6 +82,24 @@ import XCTest
         XCTAssertFalse(model.staging)
         XCTAssertNil(model.error)
         XCTAssertEqual(source.current, shared)
+    }
+
+    func testDownloadSavesTheFileUnderItsNameUntilItIsMoved() throws {
+        syncSetUp.send(true)
+        let file = directory.appendingPathComponent("Mist-Bookmarks.html")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("<p>bookmarks</p>".utf8).write(to: file)
+        model.stage(file: file)
+        model.send()
+        let shared = try XCTUnwrap(source.current)
+        XCTAssertNil(model.downloadedFile(for: shared))
+        model.download(shared)
+        XCTAssertNil(model.error)
+        let saved = try XCTUnwrap(model.downloadedFile(for: shared))
+        XCTAssertEqual(saved.lastPathComponent, "Mist-Bookmarks.html")
+        XCTAssertEqual(try Data(contentsOf: saved), Data("<p>bookmarks</p>".utf8))
+        try FileManager.default.removeItem(at: saved)
+        XCTAssertNil(model.downloadedFile(for: shared))
     }
 
     func testStagedTextGrowsWithItsLinesAndScrollsPastTheCap() async throws {

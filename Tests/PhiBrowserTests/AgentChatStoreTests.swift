@@ -829,13 +829,15 @@ final class AgentChatStoreTests: XCTestCase {
         XCTAssertEqual(config(astra, ownModel)?.effort, "xhigh")
         refused(astra, model: "sonnet", effort: nil, "This chat runs GPT-6 Astra · medium, so its children run on GPT models only, at any effort: "
             + DrifterModel.codexPicks.joined(separator: ", ") + ".")
+        refused(astra, model: "flash", effort: nil, AgentSpawnError.restricted(astra.store.entry(for: astra.top.id)!.config).message)
         refused(astra, from: luna, model: "astra", effort: nil,
                 "This chat runs GPT-6 Luna · high, so its children run on GPT-6 Luna · high; omit model and effort.")
 
         for admin in ["opus", "fable"] {
             let family = try Family(config: .init(engine: .claude, model: admin, effort: "medium"))
             defer { family.cleanUp() }
-            for (model, effort) in [("terra", "low"), ("terra", "xhigh"), ("haiku", "low"), ("haiku", "max")] {
+            for (model, effort) in [("terra", "low"), ("terra", "xhigh"), ("haiku", "low"), ("haiku", "max"),
+                                    ("hydrogen", "xhigh"), ("Gemini 3.8 Flash", "max")] {
                 let child = try family.spawn(model: model, effort: effort)
                 XCTAssertEqual(config(family, child)?.model, DrifterModel.spawnModel(model)?.model, admin)
                 XCTAssertEqual(config(family, child)?.effort, effort, admin)
@@ -849,6 +851,15 @@ final class AgentChatStoreTests: XCTestCase {
             XCTAssertEqual(config(family, grandchild)?.model, "gpt-6.1-terra")
             XCTAssertEqual(config(family, grandchild)?.effort, "low")
         }
+
+        let gemini = try Family(config: .init(engine: .gemini, model: "gemini-3.8-flash", effort: "low"))
+        defer { gemini.cleanUp() }
+        let restricted = AgentSpawnError.restricted(gemini.store.entry(for: gemini.top.id)!.config).message
+        refused(gemini, model: "neon", effort: nil, restricted)
+        refused(gemini, model: "flash", effort: "max", restricted)
+        let flash = try gemini.spawn(model: "flash")
+        XCTAssertEqual(config(gemini, flash)?.engine, .gemini)
+        XCTAssertEqual(config(gemini, flash)?.effort, "low")
     }
 
     @MainActor func testSpawnFallsBackToPreviewWindowAndRestartKeepsParent() throws {
@@ -2142,6 +2153,56 @@ final class AgentChatStoreTests: XCTestCase {
         store.reportWorkingTab(principalId: "p", tabId: 7, live: true)
         XCTAssertEqual(store.activeBrowserPreviews(windowId: 1).map(\.tabId), [7])
         conversation.update(items: [], status: .idle)
+    }
+
+    @MainActor
+    func testReadReportsNotifyMountsAndRefreshFolderClock() {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AgentChatStore(route: .init(baseDirectory: directory), tabExists: { _ in true })
+        defer { store.terminate() }
+        let start = Date().addingTimeInterval(3600)
+        var clock = start
+        store.now = { clock }
+        var folder = BrowserAgentFolderState(windowId: 1, token: "folder")
+        folder.join(7, now: start)
+        let first = AgentConversation()
+        let second = AgentConversation()
+        store.register(.init(conversation: first, settings: DrifterSettings(config: .init()), tabId: 42,
+            session: FakeSession(), browserPreview: .init(principalId: "first", windowId: 1), browserFolder: folder))
+        store.register(.init(conversation: second, settings: DrifterSettings(config: .init()), tabId: 43,
+            session: FakeSession(), browserPreview: .init(principalId: "second", windowId: 1)))
+        first.update(items: [], status: .running)
+        var notifications = 0
+        let observer = NotificationCenter.default.addObserver(forName: .browserAgentPreviewDidChange,
+            object: store, queue: .main) { note in
+                XCTAssertEqual(note.userInfo?["windowId"] as? Int, 1)
+                notifications += 1
+            }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        clock = start.addingTimeInterval(10)
+        XCTAssertTrue(store.reportReadTab(principalId: "first", tabId: 7, reading: true))
+        XCTAssertEqual(notifications, 1)
+        XCTAssertEqual(store.activeBrowserReadTabs(windowId: 1), [7])
+        XCTAssertTrue(store.activeBrowserReadTabs(windowId: 2).isEmpty)
+        XCTAssertTrue(store.activeBrowserPreviews(windowId: 1).isEmpty)
+        XCTAssertEqual(store.entry(for: first.id)?.browserFolder?.members[7], clock)
+        let initialOrder = store.entry(for: first.id)?.browserPreview?.reportOrder
+
+        store.reportReadTab(principalId: "second", tabId: 8, reading: true)
+        XCTAssertEqual(store.activeBrowserReadTabs(windowId: 1), [7])
+        second.update(items: [], status: .running)
+        XCTAssertEqual(store.activeBrowserReadTabs(windowId: 1), [7, 8])
+        clock = start.addingTimeInterval(20)
+        let beforeEnd = notifications
+        XCTAssertTrue(store.reportReadTab(principalId: "first", tabId: 7, reading: false))
+        XCTAssertEqual(notifications, beforeEnd + 1)
+        XCTAssertEqual(store.entry(for: first.id)?.browserPreview?.reportOrder, initialOrder)
+        XCTAssertEqual(store.entry(for: first.id)?.browserFolder?.members[7], clock)
+        XCTAssertEqual(store.activeBrowserReadTabs(windowId: 1), [8])
+        second.update(items: [], status: .idle)
+        XCTAssertTrue(store.activeBrowserReadTabs(windowId: 1).isEmpty)
     }
 
     @MainActor

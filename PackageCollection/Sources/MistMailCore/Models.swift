@@ -27,12 +27,20 @@ public struct MailAccountConfig: Codable, Equatable, Sendable {
     public var imap: MailServer
     public var smtp: MailServer
     public var sortOrder: Int
+    public var signatureHTML: String?
     public init(displayName: String, senderName: String, email: String, username: String,
-                imap: MailServer, smtp: MailServer, sortOrder: Int = 0) {
+                imap: MailServer, smtp: MailServer, sortOrder: Int = 0, signatureHTML: String? = nil) {
         self.displayName = displayName; self.senderName = senderName; self.email = email
         self.username = username; self.imap = imap; self.smtp = smtp; self.sortOrder = sortOrder
+        self.signatureHTML = Self.normalizedSignature(signatureHTML)
+    }
+    public static func normalizedSignature(_ html: String?) -> String? {
+        guard let html else { return nil }
+        return MailText.readable(html).isEmpty &&
+            html.range(of: "<img\\b", options: [.regularExpression, .caseInsensitive]) == nil ? nil : html
     }
     public func validate() throws {
+        guard (signatureHTML?.utf8.count ?? 0) <= 32 * 1024 else { throw MailError.signatureTooLong }
         try imap.validate(); try smtp.validate()
         guard email.contains("@"), !username.isEmpty,
               ![email, senderName, username].contains(where: { $0.contains("\r") || $0.contains("\n") }) else {
@@ -57,9 +65,10 @@ public enum MailAccountStatus: Equatable, Sendable {
 public enum MailError: Error, Equatable, Sendable {
     case authenticationFailed, cannotConnect, tlsFailure, timeout, offline
     case serverRejected(String), invalidConfiguration, unsupported, notFound, missingCredentials
+    case signatureTooLong
     case storage(String)
     public var isPermanent: Bool {
-        switch self { case .serverRejected, .unsupported, .invalidConfiguration, .notFound: return true; default: return false }
+        switch self { case .serverRejected, .unsupported, .invalidConfiguration, .notFound, .signatureTooLong: return true; default: return false }
     }
 }
 

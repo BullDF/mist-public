@@ -1314,6 +1314,31 @@ final class AgentChatViewControllerTests: XCTestCase {
         XCTAssertTrue(row.backgroundButton.isHidden)
     }
 
+    func testScheduleMenuCancelsWithoutAnActiveAgent() throws {
+        let row = MistDrifterLaunchRow(settings: DrifterSettings(config: .init(folder: URL(fileURLWithPath: "/work"))))
+        let next = Date()
+        let schedule = DrifterSchedule(id: "a1234567", title: "Daily report", prompt: "Check", timing: .at(next),
+                                      target: .thisChat, owner: UUID(), createdAt: next, nextRun: next)
+        var cancelled: [String] = []
+        row.setSchedules([schedule], onCancel: { cancelled.append($0) })
+        XCTAssertFalse(row.backgroundButton.isHidden)
+        XCTAssertEqual(row.backgroundButton.title, AgentChatStrings.scheduleCount(1))
+        let entry = try XCTUnwrap(row.backgroundMenu().items.first)
+        XCTAssertTrue(entry.title.hasPrefix("Daily report · "))
+        let cancel = try XCTUnwrap(entry.submenu?.items.first)
+        XCTAssertEqual(cancel.title, AgentChatStrings.cancelSchedule)
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(cancel.action), to: cancel.target, from: cancel))
+        XCTAssertEqual(cancelled, [schedule.id])
+
+        row.setBackgroundTasks([.init(id: "b", kind: .shell, description: "Build")])
+        XCTAssertEqual(row.backgroundButton.title, "1 shell · " + AgentChatStrings.scheduleCount(1))
+        let mixed = row.backgroundMenu().items
+        XCTAssertEqual(mixed.first?.title, "Build")
+        XCTAssertEqual(mixed.first?.submenu?.items.first?.isEnabled, false)
+        XCTAssertTrue(mixed[1].isSeparatorItem)
+        XCTAssertEqual(mixed.last?.title, entry.title)
+    }
+
     func testNarrowLaunchRowFoldsBackgroundTasksIntoACircle() {
         let row = MistDrifterLaunchRow(settings: DrifterSettings(config: .init(folder: URL(fileURLWithPath: "/work"))))
         row.setBackgroundTasks([.init(id: "a", kind: .shell, description: "Build")], onStop: { _ in })

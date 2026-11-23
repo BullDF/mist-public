@@ -19,7 +19,7 @@ The how-to lives in CLAUDE.md's "Driving the running app" section and in `refere
    - Drifter chats in Dev start in Dev's own home (`<data folder>/MistAgents/Drifter`); a restored-chat fixture's `folder` and raw `claude -p` or Codex probes use only `~/temp/` (or a subfolder).
    - The web is read-only: browse, search and read, but never fill or submit forms, sign in, send email or messages, post, buy or change an account. Slack is the exception: a check may run in Drifter's DM and #drifter-test, per `reference.md`'s Slack section.
    - Any Drifter task you give in Dev is read-only too, outside Dev's home.
-3. **Cheap agents.** Drifter chats you run in Dev use Sonnet with low effort on Claude and Terra with low effort on Codex, unless the check is about a specific model's behavior or capabilities. Set the model and effort in the composer or in `chat.json` before the first message, and restore the defaults you changed.
+3. **Cheap agents.** Drifter chats you run in Dev use Sonnet with low effort on Claude, Terra with low effort on Codex and Gemini 3.8 Flash with low effort on Gemini, unless the check is about a specific model's behavior or capabilities. Set the model and effort in the composer or in `chat.json` before the first message, and restore the defaults you changed.
 4. **Never type into another app.** Every posted key or click checks that Dev is frontmost in the same call.
 5. **Refocus Ghostty** after every round of driving or screenshots, so Johnny sees progress: `osascript -e 'tell application id "com.mitchellh.ghostty" to activate'`.
 6. **Leave Dev as you found it:** theme, language, layout, windows, test tabs, Spaces, chats, defaults, custom shortcuts and Johnny's clipboard.

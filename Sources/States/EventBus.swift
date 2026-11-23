@@ -190,11 +190,11 @@ class EventBus {
         switch event.action {
         case .newTab(let tab):
             state.handleNewTabFromChromium(tab)
-            AgentUserSpaceDriveRegistry.shared.noteTabCreated(tabId: tab.guid, windowId: state.windowId)
+            AgentUserSpaceDriveRegistry.shared.noteTabCreated(tabId: tab.guid, windowId: state.windowId, state: state)
             AgentChatStore.shared.chatTabOpened(tab)
         case .newTabWithContext(let tab, let context):
             state.handleNewTabFromChromium(tab, context: context)
-            AgentUserSpaceDriveRegistry.shared.noteTabCreated(tabId: tab.guid, windowId: state.windowId)
+            AgentUserSpaceDriveRegistry.shared.noteTabCreated(tabId: tab.guid, windowId: state.windowId, state: state)
             AgentChatStore.shared.chatTabOpened(tab)
         case .closeTab(let tabId):
             state.closeTab(tabId)

@@ -229,13 +229,36 @@ final class MistClipboardSyncSource: ObservableObject, MistSyncSource {
 
     func cachedFileURL(for item: MistClipboardItem) throws -> URL {
         let bytes = try data(for: item)
-        let ext = item.uti.flatMap { UTType($0)?.preferredFilenameExtension } ?? "png"
-        let name = Self.safeName(item.name) ?? "\(MistSyncStrings.clipboardImage).\(ext)"
         let folder = directory.appendingPathComponent("Copied/\(item.id)", isDirectory: true)
         try removeChildren(of: directory.appendingPathComponent("Copied"), except: [item.id])
-        let url = folder.appendingPathComponent(name)
+        let url = folder.appendingPathComponent(Self.fileName(for: item))
         if !FileManager.default.fileExists(atPath: url.path) { try write(bytes, to: url) }
         return url
+    }
+
+    /// Saves the item into `folder` (Downloads) under its own name, numbered like Chromium's downloads
+    /// (`name (1).ext`) when that name is taken.
+    func download(_ item: MistClipboardItem, to folder: URL) throws -> URL {
+        let bytes = try data(for: item)
+        let name = Self.fileName(for: item) as NSString
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var index = 0
+        while true {
+            let candidate = index == 0 ? name as String
+                : "\(name.deletingPathExtension) (\(index))" + (name.pathExtension.isEmpty ? "" : ".\(name.pathExtension)")
+            let url = folder.appendingPathComponent(candidate)
+            do {
+                try bytes.write(to: url, options: .withoutOverwriting)
+                return url
+            } catch CocoaError.fileWriteFileExists {
+                index += 1
+            }
+        }
+    }
+
+    private static func fileName(for item: MistClipboardItem) -> String {
+        let ext = item.uti.flatMap { UTType($0)?.preferredFilenameExtension } ?? "png"
+        return safeName(item.name) ?? "\(MistSyncStrings.clipboardImage).\(ext)"
     }
 
     func apply(_ record: MistSyncRecord) async throws {

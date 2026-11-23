@@ -34,6 +34,7 @@ final class ClaudeCodeSession: ObservableObject, AgentChatSession {
     private var resumeMissing = false
     private var launchRequest: ClaudeCodeLaunchRequest?
     private var launchEnvironment: (@Sendable () async -> ClaudeCodeEnvironment)?
+    private var archiver: ClaudeCodeRemoteControlArchiver?
     let conversation: AgentConversation
     private(set) var transcript = ClaudeCodeTranscript()
     let settings: ClaudeCodeSessionSettings
@@ -67,12 +68,14 @@ final class ClaudeCodeSession: ObservableObject, AgentChatSession {
     }
 
     init(request: ClaudeCodeLaunchRequest, conversation: AgentConversation,
-                     environment: @escaping @Sendable () async -> ClaudeCodeEnvironment = { await ClaudeCodeEnvironment.shared.value }) {
+                     environment: @escaping @Sendable () async -> ClaudeCodeEnvironment = { await ClaudeCodeEnvironment.shared.value },
+                     archiver: ClaudeCodeRemoteControlArchiver? = nil) {
         sessionId = request.resume?.sessionId ?? UUID().uuidString
         resumeId = request.resume?.sessionId
         unconfirmedResume = resumeId != nil
         launchRequest = request
         launchEnvironment = environment
+        self.archiver = archiver
         didRequestTitle = request.resume.map { $0.sessionId != nil || !$0.items.isEmpty } ?? false
         self.conversation = conversation
         settings = ClaudeCodeSessionSettings(config: request.config)
@@ -112,14 +115,20 @@ final class ClaudeCodeSession: ObservableObject, AgentChatSession {
                 self?.fail(NSLocalizedString("browser.claudeCode.notFound", value: "Claude Code wasn't found. Install it, then try again.", comment: "Claude Code - CLI executable not installed"))
                 return
             }
+            let archiver = self?.archiver
+            let log = await archiver?.prepareLaunch(sessionId: sessionId, folder: config.folder)
+            if Task.isCancelled { archiver?.exited(sessionId); return }
+            var arguments = ClaudeCodeProtocol.arguments(sessionId: sessionId, resume: resume, launchArguments: request.launchArguments)
+            if let log { arguments += ["--debug=remote-bridge,code-session", "--debug-file", log.path] }
             // Process.run and login-shell capture never block the main actor.
             let launch = Task.detached {
                 return try ClaudeCodeProcess(executable: executable,
-                    arguments: ClaudeCodeProtocol.arguments(sessionId: sessionId, resume: resume, launchArguments: request.launchArguments),
-                    folder: config.folder, environment: resolved.variables)
+                    arguments: arguments, folder: config.folder, environment: resolved.variables,
+                    onTermination: { Task { @MainActor in archiver?.exited(sessionId) } })
             }
             do {
                 let process = try await launch.value
+                archiver?.retain(process, sessionId: sessionId)
                 guard let self, !self.closed, !Task.isCancelled else { process.terminate(); return }
                 self.process = process
                 self.onStarted?(process.processIdentifier)
@@ -134,6 +143,7 @@ final class ClaudeCodeSession: ObservableObject, AgentChatSession {
                 if request.resume == nil { self.send(text: request.prompt, attachments: request.attachments, mentions: request.mentions, sender: request.sender, initial: true) }
                 else if !self.unconfirmedResume { self.resumed() }
             } catch {
+                archiver?.exited(sessionId)
                 self?.fail(NSLocalizedString("browser.claudeCode.launchFailed", value: "Claude Code couldn't start.", comment: "Claude Code - Process launch failed") + "\n" + error.localizedDescription)
             }
         }

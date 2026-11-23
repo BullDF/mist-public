@@ -85,15 +85,23 @@ enum MistClipboardPasteboardTests {
         try MistClipboardPasteboard.copy(source.current!, source: source, to: board)
         let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as! [URL]
         try expectSync(urls.count == 1 && (try Data(contentsOf: urls[0])) == png, "Copy writes a cached file URL")
+        let downloads = root.appendingPathComponent("Downloads", isDirectory: true)
+        let first = try source.download(source.current!, to: downloads)
+        let second = try source.download(source.current!, to: downloads)
+        try expectSync(first.lastPathComponent == "File.png" && (try Data(contentsOf: first)) == png,
+                       "Download saves the file under its name")
+        try expectSync(second.lastPathComponent == "File (1).png" && (try Data(contentsOf: second)) == png,
+                       "Download numbers a taken name")
         try source.send(MistClipboardDraft(type: .image, data: png, uti: UTType.png.identifier))
         let image = source.current!
         try MistClipboardPasteboard.copy(image, source: source, to: board)
         try expectSync(board.data(forType: .png) == png && board.data(forType: .tiff) != nil, "Copy offers original image data and TIFF")
         let provider = try MistClipboardPasteboard.drag(image, source: source)
         try expectSync(provider.hasItemConformingToTypeIdentifier(UTType.png.identifier), "Image drag offers its original representation")
+        try expectSync(provider.suggestedName == "Image", "Image drag names the dropped file without the extension Finder adds")
         clock = clock.addingTimeInterval(2)
         try expectSyncThrows("Expired copy") { try MistClipboardPasteboard.copy(image, source: source, to: board) }
         try expectSyncThrows("Expired drag") { _ = try MistClipboardPasteboard.drag(image, source: source) }
-        print("Mist clipboard pasteboard checks passed: representation priority, Finder files, limits, copy, drag, and expiry")
+        print("Mist clipboard pasteboard checks passed: representation priority, Finder files, limits, copy, download, drag, and expiry")
     }
 }

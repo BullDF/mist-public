@@ -234,8 +234,8 @@ final class PhiBrowserTests: XCTestCase {
         XCTAssertEqual(item.title, NSLocalizedString("app.fileMenu.alternateNewTab", value: "Alternate New Tab",
             comment: "File menu and Shortcuts settings - Command title for opening the opposite of the configured New Tab action"))
         XCTAssertEqual(item.action, NSSelectorFromString("alternateNewTabFromMenu:"))
-        XCTAssertEqual(item.keyEquivalent, "t")
-        XCTAssertEqual(item.keyEquivalentModifierMask, [.command, .option])
+        XCTAssertEqual(item.keyEquivalent, "L")
+        XCTAssertEqual(item.keyEquivalentModifierMask, [.command])
 
         shortcutOverrides[.PHI_ALTERNATE_NEW_TAB] = .custom(.init(characters: "j", modifiers: [.control, .command]))
         AppController.installOrUpdateFileMenuItems(in: menu, target: nil)
@@ -277,8 +277,9 @@ final class PhiBrowserTests: XCTestCase {
             XCTAssertEqual(rows.count, 3)
             XCTAssertEqual(rows.map(\.title), MistAppID.allCases.map(\.name))
             XCTAssertEqual(rows.map(\.tag), [CommandWrapper.PHI_OPEN_CLIPBOARD.rawValue, CommandWrapper.PHI_OPEN_DRIFTER.rawValue, CommandWrapper.PHI_OPEN_MAIL.rawValue])
-            XCTAssertEqual(rows.map(\.keyEquivalent), ["", "D", ""])
+            XCTAssertEqual(rows.map(\.keyEquivalent), ["", "D", "M"])
             XCTAssertEqual(rows[1].keyEquivalentModifierMask, .command)
+            XCTAssertEqual(rows[2].keyEquivalentModifierMask, .command)
             let mail = try XCTUnwrap(rows.last)
             XCTAssertEqual(mail.title, "Mail")
             XCTAssertEqual(mail.tag, CommandWrapper.PHI_OPEN_MAIL.rawValue)

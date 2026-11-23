@@ -163,6 +163,13 @@ final class MistChatPanelViewController: NSViewController {
         focusAIChat()
     }
 
+    func closeChat() {
+        cancelLaunchFocus()
+        tabSelection = nil
+        guard let id = shownId else { return }
+        store.closeChat(id)
+    }
+
     /// On the new-chat screen, New Chat first.
     func openAsTab() {
         tabSelection = nil
@@ -199,14 +206,17 @@ final class MistChatPanelViewController: NSViewController {
     /// What Switch Between Chat Panel and Tab does in a window.
     enum PanelTabSwitch: Equatable {
         case showInPanel(chatId: UUID)
+        case mountToTab(chatTabId: Int)
         case openAsTab(hostTabId: Int)
     }
 
     /// Pure decision, so a test can drive it with a store.
     static func panelTabSwitch(focusedTabId: Int?, focusedChatId: UUID?, panelOpen: Bool,
                                store: AgentChatStore) -> PanelTabSwitch? {
-        if let id = focusedChatId, store.entry(for: id) != nil, store.panelHost(of: id) != nil {
-            return .showInPanel(chatId: id)
+        if let id = focusedChatId, store.entry(for: id) != nil {
+            if store.panelHost(of: id) != nil { return .showInPanel(chatId: id) }
+            // A chat tab has no Chat panel of its own, so an unmounted one offers its Mount to Tab picker.
+            if let tabId = focusedTabId { return .mountToTab(chatTabId: tabId) }
         }
         // On the new-chat screen, Open as Tab runs New Chat first.
         if let host = focusedTabId, panelOpen {
@@ -227,12 +237,31 @@ final class MistChatPanelViewController: NSViewController {
         switch panelTabSwitch(in: controller.browserState, store: store) {
         case let .showInPanel(id):
             showInOriginPanel(id, store: store)
+        case let .mountToTab(chatTabId):
+            let page = controller.mainSplitViewController.webContentContainerViewController
+                .findController(forTabId: chatTabId)?.appPageController as? AgentChatViewController
+            return page?.showMountPicker() == true
         case let .openAsTab(host):
             controller.mainSplitViewController.webContentContainerViewController
                 .findController(forTabId: host)?.openPanelChatAsTab()
         case nil:
             return false
         }
+        return true
+    }
+
+    /// The host of the panel View ▸ Close Chat acts on: the focused tab, while its Chat panel is open on a chat.
+    static func closeChatHost(in state: BrowserState, store: AgentChatStore? = nil) -> Int? {
+        guard let tab = state.focusingTab, state.canShowChatPanel(for: tab), !tab.aiChatCollapsed,
+              (store ?? .shared).hasPanelChat(tab.guid) else { return nil }
+        return tab.guid
+    }
+
+    @discardableResult
+    static func performCloseChat(in controller: SpaceSessionController) -> Bool {
+        guard let host = closeChatHost(in: controller.browserState) else { return false }
+        controller.mainSplitViewController.webContentContainerViewController
+            .findController(forTabId: host)?.closePanelChat()
         return true
     }
 
@@ -275,7 +304,8 @@ final class MistChatPanelViewController: NSViewController {
         MistChatPanelHeader(conversation: id.flatMap { store.conversation(for: $0) },
             history: store.panelChatHistory(for: host.guid), select: { [weak self] in self?.showChat($0) },
             jump: { [weak self] in self?.chatController?.revealMarker($0) },
-            open: { [weak self] in self?.openAsTab() }, new: { [weak self] in self?.newChat() }, close: { [weak self] in
+            open: { [weak self] in self?.openAsTab() }, closeChat: { [weak self] in self?.closeChat() },
+            new: { [weak self] in self?.newChat() }, close: { [weak self] in
                 guard let self, let tab = self.associatedTab else { return }
                 self.browserState?.setAIChatCollapsed(for: tab, collapsed: true)
             })
@@ -416,6 +446,7 @@ private struct MistChatPanelHeader: View {
     let select: (UUID) -> Void
     let jump: (String) -> Void
     let open: () -> Void
+    let closeChat: () -> Void
     let new: () -> Void
     let close: () -> Void
 
@@ -430,6 +461,7 @@ private struct MistChatPanelHeader: View {
             if conversation != nil {
                 if let conversation { MistChatPanelMarkerButton(conversation: conversation, jump: jump).id(conversation.id) }
                 button("arrow.up.forward.square", NSLocalizedString("browser.chatPanel.openAsTab", value: "Open as Tab", comment: "Chat panel - Open the current conversation as a full tab"), action: open)
+                button("xmark.square", NSLocalizedString("browser.chatPanel.closeChat", value: "Close Chat", comment: "Chat panel - Close the shown chat by closing its tab; the panel closes too"), action: closeChat)
             }
             button("square.and.pencil", NSLocalizedString("browser.chatPanel.newChat", value: "New Chat", comment: "Start a new conversation: the Chat panel's and the Drifter home page's button, and the description of the /clear command in agent chats"), action: new)
             button("xmark", NSLocalizedString("browser.chatPanel.close", value: "Close Panel", comment: "Chat panel - Hide the panel without ending the conversation"), action: close)

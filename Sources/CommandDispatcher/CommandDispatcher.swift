@@ -19,6 +19,9 @@ struct CommandDispatcher {
         .PHI_DRIFTER_PREVIOUS_MARKER,
         .PHI_DRIFTER_NEXT_MARKER,
         .PHI_SWITCH_CHAT_PANEL_AND_TAB,
+        .PHI_SET_START_PAGE,
+        .PHI_RETURN_TO_START_PAGE,
+        .PHI_CLOSE_PANEL_CHAT,
     ]
 
     /// Commands swallowed while the focused tab shows the native NTP — it has no
@@ -86,6 +89,10 @@ struct CommandDispatcher {
         switch command {
         case .PHI_SWITCH_CHAT_PANEL_AND_TAB:
             return MistChatPanelViewController.performPanelTabSwitch(in: windowController)
+        case .PHI_SET_START_PAGE, .PHI_RETURN_TO_START_PAGE:
+            return windowController.browserState.performStartPageCommand(command)
+        case .PHI_CLOSE_PANEL_CHAT:
+            return MistChatPanelViewController.performCloseChat(in: windowController)
         case .PHI_DRIFTER_MODEL_MENU, .PHI_DRIFTER_EFFORT_MENU:
             guard let row = MistDrifterLaunchRow.focused(in: window) else { return false }
             row.showPicker(command == .PHI_DRIFTER_MODEL_MENU ? .model : .effort)
@@ -347,6 +354,12 @@ struct CommandDispatcher {
         // Elsewhere the keys stay with the page.
         if command == .PHI_SWITCH_CHAT_PANEL_AND_TAB {
             return MistChatPanelViewController.panelTabSwitch(in: controller.browserState) != nil
+        }
+        if command == .PHI_SET_START_PAGE || command == .PHI_RETURN_TO_START_PAGE {
+            return controller.browserState.startPageCommandTab(command) != nil
+        }
+        if command == .PHI_CLOSE_PANEL_CHAT {
+            return MistChatPanelViewController.closeChatHost(in: controller.browserState) != nil
         }
         if command == .PHI_DRIFTER_PREVIOUS_MARKER || command == .PHI_DRIFTER_NEXT_MARKER {
             if case let .app(page) = nativePage(in: controller), page is AgentChatViewController { return true }

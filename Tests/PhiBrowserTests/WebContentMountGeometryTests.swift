@@ -189,6 +189,36 @@ final class WebContentMountGeometryTests: XCTestCase {
         XCTAssertEqual(tallestStrip, 0, "uncovered strip above the web view")
     }
 
+    func testWebPanelSizeWithoutChatPanelStaysAtCollapsedSize() throws {
+        let restorePreferences = pinAIChatPreferences()
+        defer { restorePreferences() }
+        let fixture = try makeFixture()
+        let controller = try XCTUnwrap(fixture.container.children
+            .compactMap { $0 as? WebContentViewController }.first)
+        let chat = try chatItem(of: controller)
+        XCTAssertTrue(chat.isCollapsed)
+        let collapsedSize = controller.webPanelSize
+        XCTAssertEqual(controller.webPanelSizeWithoutChatPanel, collapsedSize)
+
+        for collapsed in [false, true] {
+            fixture.state.setAIChatCollapsed(for: fixture.tabs[0], collapsed: collapsed)
+            let deadline = Date().addingTimeInterval(0.5)
+            repeat {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+                fixture.window.contentView?.layoutSubtreeIfNeeded()
+                let size = controller.webPanelSizeWithoutChatPanel
+                XCTAssertEqual(size.width, collapsedSize.width, accuracy: 1)
+                XCTAssertEqual(size.height, collapsedSize.height, accuracy: 1)
+            } while Date() < deadline
+            XCTAssertEqual(chat.isCollapsed, collapsed)
+            if collapsed {
+                XCTAssertEqual(controller.webPanelSize, collapsedSize)
+            } else {
+                XCTAssertLessThan(controller.webPanelSize.width, collapsedSize.width)
+            }
+        }
+    }
+
     /// While the extension side panel slides in and out, the page's web view
     /// follows the page area on every frame, as it does for AI Chat.
     func testExtensionSidePanelSlidesResizeThePageOnEveryFrame() throws {

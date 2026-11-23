@@ -101,7 +101,7 @@ enum AgentChatToolGroupKind: Hashable {
     case read, search, shell, fetch, web, memory, recall, sleep, imageGeneration
     case browserRead, browserScreenshot, browserClick, browserDrag, browserHover, browserType, browserKey, browserOption, browserSelectText, browserUpload, browserOpen, browserReload
     case browserScroll, browserWait, browserDialog, browserTabs, browserGroup, browserConnect, browserClose, browserScript, browserLogs, browserDownloads, browserHistory, pagesSaved
-    case screenshotsSaved
+    case screenshotsSaved, recordingStarted, recordingsSaved, bookmarksExported, chatMounted, chatUnmounted
     case monitor, stopTask, toolSearch, skill, message, agents, code
     case spawnAgent, readAgent, stopAgent, closeAgent, mailList, mailSearch, mailRead, mailDraft, mailSend, mailChange
     case slackRead, slackSearch, slackSend, slackChange
@@ -120,6 +120,7 @@ enum AgentChatToolGroupKind: Hashable {
         case .shell: "terminal"
         case .fetch, .web, .browserOpen, .browserRead, .browserTabs, .browserConnect, .browserClose, .browserReload: "globe"
         case .browserScreenshot, .screenshotsSaved: "camera.viewfinder"
+        case .recordingStarted, .recordingsSaved: "record.circle"
         case .browserClick: "cursorarrow.click"
         case .browserDrag: "hand.draw"
         case .browserGroup: "rectangle.stack"
@@ -128,6 +129,9 @@ enum AgentChatToolGroupKind: Hashable {
         case .browserDownloads: "arrow.down.circle"
         case .browserHistory: "clock.arrow.circlepath"
         case .pagesSaved: "square.and.arrow.down"
+        case .bookmarksExported: "square.and.arrow.up"
+        case .chatMounted: "link.badge.plus"
+        case .chatUnmounted: "personalhotspot.slash"
         case .browserHover: "cursorarrow.motionlines"
         case .browserType, .browserKey: "keyboard"
         case .browserOption: "filemenu.and.selection"
@@ -202,7 +206,12 @@ enum AgentChatToolGroupKind: Hashable {
         case "mcp__mistbrowser__wait_for": self = .browserWait
         case "mcp__mistbrowser__handle_dialog": self = .browserDialog
         case "mcp__mistbrowser__save_screenshot": self = .screenshotsSaved
+        case "mcp__mistbrowser__start_recording": self = .recordingStarted
+        case "mcp__mistbrowser__stop_recording": self = .recordingsSaved
         case "mcp__mistbrowser__save_page": self = .pagesSaved
+        case "mcp__mistbrowser__export_bookmarks": self = .bookmarksExported
+        case "mcp__mistbrowser__mount_to_tab": self = .chatMounted
+        case "mcp__mistbrowser__unmount_from_tab": self = .chatUnmounted
         case "mcp__mistbrowser__list_downloads": self = .browserDownloads
         case "mcp__mistbrowser__search_history": self = .browserHistory
         case "mcp__mistbrowser__list_tabs": self = .browserTabs
@@ -233,12 +242,12 @@ enum AgentChatToolGroupKind: Hashable {
         case "ToolSearch": self = .toolSearch
         case "Skill": self = .skill
         case "LSP": self = .code
-        case "CronCreate": self = .scheduleTask
-        case "CronDelete": self = .cancelScheduledTask
-        case "CronList": self = .scheduledTasks
+        case "CronCreate", "mcp__mistbrowser__schedule_prompt": self = .scheduleTask
+        case "CronDelete", "mcp__mistbrowser__cancel_schedule": self = .cancelScheduledTask
+        case "CronList", "mcp__mistbrowser__list_schedules": self = .scheduledTasks
         case "ScheduleWakeup": self = .wakeup
         case "EnterPlanMode": self = .planMode
-        case "PushNotification": self = .notification
+        case "PushNotification", "mcp__mistbrowser__notify": self = .notification
         case "ListMcpResourcesTool": self = .mcpResources
         case "ReadMcpResourceTool", "ReadMcpResourceDirTool": self = .mcpResource
         default: self = .tool(name)
@@ -270,11 +279,19 @@ enum AgentChatToolGroupKind: Hashable {
 
     static func summary(_ tools: [AgentChatItem.ToolCall], memory: AgentMemoryFiles = .none,
                         cwd: URL = FileManager.default.homeDirectoryForCurrentUser) -> ClaudeCodeToolSummary.Line {
-        if tools.count == 1, let tool = tools.first,
-           let header = ClaudeCodeToolSummary.browserTool(tool.name,
-               input: (try? JSONDecoder().decode(ClaudeCodeJSON.self, from: Data(tool.inputJSON.utf8))) ?? .null,
-               running: tool.status == .running, failed: tool.status == .failed || tool.permissionDenied) {
-            return .init(header)
+        if tools.count == 1, let tool = tools.first {
+            let input = (try? JSONDecoder().decode(ClaudeCodeJSON.self, from: Data(tool.inputJSON.utf8))) ?? .null
+            switch Self(tool.name) {
+            case .bookmarksExported, .chatMounted, .chatUnmounted:
+                return ClaudeCodeToolSummary.format(tool: tool.name, input: input, result: tool.structuredResult,
+                    text: tool.output, folder: cwd, failed: tool.status == .failed,
+                    denied: tool.permissionDenied, running: tool.status == .running).header
+            default:
+                if let header = ClaudeCodeToolSummary.browserTool(tool.name, input: input,
+                    running: tool.status == .running, failed: tool.status == .failed || tool.permissionDenied) {
+                    return .init(header)
+                }
+            }
         }
         if !tools.isEmpty, tools.allSatisfy({ mailTools.contains($0.name) && ($0.status == .failed || $0.permissionDenied) }) {
             return .init(String.localizedStringWithFormat(NSLocalizedString("browser.agentChat.toolGroup.mailFailed", value: "Couldn't complete %d mail actions", comment: "Every mail action failed or was denied"), tools.count))

@@ -12,7 +12,7 @@ enum MistComposerIcon: Equatable {
         switch self {
         case let .asset(name):
             if let image = NSImage(named: name)?.copy() as? NSImage {
-                image.isTemplate = name == "agent-openai"
+                image.isTemplate = AgentChatIcon(rawValue: name)?.isTemplate ?? false
                 return image
             }
             return nil

@@ -127,6 +127,8 @@ final class MailStore {
         }
     }
     func save(_ account: MailAccount) throws {
+        var account = account
+        account.config.signatureHTML = MailAccountConfig.normalizedSignature(account.config.signatureHTML)
         try db.execute("INSERT INTO accounts VALUES (?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", [.text(account.id.uuidString), .blob(try encoder.encode(account))])
     }
     func accounts() throws -> [MailAccount] { try decodeRows("SELECT payload FROM accounts").sorted { ($0.config.sortOrder, $0.id.uuidString) < ($1.config.sortOrder, $1.id.uuidString) } }

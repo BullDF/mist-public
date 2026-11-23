@@ -92,6 +92,8 @@ enum AgentChatStrings {
     }
     static var removeMention: String { NSLocalizedString("browser.agentChat.removeMention", value: "Remove tab mention", comment: "Mention banner - Remove every mention of this tab from the draft") }
     static func browserPermission(_ request: AgentChatItem.PermissionRequest) -> (title: String, detail: String?, message: String?)? {
+        // Some providers supply only a human-readable summary of the call.
+        guard request.input != .null else { return nil }
         guard request.toolName.hasPrefix("mcp__mistbrowser__"), DrifterBackgroundTools.nativeName(request.toolName) == request.toolName else { return nil }
         let tool = String(request.toolName.dropFirst("mcp__mistbrowser__".count))
         let url = request.input["url"].string ?? ""
@@ -178,6 +180,12 @@ enum AgentChatStrings {
         case "spawn_agent":
             action = NSLocalizedString("browser.agent.permission.spawnAgent", value: "start a chat", comment: "Browser tool permission action phrase: start a child chat")
             detail = [request.input["title"].string, request.input["brief"].string].compactMap { $0 }.joined(separator: "\n\n")
+        case "schedule_prompt":
+            action = NSLocalizedString("browser.agent.permission.schedulePrompt", value: "schedule a prompt", comment: "Permission action phrase for scheduling a Drifter prompt")
+            detail = [request.input["title"].string, request.input["prompt"].string].compactMap { $0 }.joined(separator: "\n\n")
+        case "cancel_schedule":
+            action = String(format: NSLocalizedString("browser.agent.permission.cancelSchedule", value: "cancel schedule %@", comment: "Permission action phrase; %@ is the schedule ID"), request.input["schedule_id"].string ?? "")
+            detail = nil
         case "stop_agent":
             action = String(format: NSLocalizedString("browser.agent.permission.stopAgent", value: "stop %@", comment: "Browser tool permission action phrase; %@ is a child chat's ID"), request.input["id"].string ?? "")
             detail = nil
@@ -242,6 +250,12 @@ enum AgentChatStrings {
         case "save_screenshot":
             action = NSLocalizedString("browser.agent.permission.saveScreenshot", value: "save a screenshot", comment: "Browser tool permission action phrase")
             detail = request.input["path"].string
+        case "export_bookmarks":
+            action = NSLocalizedString("browser.agent.permission.exportBookmarks", value: "export bookmarks", comment: "Browser tool permission action phrase")
+            detail = request.input["path"].string ?? request.input["space"].string
+        case "start_recording":
+            action = NSLocalizedString("browser.agent.permission.startRecording", value: "record this tab", comment: "Browser tool permission action phrase")
+            detail = request.input["path"].string
         case "upload_files":
             action = NSLocalizedString("browser.agent.permission.upload", value: "upload files", comment: "Browser tool permission action phrase")
             detail = request.input["paths"].array.compactMap(\.string).joined(separator: "\n")
@@ -298,6 +312,11 @@ enum AgentChatStrings {
             case .browserRead: format = NSLocalizedString("browser.agentChat.toolGroup.browserRead.running", value: count == 1 ? "reading %d page" : "reading %d pages", comment: "Grouped tools currently running; number of operations")
             case .browserScreenshot: format = NSLocalizedString("browser.agentChat.toolGroup.browserScreenshot.running", value: count == 1 ? "capturing %d screenshot" : "capturing %d screenshots", comment: "Grouped tools currently running: page screenshots being captured; part of a comma-separated summary")
             case .screenshotsSaved: format = NSLocalizedString("browser.agentChat.toolGroup.screenshotsSaved.running", value: count == 1 ? "saving %d screenshot" : "saving %d screenshots", comment: "Grouped screenshot saves running; number of screenshots")
+            case .bookmarksExported: format = NSLocalizedString("browser.agentChat.toolGroup.bookmarksExported.running", value: count == 1 ? "exporting bookmarks %d time" : "exporting bookmarks %d times", comment: "Grouped bookmark exports in progress; number of exports")
+            case .chatMounted: format = NSLocalizedString("browser.agentChat.toolGroup.chatMounted.running", value: count == 1 ? "mounting to a tab %d time" : "mounting to a tab %d times", comment: "Grouped chat mounts in progress; number of mounts")
+            case .chatUnmounted: format = NSLocalizedString("browser.agentChat.toolGroup.chatUnmounted.running", value: count == 1 ? "unmounting from a tab %d time" : "unmounting from a tab %d times", comment: "Grouped chat unmounts in progress; number of unmounts")
+            case .recordingStarted: format = NSLocalizedString("browser.agentChat.toolGroup.recordingStarted.running", value: count == 1 ? "starting %d recording" : "starting %d recordings", comment: "Grouped tab recordings starting; number of recordings")
+            case .recordingsSaved: format = NSLocalizedString("browser.agentChat.toolGroup.recordingsSaved.running", value: count == 1 ? "saving %d recording" : "saving %d recordings", comment: "Grouped tab recording saves running; number of recordings")
             case .browserClick: format = NSLocalizedString("browser.agentChat.toolGroup.browserClick.running", value: count == 1 ? "clicking %d element" : "clicking %d elements", comment: "Grouped tools currently running; number of operations")
             case .browserDrag: format = NSLocalizedString("browser.agentChat.toolGroup.browserDrag.running", value: count == 1 ? "dragging %d element" : "dragging %d elements", comment: "Grouped tools currently running: elements being dragged with the mouse on a web page; part of a comma-separated summary")
             case .browserType: format = NSLocalizedString("browser.agentChat.toolGroup.browserType.running", value: count == 1 ? "entering text %d time" : "entering text %d times", comment: "Grouped tools currently running; number of operations")
@@ -369,6 +388,11 @@ enum AgentChatStrings {
         case .browserRead: format = NSLocalizedString("browser.agentChat.toolGroup.browserRead", value: count == 1 ? "read %d page" : "read %d pages", comment: "Grouped browser tools completed; number of operations")
         case .browserScreenshot: format = NSLocalizedString("browser.agentChat.toolGroup.browserScreenshot", value: count == 1 ? "captured %d screenshot" : "captured %d screenshots", comment: "Grouped tools completed: page screenshots captured; part of a comma-separated summary")
         case .screenshotsSaved: format = NSLocalizedString("browser.agentChat.toolGroup.screenshotsSaved", value: count == 1 ? "saved %d screenshot" : "saved %d screenshots", comment: "Grouped screenshot saves completed; number of screenshots")
+        case .bookmarksExported: format = NSLocalizedString("browser.agentChat.toolGroup.bookmarksExported", value: count == 1 ? "exported bookmarks %d time" : "exported bookmarks %d times", comment: "Grouped bookmark exports completed; number of exports")
+        case .chatMounted: format = NSLocalizedString("browser.agentChat.toolGroup.chatMounted", value: count == 1 ? "mounted to a tab %d time" : "mounted to a tab %d times", comment: "Grouped chat mounts completed; number of mounts")
+        case .chatUnmounted: format = NSLocalizedString("browser.agentChat.toolGroup.chatUnmounted", value: count == 1 ? "unmounted from a tab %d time" : "unmounted from a tab %d times", comment: "Grouped chat unmounts completed; number of unmounts")
+        case .recordingStarted: format = NSLocalizedString("browser.agentChat.toolGroup.recordingStarted", value: count == 1 ? "started %d recording" : "started %d recordings", comment: "Grouped tab recordings started; number of recordings")
+        case .recordingsSaved: format = NSLocalizedString("browser.agentChat.toolGroup.recordingsSaved", value: count == 1 ? "saved %d recording" : "saved %d recordings", comment: "Grouped tab recording saves completed; number of recordings")
         case .browserClick: format = NSLocalizedString("browser.agentChat.toolGroup.browserClick", value: count == 1 ? "clicked %d element" : "clicked %d elements", comment: "Grouped browser tools completed; number of operations")
         case .browserDrag: format = NSLocalizedString("browser.agentChat.toolGroup.browserDrag", value: count == 1 ? "dragged %d element" : "dragged %d elements", comment: "Grouped tools completed: elements dragged with the mouse on a web page; part of a comma-separated summary")
         case .browserType: format = NSLocalizedString("browser.agentChat.toolGroup.browserType", value: count == 1 ? "entered text %d time" : "entered text %d times", comment: "Grouped browser tools completed; number of operations")
@@ -513,6 +537,14 @@ enum AgentChatStrings {
             }
             return String.localizedStringWithFormat(format, count)
         }.joined(separator: " · ")
+    }
+    static func scheduleCount(_ count: Int) -> String {
+        let format = NSLocalizedString("browser.agentChat.background.schedules", value: count == 1 ? "%d schedule" : "%d schedules",
+                                       comment: "Number of scheduled prompts for this chat")
+        return String.localizedStringWithFormat(format, count)
+    }
+    static var cancelSchedule: String {
+        NSLocalizedString("browser.agentChat.background.cancelSchedule", value: "Cancel", comment: "Button or menu item that cancels a scheduled prompt")
     }
     static var settingFailed: String { NSLocalizedString("browser.agentChat.settingFailed", value: "Couldn't change this chat setting.", comment: "Fallback error notice when the CLI rejects a session setting without a message") }
     static func toolWrote(_ count: Int) -> String { NSLocalizedString("browser.agentChat.tool.wrote", value: count == 1 ? "Wrote %1$d line to %2$@" : "Wrote %1$d lines to %2$@", comment: "Tool summary: %1$d is the number of lines; %2$@ is the file path") }

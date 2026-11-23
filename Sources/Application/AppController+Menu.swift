@@ -365,7 +365,7 @@ extension AppController {
         }
     }
 
-    /// Enforce released native keys and reserve Tab Search's chord without changing the
+    /// Enforce released native keys and reserve Tab Search's and Mail's chords without changing the
     /// user's Services preferences or removing the service's menu action.
     func startObservingServiceShortcuts() {
         let center = NotificationCenter.default
@@ -406,8 +406,10 @@ extension AppController {
             ? (item.copy() as? NSMenuItem ?? item) : item
         let key = ShortcutsKey(characters: declared.keyEquivalent,
                                modifiers: declared.keyEquivalentModifierMask)
-        let reserved = ShortcutsKey(characters: "a", modifiers: [.command, .shift])
-        guard key.menuKeyEquivalent == reserved.menuKeyEquivalent else { return }
+        // Terminal's man page Services claim ⇧⌘A (Tab Search) and ⇧⌘M (Mail).
+        let reserved = [ShortcutsKey(characters: "a", modifiers: [.command, .shift]),
+                        ShortcutsKey(characters: "m", modifiers: [.command, .shift])]
+        guard reserved.contains(where: { $0.menuKeyEquivalent == key.menuKeyEquivalent }) else { return }
         // Explicitly clear the declared key too, so detached inventory copies
         // cannot restore it. Reentrant change notifications see an empty key.
         item.keyEquivalent = ""
@@ -456,6 +458,7 @@ extension AppController {
                     item.tag == CommandWrapper.PHI_TOGGLE_SIDEBAR.rawValue ||
                     item.tag == CommandWrapper.PHI_TOGGLE_CHATBAR.rawValue ||
                     item.tag == CommandWrapper.PHI_SWITCH_CHAT_PANEL_AND_TAB.rawValue ||
+                    item.tag == CommandWrapper.PHI_CLOSE_PANEL_CHAT.rawValue ||
                     item.tag == CommandWrapper.PHI_NEW_CONVERSATION.rawValue ||
                     item.tag == CommandWrapper.PHI_TOGGLE_READER.rawValue ||
                     item.tag == AppController.viewLibraryItemTag ||
@@ -566,6 +569,13 @@ extension AppController {
                 switchChatPanelAndTabItem.target = self
                 submenu.addItem(switchChatPanelAndTabItem)
 
+                let closeChatItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.closeChat", value: "Close Chat", comment: "View menu and shortcuts - Close the chat the focused tab's chat panel shows, with its tab; the panel closes too"),
+                                               action: #selector(closePanelChat(_:)),
+                                               keyEquivalent: "")
+                applyEffectiveShortcut(.PHI_CLOSE_PANEL_CHAT, to: closeChatItem)
+                closeChatItem.target = self
+                submenu.addItem(closeChatItem)
+
                 let newConversationItem = NSMenuItem(title: NSLocalizedString("app.viewMenu.newConversation", value: "New Chat", comment: "View menu - Menu item to start a new Browser Agent chat in the chat panel"),
                                                    action: #selector(newConversation(_:)),
                                                    keyEquivalent: "o")
@@ -672,6 +682,7 @@ extension AppController {
                     }
                 }
                 Self.applyNewTabOrientation(in: subMenu)
+                installOrUpdateStartPageMenuItems(in: subMenu)
             } else
 
             if menuRole == .help, let subMenu = menuItem.submenu {
@@ -818,6 +829,35 @@ extension AppController {
         let vertical = !layoutMode.isTraditional
         items[0].isHidden = vertical
         items[1].isHidden = !vertical
+    }
+
+    /// A grouped tab's start page commands, after Chromium's Mute Site, Pin Tab and Group Tab rows. Sidebar layouts
+    /// only, like the tab context menu: the horizontal strip shows no start page. Remove-then-insert keeps this
+    /// idempotent across menu rebuilds.
+    private func installOrUpdateStartPageMenuItems(
+        in tabMenu: NSMenu,
+        layoutMode: LayoutMode = PhiPreferences.GeneralSettings.loadLayoutMode()
+    ) {
+        let commands: [CommandWrapper] = [.PHI_RETURN_TO_START_PAGE, .PHI_SET_START_PAGE]
+        tabMenu.items.removeAll { item in commands.contains { $0.rawValue == item.tag } }
+        let anchorTags = [CommandWrapper.IDC_WINDOW_MUTE_SITE, .IDC_WINDOW_PIN_TAB, .IDC_WINDOW_GROUP_TAB].map(\.rawValue)
+        var index = tabMenu.items.lastIndex { anchorTags.contains($0.tag) }.map { $0 + 1 } ?? tabMenu.items.count
+        for command in commands {
+            let title = command == .PHI_SET_START_PAGE
+                ? NSLocalizedString("app.tabMenu.setStartPage", value: "Set Current Page as Start Page", comment: "Tab menu and shortcuts - Remember the focused grouped tab's current page as its start page")
+                : NSLocalizedString("app.tabMenu.returnToStartPage", value: "Return to Start Page", comment: "Tab menu and shortcuts - Take the focused grouped tab back to its start page")
+            let item = NSMenuItem(title: title, action: #selector(performStartPageCommandFromMenu(_:)), keyEquivalent: "")
+            applyEffectiveShortcut(command, to: item)
+            item.target = self
+            item.isHidden = layoutMode.isTraditional
+            tabMenu.insertItem(item, at: index)
+            index += 1
+        }
+    }
+
+    @MainActor @objc func performStartPageCommandFromMenu(_ sender: NSMenuItem) {
+        guard let command = CommandWrapper(rawValue: sender.tag) else { return }
+        SpaceSessionControllersManager.shared.getActiveWindowState()?.performStartPageCommand(command)
     }
 
     static func installOrUpdateFileMenuItems(
@@ -1260,6 +1300,11 @@ extension AppController {
         MistChatPanelViewController.performPanelTabSwitch(in: controller)
     }
 
+    @MainActor @objc func closePanelChat(_ sender: Any?) {
+        guard let controller = SpaceSessionControllersManager.shared.activeWindowController else { return }
+        MistChatPanelViewController.performCloseChat(in: controller)
+    }
+
     /// Starts a new native chat in the focused page's panel.
     @MainActor
     @objc func newConversation(_ sender: Any?) {
@@ -1378,32 +1423,8 @@ extension AppController {
             // Read the tree and pinned collection at confirmation time, not
             // when the sheet was presented — edits made while the panel was
             // open must export.
-            let bookmarks = state.bookmarkManager.rootFolder.children
-            let pinnedTabs = state.pinnedTabs
-            guard BookmarkHTMLExporter.hasExportableContent(bookmarks: bookmarks,
-                                                            pinnedTabs: pinnedTabs) else { return }
-            // Serialize on the main thread (the Bookmark tree is main-thread
-            // state), but write off it — the destination may be a slow
-            // network or cloud volume and must not block the UI.
-            let html = BookmarkHTMLExporter.htmlDocument(
-                for: bookmarks,
-                pinnedTabs: pinnedTabs,
-                favoritesFolderTitle: NSLocalizedString("app.bookmarkExport.exportedFolderName", value: "Favorites",
-                    comment: "Bookmark export - name of the exported folder carrying the window's pinned tabs"))
-            AppController.inFlightBookmarkExportWrites += 1
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = Result { try Data(html.utf8).write(to: url, options: .atomic) }
-                DispatchQueue.main.async {
-                    AppController.inFlightBookmarkExportWrites -= 1
-                    // Resume termination before handling the result: when a
-                    // quit is parked on this write, a failure is deliberately
-                    // silent (log only) — quitting must not stay blocked on
-                    // an alert nobody will see.
-                    if AppController.bookmarkExportTerminationPending {
-                        MainActor.assumeIsolated {
-                            AppController.shared.resumeTerminationAfterConfirmedExports()
-                        }
-                    }
+            MainActor.assumeIsolated {
+                try? BookmarkHTMLExporter.export(from: state, to: url, overwrite: true) { result in
                     if case .failure(let error) = result {
                         AppLogError("Bookmark export failed: \(error.localizedDescription)")
                         let alert = NSAlert()
@@ -2712,6 +2733,15 @@ extension AppController {
             return SpaceSessionControllersManager.shared.getActiveWindowState().map { state in
                 MainActor.assumeIsolated { MistChatPanelViewController.panelTabSwitch(in: state) != nil }
             } ?? false
+        }
+        if item.action == #selector(closePanelChat(_:)) {
+            return SpaceSessionControllersManager.shared.getActiveWindowState().map { state in
+                MainActor.assumeIsolated { MistChatPanelViewController.closeChatHost(in: state) != nil }
+            } ?? false
+        }
+        if item.action == #selector(performStartPageCommandFromMenu(_:)) {
+            guard let command = (item as? NSMenuItem).flatMap({ CommandWrapper(rawValue: $0.tag) }) else { return false }
+            return SpaceSessionControllersManager.shared.getActiveWindowState()?.startPageCommandTab(command) != nil
         }
 
         // New Conversation only applies while focus is inside the AI sidebar;
