@@ -17,6 +17,10 @@ import SwiftUI
     }
     @Published var historyLimit = DrifterHomeList.historyPageSize
     @Published var focusSearch = false
+    /// How long the page must stay hidden before showing it again clears the search; a quick return (a wrong chat
+    /// opened from the results) keeps it.
+    static let searchResetDelay: TimeInterval = 60
+    private var hiddenAt: Date?
 
     private let historyReader: DrifterHomeHistoryReader
     private var rawHistory: [AgentChatHistory.Chat] = []
@@ -35,6 +39,16 @@ import SwiftUI
     init(store: AgentChatStore) {
         self.store = store
         historyReader = DrifterHomeHistoryReader(route: store.route)
+    }
+
+    /// The page left the screen (its tab was switched away or closed).
+    func pageDidHide(at now: Date = Date()) { hiddenAt = now }
+
+    /// The page is about to show: clears the search if it was hidden `searchResetDelay` or longer, and starts the next
+    /// absence from zero either way.
+    func pageWillShow(at now: Date = Date()) {
+        if let hiddenAt, now.timeIntervalSince(hiddenAt) >= Self.searchResetDelay { query = "" }
+        hiddenAt = nil
     }
 
     var visibleHistory: (rows: [AgentChatHistory.Chat], hasMore: Bool) {

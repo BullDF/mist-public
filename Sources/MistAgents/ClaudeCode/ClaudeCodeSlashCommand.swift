@@ -67,12 +67,17 @@ struct ClaudeCodeSlashQuery: Equatable {
 
     /// AppKit caret positions are UTF-16 offsets, not Swift character offsets.
     static func at(_ selection: NSRange, in text: String) -> Self? {
+        at(selection, in: text, tokens: ClaudeCodeSlashTokenizer.tokens(in: text))
+    }
+
+    /// `tokens` are `text`'s, already scanned.
+    static func at(_ selection: NSRange, in text: String, tokens: [ClaudeCodeSlashTokenizer.Token]) -> Self? {
+        let length = text.utf16.count
         guard selection.length == 0, selection.location >= 1,
-              selection.location != NSNotFound,
-              selection.location == text.utf16.count || text.indices.contains(where: {
-                  $0.utf16Offset(in: text) == selection.location
-              }) else { return nil }
-        for token in ClaudeCodeSlashTokenizer.tokens(in: text) {
+              selection.location != NSNotFound, selection.location <= length,
+              selection.location == length || String.Index(utf16Offset: selection.location, in: text).samePosition(in: text) != nil
+        else { return nil }
+        for token in tokens {
             let range = token.range
             guard selection.location > range.location, selection.location <= NSMaxRange(range),
                   let start = Range(range, in: text)?.lowerBound,

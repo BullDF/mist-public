@@ -17,6 +17,8 @@ enum DrifterConfirmation: String, Codable, CaseIterable {
         if ["finish_task", "stop_task", "group_tabs", "hand_off", "notify", "stop_recording", "mount_to_tab", "unmount_from_tab"]
             .contains(where: { tool == "mcp__mistbrowser__" + $0 }) { return true }
         if tool == "mcp__mistbrowser__send_mail" || DrifterSlackTools.alwaysConfirm.contains(where: { tool == "mcp__mistbrowser__" + $0 }) { return false }
+        // The claude.ai Artifact tools' publish consent is a yes or no, not an answer, so it follows the chat's mode.
+        if DrifterLaunchRequest.artifactTools.contains(tool) { return self == .skip }
         guard !requiresInteraction else { return false }
         if ["Read", "Glob", "Grep"].contains(tool) { return true }
         if DrifterSlackTools.readOnly.contains(where: { tool == "mcp__mistbrowser__" + $0 }) { return true }

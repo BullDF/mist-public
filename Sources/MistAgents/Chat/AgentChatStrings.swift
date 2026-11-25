@@ -558,6 +558,9 @@ enum AgentChatStrings {
     static var toolMore: String { NSLocalizedString("browser.agentChat.tool.more", value: "… +%d lines (click to expand)", comment: "Tool output: %d is the number of hidden lines; clicking toggles the full output") }
     static var image: String { NSLocalizedString("browser.agentChat.image", value: "Image", comment: "Agent chat - image") }
     static var copyMessage: String { NSLocalizedString("browser.agentChat.copyMessage", value: "Copy message", comment: "Agent chat - Copy button beside the user's own message, accessibility label and tooltip") }
+    static func copiedCharacters(_ count: Int) -> String {
+        String(format: NSLocalizedString("browser.agentChat.copiedCharacters", value: "Copied %d characters", comment: "Agent chat - Toast after text selected in the transcript is copied to the clipboard; %d is the number of characters copied"), count)
+    }
     static var unavailable: String { NSLocalizedString("browser.agentChat.unavailable", value: "This chat can't be restored.", comment: "Agent chat - Shown for a chat tab whose saved transcript is missing") }
     static func workingWord(_ index: Int) -> String {
         let words = ["Lollygagging", "Pondering", "Noodling", "Mulling", "Tinkering", "Percolating", "Ruminating", "Brewing", "Musing", "Puttering", "Cogitating", "Simmering"]

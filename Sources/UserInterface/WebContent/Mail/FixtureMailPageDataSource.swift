@@ -17,6 +17,9 @@ final class FixtureMailPageDataSource: MailPageDataSource {
     private(set) var loadOlderCalls = 0
     private(set) var serverSearches: [UUID] = []
     private(set) var openCalls: [UUID] = []
+    private(set) var lastOperationID: UUID?
+    private enum UndoChange { case flag(String, [UUID: Bool]), move(UUID, from: UUID) }
+    private var undoChanges: [UUID: UndoChange] = [:]
 
     init(empty: Bool = false) {
         let signature = "<div>Best,</div><div style=\"font-family: Georgia, serif; color: #265a87\">Example Sender</div>"
@@ -99,12 +102,20 @@ final class FixtureMailPageDataSource: MailPageDataSource {
     }
     func searchServer(_ query: String, mailbox: UUID) async throws { serverSearches.append(mailbox) }
     func markAllRead(_ mailboxIDs: [UUID]) async throws -> [UUID] {
-        for id in Array(details.keys) where mailboxIDs.contains(details[id]!.summary.mailboxID) {
-            details[id]!.summary.flags.insert(MailFlags.seen)
-            details[id]!.headers.flags.insert(MailFlags.seen)
+        var operations: [UUID] = []
+        for mailboxID in Set(mailboxIDs) {
+            let unread = details.values.filter { $0.summary.mailboxID == mailboxID && !$0.summary.flags.contains(MailFlags.seen) }
+            guard !unread.isEmpty else { continue }
+            for value in unread {
+                details[value.summary.id]?.summary.flags.insert(MailFlags.seen)
+                details[value.summary.id]?.headers.flags.insert(MailFlags.seen)
+            }
+            let operation = UUID()
+            undoChanges[operation] = .flag(MailFlags.seen, Dictionary(uniqueKeysWithValues: unread.map { ($0.summary.id, false) }))
+            operations.append(operation)
         }
         updateCounts(); emit(.messagesChanged(Set(mailboxIDs))); emit(.unreadCountsChanged(state.unread))
-        return mailboxIDs.map { _ in UUID() }
+        return operations
     }
     func canArchive(_ id: UUID) async -> Bool {
         guard let value = details[id]?.summary, let account = state.accounts.first(where: { $0.id == value.accountID }) else { return false }
@@ -119,11 +130,15 @@ final class FixtureMailPageDataSource: MailPageDataSource {
     func drafts() async throws -> [MailDraft] { Array(draftValues.values) }
     func perform(_ action: MailPageAction, on id: UUID) async throws -> UUID {
         guard var value = details[id] else { throw MailError.notFound }
-        let box = value.summary.mailboxID
+        let box = value.summary.mailboxID, operation = UUID()
         var destination: UUID?
         switch action {
-        case .seen(let seen): if seen { value.summary.flags.insert(MailFlags.seen) } else { value.summary.flags.remove(MailFlags.seen) }
-        case .flagged(let flag): if flag { value.summary.flags.insert(MailFlags.flagged) } else { value.summary.flags.remove(MailFlags.flagged) }
+        case .seen(let seen):
+            undoChanges[operation] = .flag(MailFlags.seen, [id: value.summary.flags.contains(MailFlags.seen)])
+            setFlag(MailFlags.seen, seen, on: &value)
+        case .flagged(let flag):
+            undoChanges[operation] = .flag(MailFlags.flagged, [id: value.summary.flags.contains(MailFlags.flagged)])
+            setFlag(MailFlags.flagged, flag, on: &value)
         case .archive:
             guard await canArchive(id) else { throw MailError.unsupported }
             let gmail = state.accounts.first { $0.id == value.summary.accountID }?.isGmail == true
@@ -134,16 +149,60 @@ final class FixtureMailPageDataSource: MailPageDataSource {
             }
         case .delete:
             destination = state.mailboxes.first { $0.accountID == value.summary.accountID && $0.role == .trash && $0.id != box }?.id
-            if destination == nil { details[id] = nil; updateCounts(); emit(.messagesChanged([box])); emit(.unreadCountsChanged(state.unread)); return UUID() }
+            if destination == nil {
+                details[id] = nil; lastOperationID = operation; publishChanges([box]); return operation
+            }
         case .move(let target):
             guard state.mailboxes.contains(where: { $0.id == target && $0.accountID == value.summary.accountID && $0.id != box && !$0.attributes.contains { $0.lowercased() == "\\noselect" } }) else { throw MailError.unsupported }
             destination = target
         }
         if let destination {
-            let summary = value.summary
-            value.summary = .init(id: summary.id, accountID: summary.accountID, mailboxID: destination, sender: summary.sender, recipients: summary.recipients ?? [], subject: summary.subject, snippet: summary.snippet, date: summary.date, flags: summary.flags, hasAttachments: summary.hasAttachments, uid: summary.uid)
+            undoChanges[operation] = .move(id, from: box)
+            move(&value, to: destination)
         }
-        details[id] = value; updateCounts(); emit(.messagesChanged(Set([box] + (destination.map { [$0] } ?? [])))); emit(.unreadCountsChanged(state.unread)); return UUID()
+        details[id] = value
+        lastOperationID = operation
+        publishChanges(Set([box, value.summary.mailboxID]))
+        return operation
+    }
+    func undo(_ operationIDs: [UUID]) async throws -> MailUndoResult {
+        var messages: [UUID] = [], mailboxes: Set<UUID> = []
+        for id in operationIDs.reversed() {
+            guard let change = undoChanges.removeValue(forKey: id) else { throw MailError.notFound }
+            switch change {
+            case .flag(let flag, let before):
+                for (messageID, enabled) in before {
+                    guard var value = details[messageID] else { continue }
+                    setFlag(flag, enabled, on: &value)
+                    details[messageID] = value
+                    messages.append(messageID); mailboxes.insert(value.summary.mailboxID)
+                }
+            case .move(let messageID, let mailboxID):
+                guard var value = details[messageID] else { throw MailError.notFound }
+                mailboxes.formUnion([value.summary.mailboxID, mailboxID])
+                move(&value, to: mailboxID)
+                details[messageID] = value; messages.append(messageID)
+            }
+        }
+        publishChanges(mailboxes)
+        return MailUndoResult(messageIDs: messages)
+    }
+    func cancelPendingUndoMove(_ operationID: UUID) async throws -> Bool { false }
+    func currentSummary(_ id: UUID) async throws -> MailMessageSummary { try await summary(id) }
+    func failAction(_ operationID: UUID) async throws {
+        _ = try await undo([operationID])
+        emit(.actionFailed(operationID: operationID, error: .unsupported))
+    }
+    private func setFlag(_ flag: String, _ enabled: Bool, on value: inout MailMessageDetail) {
+        if enabled { value.summary.flags.insert(flag); value.headers.flags.insert(flag) }
+        else { value.summary.flags.remove(flag); value.headers.flags.remove(flag) }
+    }
+    private func move(_ value: inout MailMessageDetail, to mailboxID: UUID) {
+        let summary = value.summary
+        value.summary = .init(id: summary.id, accountID: summary.accountID, mailboxID: mailboxID, sender: summary.sender, recipients: summary.recipients ?? [], subject: summary.subject, snippet: summary.snippet, date: summary.date, flags: summary.flags, hasAttachments: summary.hasAttachments, uid: summary.uid)
+    }
+    private func publishChanges(_ mailboxes: Set<UUID>) {
+        updateCounts(); emit(.messagesChanged(mailboxes)); emit(.unreadCountsChanged(state.unread))
     }
     func events() async -> AsyncStream<MailEvent> {
         let id = UUID()

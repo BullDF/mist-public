@@ -20,6 +20,11 @@ public actor MailEngine {
     var retryTasks: [UUID: Task<Void, Never>] = [:]
     var backoff: [UUID: Int] = [:]
     var replayTasks: [UUID: Task<Void, Error>] = [:]
+    var inFlightOperations: Set<UUID> = []
+    var undoingOperations: Set<UUID> = []
+    var replayedOperations: [UUID: ReplayedMailOperation] = [:]
+    var movedTo: [UUID: UUID] = [:]
+    var movesWithoutCopyUID: [UUID: UnmappedMailMove] = [:]
     var draftTasks: [UUID: Task<Void, Never>] = [:]
     var draftLocks: [UUID: MailOperationGate] = [:]
     var online = true
@@ -221,7 +226,7 @@ public actor MailEngine {
         for box in (try? store.mailboxes(accountID: id)) ?? [] {
             syncTasks.removeValue(forKey: box.id)?.cancel(); syncAgain.remove(box.id)
         }
-        replayTasks.removeValue(forKey: id)?.cancel()
+        replayTasks[id]?.cancel()
         let transport = connections.removeValue(forKey: id)
         if let transport { await transport.disconnect() }
     }

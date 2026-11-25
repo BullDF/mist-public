@@ -2867,6 +2867,24 @@ class BrowserState {
         }
     }
 
+    /// Takes tabs out of their groups. Tabs leaving a Drifter agent folder become the user's and go to the end of the
+    /// normal tab list, as new tabs do: Chromium leaves a removed tab beside its group, and a folder sits right after
+    /// its chat tab, which the sidebar lists in the Drifter section, so that slot lands mid-list.
+    @MainActor
+    func removeTabsFromGroups(_ tabIds: [Int]) {
+        guard !tabIds.isEmpty else { return }
+        let requested = Set(tabIds)
+        let leavingFolders = normalTabs.filter { tab in
+            guard requested.contains(tab.guid), let token = tab.groupToken, let group = groups[token] else { return false }
+            return BrowserAgentFolderState.isAgentFolderTitle(group.title)
+        }.map(\.guid)
+        ChromiumLauncher.sharedInstance().bridge?.removeTabsFromGroup(withWindowId: Int64(windowId),
+            tabIds: tabIds.map { NSNumber(value: Int64($0)) })
+        applyOptimisticGroupMembership(updates: tabIds.map { (tabId: $0, newToken: nil) })
+        guard !leavingFolders.isEmpty else { return }
+        moveNormalTabsLocally(tabIds: leavingFolders, to: normalTabOrder.count)
+    }
+
     /// Chromium moves that put joined tabs after the group's last other member, each after the one before it. Every
     /// anchor is a group member: a move before the tab that follows the group lands on the group's edge, and Chromium
     /// takes the tab back out of the group.
@@ -5030,6 +5048,15 @@ class BrowserState {
 
     func prepareForActiveTabClose(tabId: Int) {
         guard focusingTab?.guid == tabId else { return }
+        if let chatTabId = openPanelChatTabId(hostTabId: tabId) {
+            AppLogDebug("[NativeTab] prepareForActiveTabClose handing focus to panel chat tab \(chatTabId)")
+            pendingSelectionOverride = NativePendingSelectionOverride(
+                closingTabId: tabId,
+                targetTabId: chatTabId,
+                relationVersion: nativeRelationGraph.version
+            )
+            return
+        }
         guard normalTabs.contains(where: { $0.guid == tabId }) else { return }
         let visibleIds = normalTabs.map(\.guid)
         AppLogDebug(
@@ -5068,6 +5095,19 @@ class BrowserState {
             "[NativeTab] prepareForActiveTabClose override={closing=\(tabId), " +
             "target=\(finalTarget), version=\(nativeRelationGraph.version)}"
         )
+    }
+
+    /// The tab of the chat that `hostTabId`'s open Chat panel shows, when that tab is in this window: closing the
+    /// host focuses the chat there, whatever tab Chromium would pick.
+    private func openPanelChatTabId(hostTabId: Int) -> Int? {
+        guard let host = tabs.first(where: { $0.guid == hostTabId }), !host.aiChatCollapsed else { return nil }
+        let chatTabId = MainActor.assumeIsolated { () -> Int? in
+            let store = AgentChatStore.shared
+            return store.panelChat(for: hostTabId).flatMap { store.entry(for: $0)?.tabId }
+        }
+        guard let chatTabId, chatTabId != hostTabId,
+              tabs.contains(where: { $0.guid == chatTabId && $0.webContentWrapper != nil }) else { return nil }
+        return chatTabId
     }
 
     /// Walk the opener chain upward to find a pinned or bookmark content tab.
@@ -5565,6 +5605,43 @@ class BrowserState {
             localStore.removePinnedTab(pinnedTab, profileId: profileId, spaceId: spaceId)
             createTab(pinnedTab.url ?? "", customGuid: nil, focusAfterCreate: false)
         }
+    }
+
+    /// The pinned tab menu's Unpin and Close: closes the pin's live tabs, then
+    /// deletes the pin, both panes of a pinned split included. Close alone
+    /// keeps the pin as a closed pinned tab. The tabs close first so they
+    /// never show in the normal tab list once their pin is gone.
+    @MainActor
+    func unpinAndClosePinnedTab(pinnedGuid: String) {
+        guard let pinnedTab = pinnedTabs.first(where: { $0.guidInLocalDB == pinnedGuid }) else {
+            return
+        }
+        let pinGuids: Set<String> = pinnedSplitDBPair(forPinnedTab: pinnedTab).map { [$0.0, $0.1] } ?? [pinnedGuid]
+        let records = pinnedTabs.filter { $0.guidInLocalDB.map(pinGuids.contains) == true }
+        let liveTabs = tabs.filter { $0.guidInLocalDB.map(pinGuids.contains) == true }
+        if !liveTabs.isEmpty, !applyLastTabClosePolicy(to: liveTabs, intent: .tabDriven) {
+            // Inactive panes first, so the active one's IDC_CLOSE_TAB lands on it.
+            for tab in liveTabs where !tab.isActive { tab.close() }
+            for tab in liveTabs where tab.isActive { tab.close() }
+        }
+        for record in records {
+            localStore.removePinnedTab(record, profileId: profileId, spaceId: spaceId)
+        }
+    }
+
+    /// The Tab menu's Unpin and Close (⌥⌘W) on the focused tab: a pinned tab loses its pin as it closes, any other
+    /// tab just closes, so the key always closes for good.
+    @MainActor
+    @discardableResult
+    func performUnpinAndCloseCommand() -> Bool {
+        guard let tab = focusingTab else { return false }
+        if let pinnedGuid = tab.guidInLocalDB, !pinnedGuid.isEmpty,
+           pinnedTabs.contains(where: { $0.guidInLocalDB == pinnedGuid }) {
+            unpinAndClosePinnedTab(pinnedGuid: pinnedGuid)
+        } else {
+            tab.close()
+        }
+        return true
     }
 
     /// When a pinned tab is about to be removed, clear the partner record's

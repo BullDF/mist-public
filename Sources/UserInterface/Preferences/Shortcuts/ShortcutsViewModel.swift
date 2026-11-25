@@ -629,6 +629,8 @@ private extension CommandWrapper {
             return NSLocalizedString("app.tabMenu.setStartPage", value: "Set Current Page as Start Page", comment: "Tab menu and shortcuts - Remember the focused grouped tab's current page as its start page")
         case .PHI_RETURN_TO_START_PAGE:
             return NSLocalizedString("app.tabMenu.returnToStartPage", value: "Return to Start Page", comment: "Tab menu and shortcuts - Take the focused grouped tab back to its start page")
+        case .PHI_UNPIN_AND_CLOSE_TAB:
+            return NSLocalizedString("sidebar.tabContextMenu.unpinAndCloseTab", value: "Unpin and Close", comment: "Pinned tab context menu, Tab menu and shortcuts - Close the tab and remove its pin, where Close keeps the pin")
         case .PHI_OPEN_CLIPBOARD: return MistAppID.clipboard.name
         case .PHI_MAKE_PRIMARY_WINDOW:
             return NSLocalizedString("settings.shortcuts.command.makePrimaryWindow", value: "Make Primary Window", comment: "Shortcuts settings title for making the focused window primary")

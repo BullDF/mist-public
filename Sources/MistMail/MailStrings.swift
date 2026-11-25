@@ -112,6 +112,8 @@ enum MailStrings {
     static var unifiedTrash: String { NSLocalizedString("mail.mailboxes.unifiedTrash", value: "All Trash", comment: "Mail sidebar - Trash across all accounts") }
     static var unifiedSpam: String { NSLocalizedString("mail.mailboxes.unifiedSpam", value: "All Junk", comment: "Mail sidebar - Spam across all accounts") }
     static var markAllRead: String { NSLocalizedString("mail.actions.markAllRead", value: "Mark All as Read", comment: "Mail toolbar - Mark every message in the selected mailboxes read") }
+    static var undo: String { NSLocalizedString("mail.actions.undo", value: "Undo", comment: "Mail banner - Name of the action that reverses a message change") }
+    static var redo: String { NSLocalizedString("mail.actions.redo", value: "Redo", comment: "Mail banner - Name of the action that reapplies an undone message change") }
     static var searchMail: String { NSLocalizedString("mail.search.placeholder", value: "Search Mail", comment: "Mail list - Search field placeholder and accessibility label") }
     static var searchOnServer: String { NSLocalizedString("mail.search.server", value: "Search on Server", comment: "Mail search - Search selected mailboxes on the server") }
     static var noResults: String { NSLocalizedString("mail.search.noResults", value: "No results", comment: "Mail list - Empty search result") }

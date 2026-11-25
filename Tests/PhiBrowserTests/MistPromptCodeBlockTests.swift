@@ -234,6 +234,30 @@ final class MistPromptCodeBlockTests: XCTestCase {
     }
 
 
+    /// Scans are cached per text version: an edit straight to the storage must still reach them.
+    func testCachedScansFollowEveryStorageEditAndDraftsReplaceOnlyTheChange() throws {
+        let (editor, window) = host()
+        defer { window.close() }
+        editor.text = "```\necho x\n```\n"
+        XCTAssertTrue(editor.textView.styledCodeBlocks.count == 1)
+        let storage = try XCTUnwrap(editor.textView.textStorage)
+        storage.replaceCharacters(in: NSRange(location: 0, length: 3), with: "")
+        XCTAssertEqual(editor.text, "\necho x\n```\n")
+        editor.textView.setSelectedRange(NSRange(location: 0, length: 0))
+        XCTAssertTrue(editor.textView.styledCodeBlocks.isEmpty)
+        editor.applyDraft("```\necho xy\n```\nok", mentions: [])
+        XCTAssertEqual(editor.text, "```\necho xy\n```\nok")
+        XCTAssertEqual(editor.textView.styledCodeBlocks.count, 1)
+
+        let change = MistPromptEditor.replacement(from: "abcd", to: "abXd")
+        XCTAssertEqual(change.range, NSRange(location: 2, length: 1))
+        XCTAssertEqual(change.text, "X")
+        // 😀 and 😃 share their lead surrogate, which is replaced with the trail.
+        let emoji = MistPromptEditor.replacement(from: "a😀", to: "a😃")
+        XCTAssertEqual(emoji.range, NSRange(location: 1, length: 2))
+        XCTAssertEqual(emoji.text, "😃")
+    }
+
     func testPasteAndRangeReplacementStayLiteral() {
         let (editor, window) = host()
         defer { window.close() }
@@ -252,7 +276,7 @@ final class MistPromptCodeBlockTests: XCTestCase {
     func testPlainTextHeightIsUnchangedAndCodeUsesActualLayout() throws {
         let (editor, window) = host()
         defer { window.close() }
-        let lineHeight = ceil(try XCTUnwrap(editor.textView.layoutManager).defaultLineHeight(for: .systemFont(ofSize: 16)))
+        let lineHeight = ceil(try XCTUnwrap(editor.textView.layoutManager).defaultLineHeight(for: AgentChatTypography.font(ofSize: 16)))
         for count in 1...10 {
             editor.text = Array(repeating: "line", count: count).joined(separator: "\n")
             XCTAssertEqual(editor.inputHeight, 64 + CGFloat(min(count, 8) - 1) * (lineHeight + 4))

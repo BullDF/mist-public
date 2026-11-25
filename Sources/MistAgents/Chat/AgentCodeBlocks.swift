@@ -9,7 +9,8 @@ enum AgentCodeBlocks {
 
         func closes(_ line: String) -> Bool {
             let text = line.trimmingCharacters(in: .whitespaces)
-            return text.count >= count && text.allSatisfy { $0 == character }
+            // A long content line fails on its first character, before it's counted.
+            return text.allSatisfy { $0 == character } && text.count >= count
         }
     }
 
@@ -164,9 +165,15 @@ enum AgentCodeBlocks {
     }
 
     static func clamp(_ selection: NSRange, from old: NSRange, in text: String) -> NSRange {
+        clamp(selection, from: old, length: (text as NSString).length,
+              blocks: blocks(in: text, editingAt: old.length == 0 ? old.location : nil))
+    }
+
+    /// `blocks` are the text's, parsed while editing at `old`'s caret; `length` is its UTF-16 length.
+    static func clamp(_ selection: NSRange, from old: NSRange, length: Int, blocks: [Block]) -> NSRange {
         var start = selection.location
         var end = NSMaxRange(selection)
-        for block in blocks(in: text, editingAt: old.length == 0 ? old.location : nil) {
+        for block in blocks {
             for (fence, opening) in [(block.opening, true), (block.closing, false)] {
                 if selection.length > 0 {
                     if start > fence.location && start < NSMaxRange(fence) { start = fence.location }
@@ -177,7 +184,7 @@ enum AgentCodeBlocks {
                     if opening {
                         target = backwards && fence.location > 0 ? fence.location - 1 : block.content.location
                     } else {
-                        target = !backwards && NSMaxRange(fence) < (text as NSString).length ? NSMaxRange(fence) + 1 : block.contentEnd
+                        target = !backwards && NSMaxRange(fence) < length ? NSMaxRange(fence) + 1 : block.contentEnd
                     }
                     return NSRange(location: target, length: 0)
                 }

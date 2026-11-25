@@ -23,6 +23,7 @@ enum MistComposerIcon: Equatable {
 /// Plain text input for chat; the host owns submission and attachments.
 final class MistPromptTextView: NSTextView {
     var onSubmit: (() -> Void)?
+    var onSendNow: (() -> Void)?
     var onPasteAttachments: ((NSPasteboard) -> Bool)?
     var acceptsAttachments: (() -> Bool)?
     /// Whether an attachment drag is over the text view, for the composer card's highlight.
@@ -36,6 +37,35 @@ final class MistPromptTextView: NSTextView {
     var styledCodeBlocks: [AgentCodeBlocks.Block] = []
     private var isPastingText = false
     private var themeSubscription: AnyCancellable?
+
+    /// The text as a native string, for the composer's scans. `string` bridges lazily, and Swift's character walks over
+    /// a bridged string take its slow per-character paths: with a 28 KB command pasted, they took most of 300 ms a
+    /// keystroke. The copy goes through one bulk UTF-16 read: `makeContiguousUTF8` on the bridged string reads it a
+    /// code unit at a time. One copy serves every callback until the characters change.
+    var scanText: String {
+        observeEdits()
+        if let scanned, scanned.version == textVersion { return scanned.text }
+        let source = (textStorage?.string ?? string) as NSString
+        var units = [unichar](repeating: 0, count: source.length)
+        source.getCharacters(&units, range: NSRange(location: 0, length: source.length))
+        let text = String(decoding: units, as: UTF16.self)
+        scanned = (textVersion, text)
+        return text
+    }
+    /// Counts character edits, posted before NSTextView's own selection and delegate callbacks run, so a scan cached
+    /// for one version never outlives the text it read.
+    private(set) var textVersion = 0
+    private var scanned: (version: Int, text: String)?
+    private var storageEdits: AnyCancellable?
+
+    func observeEdits() {
+        guard storageEdits == nil, let storage = textStorage else { return }
+        storageEdits = NotificationCenter.default.publisher(for: NSTextStorage.didProcessEditingNotification, object: storage)
+            .sink { [weak self, weak storage] _ in
+                guard let self, storage?.editedMask.contains(.editedCharacters) == true else { return }
+                self.textVersion &+= 1
+            }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -78,7 +108,7 @@ final class MistPromptTextView: NSTextView {
         super.insertText(insertString, replacementRange: replacementRange)
         let inserted = (insertString as? String) ?? (insertString as? NSAttributedString)?.string
         if mayConvert, inserted == "`", codeBlocksEnabled, !hasMarkedText(), selectedRange().length == 0,
-           let edit = AgentCodeBlocks.typedBacktick(in: string, caret: selectedRange().location) {
+           let edit = AgentCodeBlocks.typedBacktick(in: scanText, caret: selectedRange().location) {
             applyCodeEdit(edit)
         }
     }
@@ -126,16 +156,16 @@ final class MistPromptTextView: NSTextView {
         let backwards = ["deleteBackward:", "deleteWordBackward:", "deleteToBeginningOfLine:",
                          "deleteToBeginningOfParagraph:", "deleteBackwardByDecomposingPreviousCharacter:"]
         let forwards = ["deleteForward:", "deleteWordForward:", "deleteToEndOfLine:", "deleteToEndOfParagraph:"]
-        if backwards.contains(name), let edit = AgentCodeBlocks.backwardDelete(in: string, caret: caret) {
+        if backwards.contains(name), let edit = AgentCodeBlocks.backwardDelete(in: scanText, caret: caret) {
             applyCodeEdit(edit)
             return true
         }
-        if forwards.contains(name), let edit = AgentCodeBlocks.forwardDelete(in: string, caret: caret) {
+        if forwards.contains(name), let edit = AgentCodeBlocks.forwardDelete(in: scanText, caret: caret) {
             applyCodeEdit(edit)
             return true
         }
-        guard name == "moveUp:" || name == "moveDown:",
-              let block = AgentCodeBlocks.containing(selectedRange(), in: string),
+        guard name == "moveUp:" || name == "moveDown:", case let text = scanText,
+              let block = AgentCodeBlocks.containing(selectedRange(), in: text),
               let manager = layoutManager, let container = textContainer else { return false }
         manager.ensureLayout(for: container)
         let down = name == "moveDown:"
@@ -143,7 +173,7 @@ final class MistPromptTextView: NSTextView {
         let currentLine = manager.lineFragmentRect(forGlyphAt: manager.glyphIndexForCharacter(at: caret), effectiveRange: nil)
         let edgeLine = manager.lineFragmentRect(forGlyphAt: manager.glyphIndexForCharacter(at: edge), effectiveRange: nil)
         guard currentLine.minY == edgeLine.minY else { return false }
-        applyCodeEdit(AgentCodeBlocks.exit(block, down: down, in: string))
+        applyCodeEdit(AgentCodeBlocks.exit(block, down: down, in: text))
         return true
     }
 
@@ -167,6 +197,15 @@ final class MistPromptTextView: NSTextView {
         return accepted
     }
 
+    override func contextMenuKeyDown(_ event: NSEvent) {
+        if onSendNow != nil, !hasMarkedText(), [36, 76].contains(event.keyCode), event.modifierFlags.contains(.control) {
+            if onSlashKey?(event) == true { return }
+            onSendNow?()
+            return
+        }
+        super.contextMenuKeyDown(event)
+    }
+
     override func keyDown(with event: NSEvent) {
         guard !hasMarkedText() else { super.keyDown(with: event); return }
         if onSlashKey?(event) == true { return }
@@ -174,11 +213,13 @@ final class MistPromptTextView: NSTextView {
         case 36, 76:
             if event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option) {
                 if codeBlocksEnabled, selectedRange().length == 0,
-                   let edit = AgentCodeBlocks.openFence(in: string, caret: selectedRange().location) {
+                   let edit = AgentCodeBlocks.openFence(in: scanText, caret: selectedRange().location) {
                     applyCodeEdit(edit)
                 } else {
                     insertText("\n", replacementRange: selectedRange())
                 }
+            } else if event.modifierFlags.contains(.control), let onSendNow {
+                onSendNow()
             } else {
                 onSubmit?()
             }
@@ -301,7 +342,7 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
     var hasAttachments = false { didSet { if oldValue != hasAttachments { updateHeight(); needsLayout = true } } }
 
     var text: String {
-        get { textView.string }
+        get { textView.scanText }
         set {
             typedCommand = nil
             textView.string = newValue
@@ -330,13 +371,14 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
         typedCommand = nil
         textView.unmarkText()
         let selections = textView.selectedRanges.map { NSValue(range: AgentComposerDraft.mapSelection($0.rangeValue, from: self.text, to: text)) }
-        textView.textStorage?.setAttributedString(NSAttributedString(string: text))
+        // Only the changed span is replaced, so a draft mirrored as it's typed relays out one line, not all of it.
         if let storage = textView.textStorage {
-            AgentChatMentionStyle.apply(mentions, to: storage, pointSize: inputFont.pointSize)
+            let edit = Self.replacement(from: storage.string as NSString, to: text as NSString)
+            if edit.range.length > 0 || !edit.text.isEmpty { storage.replaceCharacters(in: edit.range, with: edit.text) }
         }
         editorUndoManager.removeAllActions()
         textView.selectedRanges = selections
-        restyleCommands()
+        restyleCommands(mentions: mentions)
         updateHeight()
         updateSlashCommands()
         updateMentionBanner()
@@ -347,6 +389,7 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
     init() {
         super.init(frame: .zero)
         textView.replaceTextContainer(AgentChatTextContainer(size: NSSize(width: 700, height: CGFloat.greatestFiniteMagnitude)))
+        textView.observeEdits()
         // Attribute runs are internal. Paste still inserts only plain text through MistPromptTextView.
         textView.isRichText = true
         textView.allowsUndo = true
@@ -536,7 +579,7 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
 
     func textViewDidChangeSelection(_ notification: Notification) {
         let selection = textView.selectedRange()
-        let blocks = AgentCodeBlocks.blocks(in: text, editingAt: selection.length == 0 ? selection.location : nil)
+        let blocks = codeBlocks(editingAt: selection.length == 0 ? selection.location : nil)
         if blocks != textView.styledCodeBlocks { restyleCommands() }
         // An empty last line takes the typing attributes' height only while the caret is on it, and a code
         // edit moves the caret there after textDidChange measured it at the closing fence's height.
@@ -546,7 +589,9 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
 
     func textView(_ textView: NSTextView, willChangeSelectionFromCharacterRange oldRange: NSRange,
                   toCharacterRange newRange: NSRange) -> NSRange {
-        let newRange = self.textView.isInsertingText || self.textView.isApplyingCodeEdit ? newRange : AgentCodeBlocks.clamp(newRange, from: oldRange, in: text)
+        let newRange = self.textView.isInsertingText || self.textView.isApplyingCodeEdit ? newRange
+            : AgentCodeBlocks.clamp(newRange, from: oldRange, length: self.textView.textStorage?.length ?? 0,
+                                    blocks: codeBlocks(editingAt: oldRange.length == 0 ? oldRange.location : nil))
         let atoms = atomicRanges
         if newRange.length > 0 { return AgentMentionText.atomicRange(newRange, atoms: atoms) }
         guard let token = atoms.first(where: { newRange.location > $0.location && newRange.location < NSMaxRange($0) }) else { return newRange }
@@ -575,7 +620,7 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
     }
 
     private var caretTypingAttributes: [NSAttributedString.Key: Any] {
-        if AgentCodeBlocks.containing(textView.selectedRange(), in: text) != nil { return codeAttributes }
+        if caretInCode { return codeAttributes }
         return [.font: inputFont, .foregroundColor: NSColor.labelColor,
                 .paragraphStyle: textView.defaultParagraphStyle ?? NSParagraphStyle.default]
     }
@@ -591,13 +636,45 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
                 .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph]
     }
 
-    private var caretInCode: Bool { AgentCodeBlocks.containing(textView.selectedRange(), in: text) != nil }
+    private var caretInCode: Bool {
+        let selection = textView.selectedRange()
+        return codeBlocks().contains { $0.contains(selection) }
+    }
+
+    /// The text's slash tokens and code blocks, kept until its characters change: one keystroke's callbacks read them
+    /// a dozen times.
+    private struct Scans {
+        var version: Int
+        var tokens: [ClaudeCodeSlashTokenizer.Token]?
+        var blocks: [Int?: [AgentCodeBlocks.Block]] = [:]
+    }
+    private var scans = Scans(version: -1)
+
+    private func currentScans() {
+        if scans.version != textView.textVersion { scans = Scans(version: textView.textVersion) }
+    }
+
+    private var slashTokens: [ClaudeCodeSlashTokenizer.Token] {
+        currentScans()
+        if let tokens = scans.tokens { return tokens }
+        let tokens = ClaudeCodeSlashTokenizer.tokens(in: text)
+        scans.tokens = tokens
+        return tokens
+    }
+
+    private func codeBlocks(editingAt caret: Int? = nil) -> [AgentCodeBlocks.Block] {
+        currentScans()
+        if let blocks = scans.blocks[caret] { return blocks }
+        let blocks = AgentCodeBlocks.blocks(in: text, editingAt: caret)
+        scans.blocks[caret] = blocks
+        return blocks
+    }
 
     /// Known commands outside code blocks, the ones the composer highlights.
     private func highlightedCommands(blocks: [AgentCodeBlocks.Block]) -> [ClaudeCodeSlashTokenizer.Token] {
         guard slashCommandsEnabled else { return [] }
         let names = Set(slashCommands.map(\.name))
-        return ClaudeCodeSlashTokenizer.tokens(in: text).filter { token in
+        return slashTokens.filter { token in
             names.contains(token.name) && !blocks.contains { NSIntersectionRange($0.range, token.commandRange).length > 0 }
         }
     }
@@ -614,7 +691,7 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
         defer { pendingReplacement = nil }
         let caret = textView.selectedRange()
         guard let replacement = pendingReplacement, caret.length == 0,
-              let token = ClaudeCodeSlashTokenizer.tokens(in: text).first(where: { NSMaxRange($0.range) == caret.location }) else {
+              let token = slashTokens.first(where: { NSMaxRange($0.range) == caret.location }) else {
             typedCommand = nil
             return
         }
@@ -629,7 +706,7 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
         updateMentions()
         guard !caretInCode, slashCommandsEnabled, textView.isEditable, window?.firstResponder === textView,
               !textView.hasMarkedText(), text != dismissedText,
-              let query = ClaudeCodeSlashQuery.at(textView.selectedRange(), in: text) else {
+              let query = ClaudeCodeSlashQuery.at(textView.selectedRange(), in: text, tokens: slashTokens) else {
             slashQueryOpen = false
             commandPopup.update([])
             return
@@ -675,38 +752,62 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
         if submit { textView.onSubmit?() }
     }
 
-    private func restyleCommands() {
+    /// The smallest replacement that turns `old` into `new`: the span between their common prefix and suffix, never
+    /// splitting a surrogate pair.
+    static func replacement(from old: NSString, to new: NSString) -> (range: NSRange, text: String) {
+        let oldLength = old.length, newLength = new.length
+        var a = [unichar](repeating: 0, count: oldLength), b = [unichar](repeating: 0, count: newLength)
+        old.getCharacters(&a, range: NSRange(location: 0, length: oldLength))
+        new.getCharacters(&b, range: NSRange(location: 0, length: newLength))
+        let limit = min(oldLength, newLength)
+        var prefix = 0
+        while prefix < limit, a[prefix] == b[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < limit - prefix, a[oldLength - 1 - suffix] == b[newLength - 1 - suffix] { suffix += 1 }
+        if prefix > 0, UTF16.isLeadSurrogate(a[prefix - 1]) { prefix -= 1 }
+        if suffix > 0, UTF16.isTrailSurrogate(a[oldLength - suffix]) { suffix -= 1 }
+        return (NSRange(location: prefix, length: oldLength - prefix - suffix),
+                new.substring(with: NSRange(location: prefix, length: newLength - prefix - suffix)))
+    }
+
+    /// `mentions` replaces the stored tokens, for a draft applied from elsewhere.
+    private func restyleCommands(mentions draftMentions: [AgentTabMention]? = nil) {
         guard !textView.hasMarkedText(), let storage = textView.textStorage else { return }
         textView.codeBlocksEnabled = true
+        let text = self.text
         let selection = textView.selectedRange()
-        let blocks = AgentCodeBlocks.blocks(in: text, editingAt: selection.length == 0 ? selection.location : nil)
+        let blocks = codeBlocks(editingAt: selection.length == 0 ? selection.location : nil)
         textView.styledCodeBlocks = blocks
         let selections = textView.selectedRanges
         let undo = textView.undoManager
         let registeringUndo = undo?.isUndoRegistrationEnabled == true
         if registeringUndo { undo?.disableUndoRegistration() }
-        storage.beginEditing()
-        let full = NSRange(location: 0, length: storage.length)
-        let retainedMentions = mentions
-        storage.removeAttribute(AgentChatMentionStyle.token, range: full)
-        storage.removeAttribute(AgentChatSlashStyle.token, range: full)
-        storage.removeAttribute(.baselineOffset, range: full)
-        storage.removeAttribute(.agentHiddenFence, range: full)
-        storage.addAttributes([.font: inputFont, .foregroundColor: NSColor.labelColor,
-                               .paragraphStyle: textView.defaultParagraphStyle ?? NSParagraphStyle.default], range: full)
+        let retainedMentions = !mentionsEnabled ? [] : draftMentions.map { candidates in
+            candidates.filter { NSMaxRange($0.range) <= storage.length && storage.attributedSubstring(from: $0.range).string == $0.tokenText }
+        } ?? mentions
+        // Styled on a copy, and only the runs that differ are written back: setting attributes over the whole text
+        // invalidates its whole layout, which on a long paste relaid all of it on every keystroke.
+        let styled = NSMutableAttributedString(attributedString: storage)
+        let full = NSRange(location: 0, length: styled.length)
+        styled.removeAttribute(AgentChatMentionStyle.token, range: full)
+        styled.removeAttribute(AgentChatSlashStyle.token, range: full)
+        styled.removeAttribute(.baselineOffset, range: full)
+        styled.removeAttribute(.agentHiddenFence, range: full)
+        styled.addAttributes([.font: inputFont, .foregroundColor: NSColor.labelColor,
+                              .paragraphStyle: textView.defaultParagraphStyle ?? NSParagraphStyle.default], range: full)
         for command in highlightedCommands(blocks: blocks) {
-            storage.addAttributes(AgentChatSlashStyle.attributes(pointSize: inputFont.pointSize), range: command.commandRange)
+            styled.addAttributes(AgentChatSlashStyle.attributes(pointSize: inputFont.pointSize), range: command.commandRange)
         }
         AgentChatMentionStyle.apply(retainedMentions.filter { mention in
             !blocks.contains { NSIntersectionRange($0.range, mention.range).length > 0 }
-        }, to: storage, pointSize: inputFont.pointSize)
+        }, to: styled, pointSize: inputFont.pointSize)
         for block in blocks {
-            storage.addAttributes(codeAttributes, range: block.content)
+            styled.addAttributes(codeAttributes, range: block.content)
             if !block.language.isEmpty, block.content.length > 0 {
                 let paragraph = (codeAttributes[.paragraphStyle] as! NSParagraphStyle).mutableCopy() as! NSMutableParagraphStyle
                 paragraph.paragraphSpacingBefore = 6
                 let firstLine = (text as NSString).lineRange(for: NSRange(location: block.content.location, length: 0))
-                storage.addAttribute(.paragraphStyle, value: paragraph, range: NSIntersectionRange(firstLine, block.content))
+                styled.addAttribute(.paragraphStyle, value: paragraph, range: NSIntersectionRange(firstLine, block.content))
             }
             for fence in [block.opening, block.closing] {
                 let paragraph = NSMutableParagraphStyle()
@@ -716,25 +817,35 @@ final class MistPromptEditor: NSView, NSTextViewDelegate {
                 if header { paragraph.firstLineHeadIndent = 12; paragraph.headIndent = 12 }
                 // Space between the box and the plain lines around it; the box is drawn inside it.
                 if fence == block.opening, fence.location > 0 { paragraph.paragraphSpacingBefore = 6 }
-                if fence == block.closing, NSMaxRange(fence) < storage.length { paragraph.paragraphSpacing = 6 }
-                let line = NSRange(location: fence.location, length: fence.length + (NSMaxRange(fence) < storage.length ? 1 : 0))
-                storage.addAttributes([.paragraphStyle: paragraph, .font: NSFont.systemFont(ofSize: 1)], range: line)
+                if fence == block.closing, NSMaxRange(fence) < styled.length { paragraph.paragraphSpacing = 6 }
+                let line = NSRange(location: fence.location, length: fence.length + (NSMaxRange(fence) < styled.length ? 1 : 0))
+                styled.addAttributes([.paragraphStyle: paragraph, .font: NSFont.systemFont(ofSize: 1)], range: line)
                 // The first character stays a real, clear glyph: a line that starts with null glyphs joins the
                 // previous line fragment and loses its paragraph spacing, and a final one gets no fragment at all.
-                storage.addAttribute(.foregroundColor, value: NSColor.clear, range: NSRange(location: fence.location, length: min(1, fence.length)))
+                styled.addAttribute(.foregroundColor, value: NSColor.clear, range: NSRange(location: fence.location, length: min(1, fence.length)))
                 if fence.length > 1 {
-                    storage.addAttribute(.agentHiddenFence, value: true, range: NSRange(location: fence.location + 1, length: fence.length - 1))
+                    styled.addAttribute(.agentHiddenFence, value: true, range: NSRange(location: fence.location + 1, length: fence.length - 1))
                 }
                 if header, let language = block.languageRange {
-                    storage.removeAttribute(.agentHiddenFence, range: language)
+                    styled.removeAttribute(.agentHiddenFence, range: language)
                     let labelFont = NSFont.systemFont(ofSize: 12)
                     // TextKit puts a fixed line height's extra space above the glyphs; split it evenly instead.
-                    storage.addAttributes([.font: labelFont, .foregroundColor: NSColor.secondaryLabelColor,
-                                           .baselineOffset: (32 - (labelFont.ascender - labelFont.descender)) / 2], range: language)
+                    styled.addAttributes([.font: labelFont, .foregroundColor: NSColor.secondaryLabelColor,
+                                          .baselineOffset: (32 - (labelFont.ascender - labelFont.descender)) / 2], range: language)
                 }
             }
         }
-        storage.endEditing()
+        var changes: [(range: NSRange, attributes: [NSAttributedString.Key: Any])] = []
+        styled.enumerateAttributes(in: full) { attributes, range, _ in
+            storage.enumerateAttributes(in: range) { current, currentRange, _ in
+                if !NSDictionary(dictionary: current).isEqual(to: attributes) { changes.append((currentRange, attributes)) }
+            }
+        }
+        if !changes.isEmpty {
+            storage.beginEditing()
+            for change in changes { storage.setAttributes(change.attributes, range: change.range) }
+            storage.endEditing()
+        }
         textView.selectedRanges = selections
         // Replacing the whole text keeps the old first character's attributes for typing, which after
         // a sent block are a hidden fence's and draw a 1 pt or indented caret.

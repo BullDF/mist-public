@@ -22,6 +22,7 @@ struct CommandDispatcher {
         .PHI_SET_START_PAGE,
         .PHI_RETURN_TO_START_PAGE,
         .PHI_CLOSE_PANEL_CHAT,
+        .PHI_UNPIN_AND_CLOSE_TAB,
     ]
 
     /// Commands swallowed while the focused tab shows the native NTP — it has no
@@ -93,6 +94,8 @@ struct CommandDispatcher {
             return windowController.browserState.performStartPageCommand(command)
         case .PHI_CLOSE_PANEL_CHAT:
             return MistChatPanelViewController.performCloseChat(in: windowController)
+        case .PHI_UNPIN_AND_CLOSE_TAB:
+            return windowController.browserState.performUnpinAndCloseCommand()
         case .PHI_DRIFTER_MODEL_MENU, .PHI_DRIFTER_EFFORT_MENU:
             guard let row = MistDrifterLaunchRow.focused(in: window) else { return false }
             row.showPicker(command == .PHI_DRIFTER_MODEL_MENU ? .model : .effort)
@@ -104,6 +107,9 @@ struct CommandDispatcher {
         case .IDC_RELOAD, .IDC_RELOAD_BYPASSING_CACHE:
             if case let .app(page) = nativePage(in: windowController) { return page.performPageCommand(command) }
             return false
+        case .IDC_CONTENT_CONTEXT_UNDO, .IDC_CONTENT_CONTEXT_REDO:
+            guard case let .app(page as MailPageViewController) = nativePage(in: windowController) else { return false }
+            return page.performPageCommand(command)
         case .IDC_FIND, .IDC_FIND_NEXT, .IDC_FIND_PREVIOUS, .IDC_ZOOM_PLUS, .IDC_ZOOM_MINUS, .IDC_ZOOM_NORMAL:
             guard let page = nativePage(in: windowController) else { return false }
             page.perform(command)
@@ -285,6 +291,11 @@ struct CommandDispatcher {
             return true
         }
 
+        if let redo = MailPageViewController.historyShortcut(event),
+           let controller = SpaceSessionControllersManager.shared.findControllerWith(window: window),
+           case let .app(page as MailPageViewController) = nativePage(in: controller) {
+            return page.performMessageHistory(redo: redo)
+        }
         return false
     }
 
@@ -344,6 +355,15 @@ struct CommandDispatcher {
         return MarkdownReaderZoom.canStep(zoom, up: command == .IDC_ZOOM_PLUS)
     }
 
+    @MainActor
+    static func mailHistoryMenuEnabled(_ tag: Int, window: NSWindow) -> Bool? {
+        guard let command = CommandWrapper(rawValue: tag),
+              command == .IDC_CONTENT_CONTEXT_UNDO || command == .IDC_CONTENT_CONTEXT_REDO,
+              let controller = SpaceSessionControllersManager.shared.findControllerWith(window: window),
+              case let .app(page as MailPageViewController) = nativePage(in: controller) else { return nil }
+        return page.historyMenuEnabled(redo: command == .IDC_CONTENT_CONTEXT_REDO)
+    }
+
     /// Window/feature scope is distinct from transient action availability.
     /// Keep non-browser windows out of interception without duplicating action validation.
     @MainActor
@@ -360,6 +380,9 @@ struct CommandDispatcher {
         }
         if command == .PHI_CLOSE_PANEL_CHAT {
             return MistChatPanelViewController.closeChatHost(in: controller.browserState) != nil
+        }
+        if command == .PHI_UNPIN_AND_CLOSE_TAB {
+            return controller.browserState.focusingTab != nil
         }
         if command == .PHI_DRIFTER_PREVIOUS_MARKER || command == .PHI_DRIFTER_NEXT_MARKER {
             if case let .app(page) = nativePage(in: controller), page is AgentChatViewController { return true }

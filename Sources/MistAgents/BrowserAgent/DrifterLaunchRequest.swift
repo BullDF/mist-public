@@ -33,8 +33,11 @@ struct DrifterCLIServers {
 }
 
 struct DrifterLaunchRequest {
+    static let artifactTools = ["Artifact", "ArtifactComments", "ArtifactData", "ArtifactCheck"]
     // An allowlist keeps every new CLI tool off until it is listed here.
-    static let claudeTools = "Bash,Read,Write,Edit,Glob,Grep,NotebookEdit,AskUserQuestion,EnterPlanMode,ExitPlanMode,Monitor,TaskStop,ToolSearch,WebSearch,WebFetch,ListMcpResourcesTool,ReadMcpResourceTool,ReadMcpResourceDirTool,Artifact,ArtifactComments,ArtifactData,ArtifactCheck"
+    static let claudeTools = (["Bash", "Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit", "AskUserQuestion", "EnterPlanMode",
+                               "ExitPlanMode", "Monitor", "TaskStop", "ToolSearch", "WebSearch", "WebFetch", "ListMcpResourcesTool",
+                               "ReadMcpResourceTool", "ReadMcpResourceDirTool"] + artifactTools).joined(separator: ",")
     let prompt: String
     var attachments: [AgentAttachment] = []
     var config: DrifterConfig

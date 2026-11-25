@@ -98,6 +98,25 @@ import XCTest
         XCTAssertEqual(model.historyLimit, 20)
     }
 
+    /// Only one absence of a minute or more clears the search; a quicker return keeps it and restarts the count.
+    func testSearchClearsAfterAMinuteAwayFromThePage() throws {
+        let store = AgentChatStore(route: .init(baseDirectory: directory()), tabExists: { _ in false })
+        defer { store.terminate() }
+        let model = DrifterHomeModel(store: store)
+        let start = Date()
+        model.query = "carbon"
+        model.pageWillShow(at: start)
+        model.pageDidHide(at: start)
+        model.pageWillShow(at: start + 40)
+        XCTAssertEqual(model.query, "carbon")
+        model.pageDidHide(at: start + 50)
+        model.pageWillShow(at: start + 50 + 59)
+        XCTAssertEqual(model.query, "carbon")
+        model.pageDidHide(at: start + 120)
+        model.pageWillShow(at: start + 120 + DrifterHomeModel.searchResetDelay)
+        XCTAssertEqual(model.query, "")
+    }
+
     func testFailedLaunchKeepsSharedHomeDraftAndComposerText() throws {
         let root = directory()
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

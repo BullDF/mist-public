@@ -15,10 +15,15 @@ actor FakeMailServer: MailTransport {
     var sent: [Data] = []
     var envelopes: [[MailAddress]] = []
     var appended: [(String, Data)] = []
+    var moveCount = 0
+    var returnsCopyUID = true
+    var pauseBeforeMove: (@Sendable () async -> Void)?
     var watchers: [UUID: AsyncStream<MailPushEvent>.Continuation] = [:]
     func check() throws { if let failure { throw failure } }
     func setFailure(_ value: MailError?) { failure = value }
     func setActionFailure(_ value: MailError?) { actionFailure = value }
+    func omitCopyUID() { returnsCopyUID = false }
+    func pauseNextMove(_ pause: @escaping @Sendable () async -> Void) { pauseBeforeMove = pause }
     func setGmail() { gmail = true; boxes["All Mail"] = []; boxes["Starred"] = []; boxes["Important"] = [] }
     func put(_ message: MailRemoteMessage, in mailbox: String = "INBOX", body: MailBody = .init(plainText: "Test body")) {
         boxes[mailbox, default: []].removeAll { $0.uid == message.uid }
@@ -72,15 +77,20 @@ actor FakeMailServer: MailTransport {
     func setFlag(_ flag: String, value: Bool, range: ClosedRange<UInt32>, in mailbox: String) throws {
         try setFlag(flag, value: value, uids: (boxes[mailbox] ?? []).filter { range.contains($0.uid) }.map(\.uid), in: mailbox)
     }
-    func move(_ uids: [UInt32], from: String, to: String) throws -> MailMoveResult? {
+    func move(_ uids: [UInt32], from: String, to: String) async throws -> MailMoveResult? {
         try check(); guard boxes[to] != nil else { throw MailError.serverRejected("No destination") }
+        moveCount += 1
+        if let pauseBeforeMove {
+            self.pauseBeforeMove = nil
+            await pauseBeforeMove()
+        }
         var mapping: [UInt32: UInt32] = [:]
         for var message in boxes[from] ?? [] where uids.contains(message.uid) {
             let original = message.uid; message.uid = nextUID[to] ?? 1
             mapping[original] = message.uid; put(message, in: to)
         }
         boxes[from]?.removeAll { uids.contains($0.uid) }
-        return .init(uidValidity: validity[to] ?? 1, uids: mapping)
+        return returnsCopyUID ? .init(uidValidity: validity[to] ?? 1, uids: mapping) : nil
     }
     func delete(_ uids: [UInt32], in mailbox: String) throws { try check(); boxes[mailbox]?.removeAll { uids.contains($0.uid) } }
     func createMailbox(_ name: String) throws { try check(); boxes[name] = boxes[name] ?? [] }

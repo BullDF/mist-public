@@ -11,6 +11,7 @@ final class BrowserAgentScreencast {
     private var pendingAcks: [Int] = []
     private var latestImage: CGImage?
     private var stopped = false
+    private var paused = false
     private let onFrame: (CGImage) -> Void
 
     init(tab: Tab, targetId: String, onFrame: @escaping (CGImage) -> Void) {
@@ -37,7 +38,7 @@ final class BrowserAgentScreencast {
 
     private func event(_ method: String, _ params: [String: Any]) {
         guard !stopped, method == "Page.screencastFrame", let id = params["sessionId"] as? Int else { return }
-        if let encoded = params["data"] as? String, let data = Data(base64Encoded: encoded),
+        if !paused, let encoded = params["data"] as? String, let data = Data(base64Encoded: encoded),
            let source = CGImageSourceCreateWithData(data as CFData, nil),
            let image = CGImageSourceCreateImageAtIndex(source, 0, nil) { latestImage = image }
         pendingAcks.append(id)
@@ -52,7 +53,7 @@ final class BrowserAgentScreencast {
                 while !stopped, !pendingAcks.isEmpty {
                     try await Task.sleep(nanoseconds: 100_000_000)
                     guard !stopped, !pendingAcks.isEmpty else { break }
-                    if let image = latestImage { latestImage = nil; onFrame(image) }
+                    if !paused, let image = latestImage { latestImage = nil; onFrame(image) }
                     let id = pendingAcks.removeFirst()
                     _ = try await session.command("Page.screencastFrameAck", params: ["sessionId": id], timeout: 2)
                 }
@@ -60,6 +61,10 @@ final class BrowserAgentScreencast {
             ackTask = nil
         }
     }
+
+    func pause() { paused = true; latestImage = nil }
+
+    func resume() { paused = false }
 
     func stop() {
         guard !stopped else { return }

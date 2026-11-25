@@ -99,7 +99,8 @@ final class ContentSurfaceHostingTests: XCTestCase {
         stack.show(tabs.enumerated().map { .init(tab: $0.element, mount: $0.offset == 0 ? .live : .still, still: nil) }, aspect: 0.625)
         XCTAssertEqual(stack.visibleTabIds, [1, 2, 3])
         let first = try XCTUnwrap(stack.card(for: 1))
-        XCTAssertEqual(first.frame.width, 400, accuracy: 0.01)
+        // 400 pt at full width, narrowed so three cards and the +N chip fit.
+        XCTAssertEqual(first.frame.width, 381, accuracy: 0.01)
         for card in stack.visibleCards { XCTAssertEqual(card.frame.size, first.frame.size) }
         let original = first.frame.size
         stack.show(tabs.reversed().map { .init(tab: $0, mount: .still, still: nil) }, aspect: 0.625)

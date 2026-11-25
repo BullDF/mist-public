@@ -68,6 +68,10 @@ final class ShellWindow: NSWindow {
     }
 
     private func forwardCommand(_ selector: Selector, sender: Any?) {
+        if let item = sender as? NSMenuItem, CommandDispatcher.mailHistoryMenuEnabled(item.tag, window: self) != nil {
+            _ = CommandDispatcher.dispatchCommand(item, window: self)
+            return
+        }
         guard let target = commandTargetWindow else {
             if let session = windowController as? SpaceSessionController,
                session.isDormant, pendingCommands.count < Self.pendingCommandLimit,
@@ -119,7 +123,8 @@ final class ShellWindow: NSWindow {
                 || item.action == #selector(ShellWindow.commandDispatchUsingKeyModifiers(_:)) else {
             return super.validateUserInterfaceItem(item)
         }
-        if let enabled = CommandDispatcher.nativePageZoomEnabled(item.tag, window: self) { return enabled }
+        if let enabled = CommandDispatcher.nativePageZoomEnabled(item.tag, window: self)
+            ?? CommandDispatcher.mailHistoryMenuEnabled(item.tag, window: self) { return enabled }
         guard let target = commandTargetWindow else {
             // A dormant session's Browser is ~150 ms away; keep the items
             // usable and queue what is chosen.

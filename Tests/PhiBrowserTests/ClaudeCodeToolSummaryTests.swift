@@ -317,7 +317,7 @@ final class ClaudeCodeToolSummaryTests: XCTestCase {
         XCTAssertTrue(paired[1].changes.isEmpty)
         XCTAssertEqual(marked(paired[2]), ["escalated"])
         XCTAssertTrue(preview(["+first", "+second"]).allSatisfy { $0.changes.isEmpty })
-        XCTAssertTrue(preview(["-" + String(repeating: "a", count: 2001), "+" + String(repeating: "b", count: 2001)]).allSatisfy { $0.changes.isEmpty })
+        XCTAssertTrue(preview(["-" + String(repeating: "a.", count: 1001), "+" + String(repeating: "b.", count: 1001)]).allSatisfy { $0.changes.isEmpty })
     }
 
     func testLongStructuredDiffKeepsBothLineSequencesAndAllOutput() throws {
@@ -361,6 +361,23 @@ final class ClaudeCodeToolSummaryTests: XCTestCase {
         XCTAssertEqual(ClaudeCodeToolSummary.hunks(claude, oldStart: 12, newStart: 14),
                        [ClaudeCodeToolSummary.Hunk(oldStart: 12, newStart: 14, lines: claude)])
         XCTAssertTrue(ClaudeCodeToolSummary.hunks([" same", " lines"], oldStart: 1, newStart: 1).isEmpty)
+    }
+
+    func testLongBase64RunsShowAsTheirSize() {
+        let payload = String(repeating: "iVBORw0KGgo/", count: 100) + "=="
+        let size = ByteCountFormatter.string(fromByteCount: Int64(payload.count * 3 / 4), countStyle: .file)
+        let content = "<img src=\"data:image/png;base64,\(payload)\" alt=\"Shot\">\n<p>Short line</p>\n"
+        let write = ClaudeCodeToolSummary.format(tool: "Write", input: .object(["file_path": .string("report.html"), "content": .string(content)]),
+                                                 folder: folder)
+        XCTAssertEqual(write.preview.map(\.text), ["<img src=\"data:image/png;base64,… (\(size))\" alt=\"Shot\">", "<p>Short line</p>"])
+        let patch: ClaudeCodeJSON = .object(["oldStart": .number(1), "newStart": .number(1),
+                                             "lines": .array([.string("-<img src=\"a.png\">"), .string("+<img src=\"data:image/png;base64,\(payload)\">")])])
+        let edit = ClaudeCodeToolSummary.format(tool: "Edit", input: .object(["file_path": .string("report.html")]),
+                                                result: .object(["structuredPatch": .array([patch])]), folder: folder)
+        XCTAssertEqual(edit.preview.last?.text, "+<img src=\"data:image/png;base64,… (\(size))\">")
+        // Runs shorter than the threshold, like hashes, stay as they are.
+        let hash = String(repeating: "a1b2", count: 49)
+        XCTAssertEqual(ClaudeCodeToolSummary.elidingBase64("sha " + hash), "sha " + hash)
     }
 
     func testRelativeAndHomePathsRespectDirectoryBoundaries() {

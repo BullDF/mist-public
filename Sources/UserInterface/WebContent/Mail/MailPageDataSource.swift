@@ -40,6 +40,9 @@ protocol MailPageDataSource: AnyObject {
     func refresh(_ mailboxes: [UUID]) async throws
     func loadOlder(_ mailbox: UUID) async throws
     func perform(_ action: MailPageAction, on id: UUID) async throws -> UUID
+    func undo(_ operationIDs: [UUID]) async throws -> MailUndoResult
+    func cancelPendingUndoMove(_ operationID: UUID) async throws -> Bool
+    func currentSummary(_ id: UUID) async throws -> MailMessageSummary
     func canArchive(_ id: UUID) async -> Bool
     func trash(_ id: UUID) async throws -> UUID
     func drafts() async throws -> [MailDraft]
@@ -93,6 +96,24 @@ final class EngineMailPageDataSource: MailPageDataSource {
         case .delete: return try await engine.delete(id)
         case .move(let box): return try await engine.move(id, to: box)
         }
+    }
+    func undo(_ operationIDs: [UUID]) async throws -> MailUndoResult {
+        let engine = try requireEngine()
+        var result = MailUndoResult()
+        for id in operationIDs.reversed() {
+            let undone = try await engine.undo(id)
+            result.operationIDs += undone.operationIDs
+            result.messageIDs += undone.messageIDs
+        }
+        return result
+    }
+    func cancelPendingUndoMove(_ operationID: UUID) async throws -> Bool {
+        try await requireEngine().cancelPendingUndoMove(operationID)
+    }
+    func currentSummary(_ id: UUID) async throws -> MailMessageSummary {
+        let engine = try requireEngine()
+        guard let current = try await engine.resolveCurrentMessageID(id) else { throw MailError.notFound }
+        return try await engine.summary(current)
     }
     func canArchive(_ id: UUID) async -> Bool {
         (try? await requireEngine().canArchive(id)) ?? false

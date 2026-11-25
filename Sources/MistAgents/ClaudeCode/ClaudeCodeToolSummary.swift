@@ -18,6 +18,7 @@ struct ClaudeCodeToolSummary: Equatable {
         var numberSpan: Span? { number.map { Span(text: String($0), style: .dim) } }
 
         init(_ text: String, bold: [String] = [], number: Int? = nil, kind: Kind = .normal) {
+            let text = ClaudeCodeToolSummary.elidingBase64(text)
             self.number = number
             self.kind = kind
             let tokens = bold.filter { !$0.isEmpty }.sorted { $0.count > $1.count }
@@ -52,6 +53,23 @@ struct ClaudeCodeToolSummary: Equatable {
         var line = Line(expanded ? AgentChatStrings.toolCollapse : String.localizedStringWithFormat(AgentChatStrings.toolMore, hiddenLineCount))
         line.spans = line.spans.map { Span(text: $0.text, style: .dim) }
         return line
+    }
+
+    /// A run of base64 at least this long shows as `…` and its decoded size: an HTML report with embedded
+    /// screenshots filled a write's preview with thousands of wrapped lines of data URIs.
+    static let base64ElisionLength = 200
+    private static let base64Run = try! NSRegularExpression(pattern: "[A-Za-z0-9+/]{\(base64ElisionLength),}={0,2}")
+
+    static func elidingBase64(_ text: String) -> String {
+        guard text.utf8.count >= base64ElisionLength else { return text }
+        let source = text as NSString
+        var result = "", end = 0
+        for match in base64Run.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+            let size = ByteCountFormatter.string(fromByteCount: Int64(match.range.length * 3 / 4), countStyle: .file)
+            result += source.substring(with: NSRange(location: end, length: match.range.location - end)) + "… (" + size + ")"
+            end = NSMaxRange(match.range)
+        }
+        return end == 0 ? text : result + source.substring(from: end)
     }
 
     static func path(_ path: String, folder: URL) -> String {

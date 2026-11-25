@@ -442,7 +442,7 @@ final class MistSlashCommandPopupTests: XCTestCase {
         XCTAssertTrue(editor.textView.layoutManager?.delegate === AgentChatSlashLayoutDelegate.shared)
         editor.textView.insertText(" hello", replacementRange: editor.textView.selectedRange())
         XCTAssertEqual(storage.attribute(.foregroundColor, at: 5, effectiveRange: nil) as? NSColor, .labelColor)
-        XCTAssertEqual((storage.attribute(.font, at: 5, effectiveRange: nil) as? NSFont)?.isFixedPitch, false)
+        XCTAssertEqual(storage.attribute(.font, at: 5, effectiveRange: nil) as? NSFont, AgentChatTypography.font(ofSize: 16))
         editor.textView.setSelectedRange(NSRange(location: 6, length: 2))
         editor.slashCommands = commands
         XCTAssertEqual(editor.textView.selectedRange(), NSRange(location: 6, length: 2))

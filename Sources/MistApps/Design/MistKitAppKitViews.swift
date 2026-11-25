@@ -640,3 +640,84 @@ final class MistNoticeBar: NSView {
         if let actionTitle { action.title = actionTitle }
     }
 }
+
+// MARK: - Toast
+
+/// A brief confirmation floating over a page, like a terminal's "copied" note: a card-fill capsule holding the success
+/// dot and one line, which fades in, stays `duration` and fades out. A newer `show` replaces the line and restarts the
+/// clock. It never takes a click, so the content under it keeps them. The host places it at its intrinsic size.
+final class MistToastView: NSView {
+    static let height: CGFloat = 28
+    static let duration: TimeInterval = 1.5
+    private static let padding: CGFloat = 12
+    private static let gap: CGFloat = 7
+    let label = NSTextField.mistLabel(style: .secondary)
+    private let dot = MistDotView(color: .mistSuccess)
+    private var fadeOut: DispatchWorkItem?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.borderWidth = MistKit.borderWidth
+        phiLayer?.setBackgroundColor(.mistCardFill)
+        phiLayer?.setBorderColor(.mistHairline)
+        if let shadow = MistElevation.card.shadows.last {
+            layer?.shadowOpacity = 1
+            layer?.shadowRadius = shadow.blur / 2
+            layer?.shadowOffset = CGSize(width: 0, height: -shadow.y)
+            phiLayer?[\.shadowColor] = Mapper { _, appearance in
+                NSColor.black.withAlphaComponent(shadow.opacity(appearance)).cgColor
+            }.optional
+        }
+        addSubview(dot)
+        addSubview(label)
+        isHidden = true
+        alphaValue = 0
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// The label's cell draws inside its insets, which the label's own intrinsic width leaves out.
+    override var intrinsicContentSize: NSSize {
+        let labelWidth = label.cell?.cellSize.width ?? label.intrinsicContentSize.width
+        return NSSize(width: ceil(2 * Self.padding + MistKit.dotSide + Self.gap + labelWidth), height: Self.height)
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = bounds.height / 2
+        // A shadow with no path is derived from the layer's pixels in an offscreen pass.
+        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: bounds.height / 2, cornerHeight: bounds.height / 2, transform: nil)
+        dot.frame = NSRect(x: Self.padding, y: ((bounds.height - MistKit.dotSide) / 2).rounded(), width: MistKit.dotSide, height: MistKit.dotSide)
+        let labelHeight = label.intrinsicContentSize.height
+        let labelX = dot.frame.maxX + Self.gap
+        label.frame = NSRect(x: labelX, y: ((bounds.height - labelHeight) / 2).rounded(), width: max(0, bounds.width - labelX - Self.padding), height: labelHeight)
+    }
+
+    /// Shows `text`; the host places the toast at its new `intrinsicContentSize`.
+    func show(_ text: String) {
+        label.stringValue = text
+        needsLayout = true
+        fadeOut?.cancel()
+        isHidden = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            animator().alphaValue = 1
+        }
+        let fade = DispatchWorkItem { [weak self] in self?.hide() }
+        fadeOut = fade
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration, execute: fade)
+    }
+
+    private func hide() {
+        fadeOut = nil
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.3
+            animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            // A `show` during the fade set the alpha back to 1.
+            guard let self, self.alphaValue == 0 else { return }
+            self.isHidden = true
+        }
+    }
+}

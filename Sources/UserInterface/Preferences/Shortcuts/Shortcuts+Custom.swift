@@ -318,7 +318,8 @@ extension Shortcuts {
                         .IDC_WINDOW_MUTE_SITE,
                         .IDC_TAB_SEARCH,
                         .PHI_RETURN_TO_START_PAGE,
-                        .PHI_SET_START_PAGE]
+                        .PHI_SET_START_PAGE,
+                        .PHI_UNPIN_AND_CLOSE_TAB]
             case .peek:
                 return [.PHI_PEEK_OPEN_IN_SPACE]
             }
@@ -672,7 +673,7 @@ extension CommandWrapper {
              .PHI_MAKE_PRIMARY_WINDOW, .PHI_NEW_DRIFTER_CHAT,
              .IDC_TAB_SEARCH, .IDC_DUPLICATE_TAB, .IDC_WINDOW_PIN_TAB,
              .IDC_DEV_TOOLS, .IDC_DEV_TOOLS_INSPECT, .IDC_DEV_TOOLS_CONSOLE,
-             .PHI_SET_START_PAGE, .PHI_RETURN_TO_START_PAGE,
+             .PHI_SET_START_PAGE, .PHI_RETURN_TO_START_PAGE, .PHI_UNPIN_AND_CLOSE_TAB,
              .PHI_TOGGLE_CHATBAR, .PHI_SWITCH_CHAT_PANEL_AND_TAB, .PHI_CLOSE_PANEL_CHAT, .PHI_NEW_CONVERSATION, .PHI_OPEN_CLIPBOARD, .PHI_OPEN_DRIFTER, .PHI_OPEN_MAIL,
              .PHI_DRIFTER_MODEL_MENU, .PHI_DRIFTER_EFFORT_MENU,
              .PHI_DRIFTER_PREVIOUS_MARKER, .PHI_DRIFTER_NEXT_MARKER,
@@ -738,6 +739,7 @@ extension CommandWrapper {
         .PHI_CLOSE_PANEL_CHAT: .init(title: "Close Chat", keywords: ["chat panel", "close chat", "drifter", "chat"]),
         .PHI_SET_START_PAGE: .init(title: "Set Current Page as Start Page", keywords: ["start page", "tab group", "group", "home"]),
         .PHI_RETURN_TO_START_PAGE: .init(title: "Return to Start Page", keywords: ["start page", "tab group", "group", "home", "back"]),
+        .PHI_UNPIN_AND_CLOSE_TAB: .init(title: "Unpin and Close", keywords: ["unpin", "close tab", "pinned tab", "pin", "close"]),
         .PHI_TAB_SWITCHER_FORWARD: .init(title: "Show Tab Switcher", keywords: ["tab switcher", "forward"]),
         .PHI_TAB_SWITCHER_BACKWARD: .init(title: "Show Tab Switcher(Reverse)", keywords: ["tab switcher", "backward"]),
         .PHI_NEW_CONVERSATION: .init(title: "New Chat", keywords: ["new conversation", "new chat", "chat panel", "ai", "chat"]),

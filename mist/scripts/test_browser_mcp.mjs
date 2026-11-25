@@ -226,7 +226,7 @@ test('Slack definitions merge unchanged, filter names and collisions, and cache 
     slackDefinition('slack_BAD'), slackDefinition('slack_'), slackDefinition('slack_bad-name'), read), slackOptions)
   for (let id = 1; id <= 2; id++) {
     const listed = (await f.server.dispatch(request(id, 'tools/list'))).result.tools
-    assert.equal(listed.length, 53)
+    assert.equal(listed.length, 57)
     assert.deepEqual(listed.slice(-2), [read, slackSend])
     assert.equal(listed.filter(t => t.name === 'list_tabs').length, 1)
   }
@@ -249,7 +249,7 @@ test('Slack discovery logs and retries failures and empty lists on the next tool
     if (attempt === 1) throw new Error('agentSpace.slack.tools: timed out after 20000ms')
     return { ok: true, tools: attempt === 2 ? [] : [slackSend] }
   } }, slackOptions)
-  for (const [index, count] of [51, 51, 52, 52].entries()) {
+  for (const [index, count] of [55, 55, 56, 56].entries()) {
     assert.equal((await f.server.dispatch(request(index, 'tools/list'))).result.tools.length, count)
   }
   assert.equal(attempt, 3)
@@ -556,6 +556,92 @@ test('viewport coordinates map clicks and clips while close-ups preserve the las
   const drags = f.calls.filter(c => c[0] === 'drag').length
   await f.call('drag', { ref: 12, toRef: 13 })
   assert.equal(f.calls.filter(c => c[0] === 'drag').length, drags + 1)
+})
+
+test('screenshot coordinates are refused after the working tab viewport changes size', async () => {
+  let size = [1700, 1100]
+  let viewportReads = 0
+  const client = { send: async (method, args, sid, timeout) => {
+    assert.equal(method, 'Runtime.evaluate')
+    if (args.expression === '[innerWidth, innerHeight]') {
+      assert.deepEqual([args.returnByValue, sid, timeout], [true, 'page', 2000])
+      viewportReads++
+      return { result: { value: size } }
+    }
+    return { result: { value: args.expression === '[scrollX, scrollY]' ? [0, 0] : 'visible' } }
+  } }
+  const f = fixture({
+    withPageSession: async run => run(client, 'page'),
+    hover: async () => {},
+    phiSend: async method => method.endsWith('.screenshot') ? shot(png, 0.5) : { ok: true },
+  })
+  const screenshotMethod = 'agentSpace.spaces.screenshot'
+  const clip = { x: 10, y: 20, width: 30, height: 40 }
+  const actions = [
+    ['click', { x: 10, y: 20 }, ['click', 20, 40]],
+    ['hover', { x: 10, y: 20 }, ['hover', 20, 40]],
+    ['drag', { x: 10, y: 20, toX: 30, toY: 40 }, ['drag', [20, 40], [60, 80]]],
+    ['drag', { x: 10, y: 20, toRef: 13 }, ['drag', [20, 40], '@13']],
+    ['drag', { ref: 12, toX: 30, toY: 40 }, ['drag', '@12', [60, 80]]],
+    ['screenshot', { clip }, ['phiSend', screenshotMethod, {
+      windowId: 42, tabId: 2, save: false, clip: { x: 20, y: 40, width: 60, height: 80 },
+    }]],
+  ]
+  const inputAndCaptures = () => f.calls.filter(c => ['click', 'hover', 'drag'].includes(c[0]) || c[1] === screenshotMethod)
+  await f.call('use_tab', { tabId: 2 })
+  assert.notEqual((await f.call('screenshot')).result.isError, true)
+  for (const [name, args, expected] of actions) {
+    assert.notEqual((await f.call(name, args)).result.isError, true)
+    assert.deepEqual(inputAndCaptures().at(-1).slice(0, expected.length), expected)
+  }
+
+  size = [1699, 1100]
+  assert.notEqual((await f.call('click', { x: 10, y: 20 })).result.isError, true)
+  assert.deepEqual(inputAndCaptures().at(-1), ['click', 20, 40])
+
+  size = [1250, 1100]
+  const before = inputAndCaptures().length
+  for (const [name, args] of [...actions, ['save_screenshot', { path: '/tmp/mist-stale-viewport-test.png', clip }]]) {
+    const reply = await f.call(name, args)
+    assert.equal(reply.result.isError, true)
+    assert.match(decode(reply).error, /viewport changed from 1700×1100 to 1250×1100/)
+    assert.ok(decode(reply).error.endsWith(args.clip ? 'pass ref for the close-up.' : 'use a ref from snapshot.'))
+  }
+  assert.equal(inputAndCaptures().length, before)
+
+  const readsBeforeRefs = viewportReads
+  for (const [name, args] of [['click', { ref: 12 }], ['hover', { ref: 12 }],
+    ['drag', { ref: 12, toRef: 13 }], ['screenshot', { ref: 12 }]]) {
+    assert.notEqual((await f.call(name, args)).result.isError, true)
+  }
+  assert.equal(viewportReads, readsBeforeRefs)
+
+  assert.notEqual((await f.call('screenshot')).result.isError, true)
+  assert.notEqual((await f.call('click', { x: 10, y: 20 })).result.isError, true)
+  assert.deepEqual(inputAndCaptures().at(-1), ['click', 20, 40])
+
+  size = [1250, 1098]
+  assert.match(decode(await f.call('click', { x: 10, y: 20 })).error, /viewport changed from 1250×1100 to 1250×1098/)
+})
+
+test('screenshot coordinate mapping still works if viewport size is unavailable', async () => {
+  for (const unavailable of [async () => [], async () => { throw new Error('Page session unavailable') }]) {
+    let sizeAvailable = false
+    const f = fixture({
+      withPageSession: async run => sizeAvailable
+        ? run({ send: async () => ({ result: { value: [1700, 1100] } }) }, 'page')
+        : unavailable(),
+      phiSend: async method => method.endsWith('.screenshot') ? shot(png, 0.5) : { ok: true },
+    })
+    await f.call('use_tab', { tabId: 2 })
+    for (const availableAtCapture of [false, true]) {
+      sizeAvailable = availableAtCapture
+      assert.notEqual((await f.call('screenshot')).result.isError, true)
+      sizeAvailable = !availableAtCapture
+      assert.notEqual((await f.call('click', { x: 10, y: 20 })).result.isError, true)
+      assert.deepEqual(f.calls.findLast(c => c[0] === 'click'), ['click', 20, 40])
+    }
+  }
 })
 
 test('go_back and go_forward move the working tab through its history and refuse Mist app entries', async () => {
@@ -1201,7 +1287,7 @@ test('tools/list exposes the exact tool set, schemas, and annotations without bi
   const { result: { tools } } = await server.dispatch(request(1, 'tools/list'))
   assert.deepEqual(tools.map(t => t.name), [
     'list_tabs', 'group_tabs', 'use_tab', 'open_tab', 'navigate', 'reload', 'go_back', 'go_forward', 'snapshot', 'read_page', 'evaluate', 'read_console', 'read_network', 'click', 'drag', 'hover', 'fill',
-    'type_text', 'upload_files', 'press_key', 'select_option', 'select_text', 'scroll', 'scroll_until', 'wait_for', 'handle_dialog', 'close_tab', 'screenshot', 'save_page', 'export_bookmarks', 'list_downloads', 'search_history', 'save_screenshot', 'start_recording', 'stop_recording', 'list_agents', 'mount_to_tab', 'unmount_from_tab', 'list_mail_accounts', 'list_mail', 'search_mail', 'read_mail', 'write_mail_draft', 'send_mail', 'update_mail', 'message_agent', 'spawn_agent', 'read_agent', 'stop_agent', 'close_agent', 'hand_off',
+    'type_text', 'upload_files', 'press_key', 'select_option', 'select_text', 'scroll', 'scroll_until', 'wait_for', 'handle_dialog', 'close_tab', 'screenshot', 'save_page', 'export_bookmarks', 'list_downloads', 'search_history', 'save_screenshot', 'start_recording', 'stop_recording', 'list_agents', 'mount_to_tab', 'unmount_from_tab', 'list_mail_accounts', 'list_mail', 'search_mail', 'read_mail', 'write_mail_draft', 'send_mail', 'update_mail', 'message_agent', 'spawn_agent', 'read_agent', 'stop_agent', 'close_agent', 'schedule_prompt', 'list_schedules', 'cancel_schedule', 'notify', 'hand_off',
   ])
   for (const [name, properties] of [['start_recording', { path: { type: 'string', minLength: 1 }, overwrite: { type: 'boolean' } }], ['stop_recording', {}]]) {
     const definition = tools.find(tool => tool.name === name)
@@ -1213,7 +1299,7 @@ test('tools/list exposes the exact tool set, schemas, and annotations without bi
     properties: { url: { type: 'string', minLength: 1 }, groupId: { type: 'string', minLength: 1 }, ungrouped: { type: 'boolean' } },
     allOf: [{ not: { required: ['groupId', 'ungrouped'] } }],
   })
-  const readonly = new Set(['list_tabs', 'use_tab', 'scroll', 'scroll_until', 'hover', 'select_text', 'snapshot', 'read_page', 'read_console', 'read_network', 'list_downloads', 'search_history', 'wait_for', 'screenshot', 'list_agents', 'read_agent', 'list_mail_accounts', 'list_mail', 'search_mail', 'read_mail'])
+  const readonly = new Set(['list_tabs', 'use_tab', 'scroll', 'scroll_until', 'hover', 'select_text', 'snapshot', 'read_page', 'read_console', 'read_network', 'list_downloads', 'search_history', 'wait_for', 'screenshot', 'list_agents', 'read_agent', 'list_mail_accounts', 'list_mail', 'search_mail', 'read_mail', 'list_schedules'])
   for (const name of ['snapshot', 'read_page']) assert.deepEqual(tools.find(t => t.name === name).inputSchema.properties.tabId, tools.find(t => t.name === 'use_tab').inputSchema.properties.tabId)
   for (const name of ['press_key', 'click']) {
     assert.deepEqual(tools.find(t => t.name === name).inputSchema.properties.modifiers,
@@ -1239,7 +1325,7 @@ test('tools/list exposes the exact tool set, schemas, and annotations without bi
     assert.ok(Array.isArray(tool.inputSchema.required))
     for (const key of tool.inputSchema.required) assert.ok(tool.inputSchema.properties[key])
     assert.equal(tool.annotations.readOnlyHint, readonly.has(tool.name) ? true : undefined, tool.name)
-    assert.equal(tool.annotations.destructiveHint, ['close_tab', 'close_agent'].includes(tool.name) ? true : undefined, tool.name)
+    assert.equal(tool.annotations.destructiveHint, ['close_tab', 'close_agent', 'cancel_schedule'].includes(tool.name) ? true : undefined, tool.name)
   }
   assert.deepEqual(calls, [])
 })
@@ -2186,7 +2272,7 @@ test('actual CLI supports stdio handshake without connecting to a real socket', 
   const replies = result.stdout.trim().split('\n').map(JSON.parse)
   assert.deepEqual(replies.map(r => r.id), [1, 2, 3])
   assert.equal(replies[0].result.protocolVersion, 'future-version')
-  assert.equal(replies[1].result.tools.length, 51)
+  assert.equal(replies[1].result.tools.length, 55)
 })
 
 test('actual CLI lists Slack tools over /phi-agent alone while Mist refuses a turn\'s browser connections', async () => {

@@ -43,6 +43,7 @@ final class DrifterHomeViewController: NSViewController, MistAppPage {
 
     override func viewWillAppear() {
         super.viewWillAppear()
+        model.pageWillShow()
         composer.applyLaunchDraft(DrifterHomeModel.draft)
         reloadSettings()
         defaultsSubscription = NotificationCenter.default.publisher(for: .drifterLaunchSettingsDidChange)
@@ -58,6 +59,7 @@ final class DrifterHomeViewController: NSViewController, MistAppPage {
     override func viewDidDisappear() {
         super.viewDidDisappear()
         model.disappear()
+        model.pageDidHide()
         defaultsSubscription = nil
     }
 

@@ -4,17 +4,105 @@ import XCTest
 
 @MainActor
 final class MailPageModelTests: XCTestCase {
-    func testDeletingSelectedMessageSelectsNextAndMovesItToTrash() async throws {
+    func testDeletingSelectedMessageSelectsNextThenUndoReselectsAndRedoRemovesIt() async throws {
         let source = FixtureMailPageDataSource(), model = MailPageModel(source: source, defaults: makeTestDefaults().defaults)
         await model.reloadState(); await model.reloadMessages()
         let first = try XCTUnwrap(model.messages.first), next = model.messages[1].id
-        model.selectMessage(first.id); model.perform(.delete)
+        model.selectMessage(first.id)
+        let delete = model.perform(.delete)
         XCTAssertEqual(model.selection, next)
-        for _ in 0..<100 where model.messages.contains(where: { $0.id == first.id }) { try await Task.sleep(for: .milliseconds(5)) }
+        await delete?.value
         XCTAssertFalse(model.messages.contains { $0.id == first.id })
         let state = try await source.snapshot(), trash = try XCTUnwrap(state.mailboxes.first { $0.accountID == first.accountID && $0.role == .trash })
         let deleted = try await source.messages(in: .mailbox(trash.id), before: nil, limit: 200)
         XCTAssertTrue(deleted.contains { $0.id == first.id })
+        XCTAssertTrue(model.canUndo)
+        await model.undo()
+        XCTAssertEqual(model.selection, first.id)
+        XCTAssertTrue(model.messages.contains { $0.id == first.id })
+        XCTAssertTrue(model.canRedo)
+        await model.redo()
+        XCTAssertEqual(model.selection, next)
+        XCTAssertFalse(model.messages.contains { $0.id == first.id })
+        XCTAssertTrue(model.canUndo)
+        XCTAssertFalse(model.canRedo)
+    }
+
+    func testOpeningUnreadMessageDoesNotRecordUndo() async throws {
+        let source = FixtureMailPageDataSource(), model = MailPageModel(source: source, defaults: makeTestDefaults().defaults)
+        await model.reloadState(); await model.reloadMessages()
+        let message = try XCTUnwrap(model.messages.first { !$0.flags.contains(MailFlags.seen) && !$0.hasAttachments })
+        let reader = MailReaderViewController(model: model)
+        reader.show(message)
+        // The empty undo drains the model's queue after the reader's automatic action.
+        await model.undo()
+        let seen = try await source.summary(message.id)
+        XCTAssertTrue(seen.flags.contains(MailFlags.seen))
+        XCTAssertFalse(model.canUndo)
+        XCTAssertFalse(model.canRedo)
+    }
+
+    func testNewActionClearsRedoAndRedoPreservesOlderEntries() async throws {
+        let source = FixtureMailPageDataSource(), model = MailPageModel(source: source, defaults: makeTestDefaults().defaults)
+        await model.reloadState(); await model.reloadMessages()
+        let first = model.messages[0], second = model.messages[1]
+        await model.perform(.seen(true), message: first)?.value
+        await model.perform(.flagged(true), message: second)?.value
+        await model.undo()
+        await model.undo()
+        await model.redo()
+        XCTAssertTrue(model.canRedo)
+        XCTAssertTrue(model.canUndo)
+        await model.perform(.seen(false), message: second)?.value
+        XCTAssertFalse(model.canRedo)
+    }
+
+    func testFailedOperationDropsItsUndoEntry() async throws {
+        let source = FixtureMailPageDataSource(), model = MailPageModel(source: source, defaults: makeTestDefaults().defaults)
+        model.start()
+        for _ in 0..<100 where !model.didStart { try await Task.sleep(for: .milliseconds(5)) }
+        let message = try XCTUnwrap(model.messages.first)
+        await model.perform(.flagged(false), message: message)?.value
+        XCTAssertTrue(model.canUndo)
+        try await source.failAction(XCTUnwrap(source.lastOperationID))
+        for _ in 0..<100 where model.canUndo { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertFalse(model.canUndo)
+        XCTAssertNotNil(model.banner)
+    }
+
+    func testPermanentDeleteInTrashDoesNotRecordUndo() async throws {
+        let source = FixtureMailPageDataSource(), model = MailPageModel(source: source, defaults: makeTestDefaults().defaults)
+        await model.reloadState(); await model.reloadMessages()
+        let message = try XCTUnwrap(model.messages.first)
+        _ = try await source.trash(message.id)
+        let trashed = try await source.summary(message.id)
+        await model.perform(.delete, message: trashed)?.value
+        XCTAssertFalse(model.canUndo)
+        XCTAssertFalse(model.canRedo)
+    }
+
+    func testUndoWithEmptyStackDoesNothing() async {
+        let model = MailPageModel(source: FixtureMailPageDataSource(), defaults: makeTestDefaults().defaults)
+        await model.reloadState(); await model.reloadMessages()
+        let before = model.messages
+        await model.undo()
+        XCTAssertEqual(model.messages, before)
+        XCTAssertNil(model.banner)
+        XCTAssertFalse(model.canRedo)
+    }
+
+    func testUndoAndRedoMarkAllReadAfterChangingMailbox() async throws {
+        let source = FixtureMailPageDataSource(), model = MailPageModel(source: source, defaults: makeTestDefaults().defaults)
+        await model.reloadState(); await model.reloadMessages()
+        let unread = model.state.unread.unifiedInbox
+        await model.markAllRead()
+        XCTAssertEqual(model.state.unread.unifiedInbox, 0)
+        model.selectMailbox(try XCTUnwrap(model.state.mailboxes.first { $0.role == .sent }).id.uuidString)
+        await model.undo()
+        let restored = try await source.snapshot()
+        XCTAssertEqual(restored.unread.unifiedInbox, unread)
+        await model.redo()
+        XCTAssertEqual(model.state.unread.unifiedInbox, 0)
     }
     func testFixturePagesAreCursorOrderedAndHaveFrenchNestedMailboxes() async throws {
         let source = FixtureMailPageDataSource(), state = try await source.snapshot()

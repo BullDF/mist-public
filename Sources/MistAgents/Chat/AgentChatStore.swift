@@ -444,11 +444,12 @@ final class AgentChatStore: ObservableObject {
         return chat
     }
 
-    /// Undoes `mount` or a panel start: the chat keeps running in its own tab, and a host panel showing it goes empty.
+    /// Undoes `mount` or a panel start: the chat keeps running in its own tab, and a host panel showing it closes empty.
     /// A new chat's draft that is only the host-tab mention the panel inserted goes too.
     func unmount(_ chatId: UUID) {
         let hosts = Set(panelHistory.filter { $0.value.contains(chatId) }.keys)
         guard !hosts.isEmpty else { return }
+        collapsePanels(showing: chatId)
         for host in hosts {
             panelHistory[host]?.removeAll { $0 == chatId }
             if panelChats[host] == chatId { panelChats[host] = nil }

@@ -216,8 +216,9 @@ extension LocalStore {
         // A failed read emits nothing, so subscribers keep their last good snapshot (a nil initial value is
         // dropped by the compactMap below).
         let fetch = { self.readableURLRules() }
-        let subject = CurrentValueSubject<[SpaceRoutingRule]?, Never>(fetch())
+        let subject = CurrentValueSubject<[SpaceRoutingRule]?, Never>(nil)
 
+        // Subscribe before the first fetch, so a save between them still refetches.
         let cancellable = NotificationCenter.default
             .publisher(for: .NSManagedObjectContextDidSave)
             .filter {
@@ -230,6 +231,7 @@ extension LocalStore {
             .sink { _ in
                 if let rules = fetch() { subject.send(rules) }
             }
+        if let rules = fetch() { subject.send(rules) }
 
         return subject
             .compactMap { $0 }

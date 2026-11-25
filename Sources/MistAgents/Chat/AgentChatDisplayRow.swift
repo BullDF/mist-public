@@ -68,13 +68,20 @@ enum AgentChatDisplayRow: Identifiable, Equatable {
         for item in items {
             if case let .permissionRequest(request) = item.kind, request.status != .pending,
                !["AskUserQuestion", "ExitPlanMode"].contains(request.toolName),
-               (toolsByName[request.toolName] ?? []).contains(where: { cache.input($0) == request.input }) { continue }
+               (toolsByName[request.toolName] ?? []).contains(where: { cache.input($0) == toolInput(of: request) }) { continue }
             if case let .toolCall(tool) = item.kind, awaitsFile(tool, cache: cache) { continue }
             if case let .toolCall(tool) = item.kind, isGroupable(tool, memory: memory, cwd: cwd, cache: cache) { run.append(item) }
             else { flush(); rows.append(.item(item)) }
         }
         flush()
         return rows
+    }
+
+    /// The CLI adds hidden `__`-prefixed fields to a permission's input (the Artifact tools' `__artifactConsentAskCanReachUser`),
+    /// which the tool call's own input lacks.
+    private static func toolInput(of request: AgentChatItem.PermissionRequest) -> ClaudeCodeJSON {
+        guard case let .object(fields) = request.input else { return request.input }
+        return .object(fields.filter { !$0.key.hasPrefix("__") })
     }
 
     /// A file edit shows once its file is known: memory's group claims a memory file's edit, so one shown while its

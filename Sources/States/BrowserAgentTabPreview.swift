@@ -175,11 +175,17 @@ final class BrowserAgentTabPreview {
         // requested scale in CSS coordinates, independently of the display.
         func clippedCaptures(_ rects: [CGRect], fullPage: Bool) async throws -> [CGImage] {
             guard !rects.isEmpty, rects.allSatisfy({ $0.width > 0 && $0.height > 0 }) else { throw CaptureError.unavailable }
-            if let page = tab.webContentWrapper?.nativeView,
-               !isBorrowing(tabId: tab.guid), BrowserAgentScreenshotCover.isVisible(page) {
-                let frame: CGImage
+            let stream = streams[tab.guid]
+            stream?.pause()
+            defer { stream?.resume() }
+            let page = tab.webContentWrapper?.nativeView
+            let needsCover = page.map { !isBorrowing(tabId: tab.guid) && BrowserAgentScreenshotCover.isVisible($0) } ?? false
+            var frame: CGImage?
+            if stream != nil || needsCover {
                 if let displayed { frame = displayed }
                 else { frame = try await capture(["format": "png"]) }
+            }
+            if needsCover, let page, let frame {
                 captureCover = BrowserAgentScreenshotCover(croppedImage: frame,
                     displaySize: CGSize(width: CGFloat(frame.width) / dpr, height: CGFloat(frame.height) / dpr),
                     page: page, backgroundColor: .white,
@@ -193,12 +199,13 @@ final class BrowserAgentTabPreview {
                     "clip": ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height, "scale": scale / dpr]],
                     timeout: fullPage ? 15 : 5))
             }
-            if captureCover != nil {
+            if captureCover != nil || stream != nil {
                 AgentUserSpaceDriveRegistry.shared.appWillSendPageCommand(toTab: tab.guid)
                 _ = try? await session.command("Runtime.evaluate", params: [
                     "expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
                     "awaitPromise": true], timeout: 0.5, closeOnTimeout: false)
             }
+            if stream != nil, let frame { try? updateViewportStill(frame, tabId: tab.guid) }
             return images
         }
         func clippedCapture(fullPage: Bool = false) async throws -> CGImage {

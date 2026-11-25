@@ -31,8 +31,6 @@ struct ChatButton: View {
     private enum Constants {
         /// Button background color.
         static let backgroundColor: ThemedColor = .themeButtonBackground
-        /// Hover background color.
-        static let hoveredBackgroundColor: ThemedColor = .themeButtonBackgroundOnHover
         /// Icon and label color.
         static let foregroundColor: ThemedColor = .themeButtonForeground
         /// Border color in dark appearance.
@@ -87,7 +85,8 @@ struct ChatButton: View {
                 minHeight: contentHeight,
                 maxHeight: contentHeight
             )
-            .themedBackground(isHovering ? Constants.hoveredBackgroundColor : Constants.backgroundColor)
+            .background(Color.black.opacity(isHovering ? 0.12 : 0))
+            .themedBackground(Constants.backgroundColor)
             .clipShape(Capsule())
             .overlay(
                 Capsule()

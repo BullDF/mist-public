@@ -500,7 +500,16 @@ extension SpaceSessionController: NSMenuItemValidation {
 
         tab.close()
     }
-    
+
+    @MainActor
+    @objc func unpinAndCloseTab(_ item: NSMenuItem) {
+        guard let tab = item.representedObject as? Tab,
+              let pinnedGuid = tab.guidInLocalDB, !pinnedGuid.isEmpty else {
+            return
+        }
+        browserState.unpinAndClosePinnedTab(pinnedGuid: pinnedGuid)
+    }
+
     @objc func closeOther(_ item: NSMenuItem) {
         guard let tab = item.representedObject as? Tab else {
             return

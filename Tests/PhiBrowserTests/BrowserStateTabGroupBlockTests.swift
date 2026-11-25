@@ -164,6 +164,45 @@ final class BrowserStateTabGroupBlockTests: XCTestCase {
         XCTAssertEqual(state.normalTabs.map(\.groupToken), ["A", "B", "B", "B"])
     }
 
+    // MARK: - removeTabsFromGroups
+
+    func testRemoveTabsFromGroups_movesAgentFolderTabsToEndOfNormalTabs() throws {
+        let state = try makeBrowserState()
+        seed(state: state, tabs: [
+            (guid: 100, url: "https://chat.example", token: nil),
+            (guid: 300, url: "https://f1.example", token: nil),
+            (guid: 301, url: "https://f2.example", token: nil),
+            (guid: 302, url: "https://f3.example", token: nil),
+            (guid: 101, url: "https://n1.example", token: nil),
+            (guid: 200, url: "https://a1.example", token: "A"),
+        ])
+        state.handleTabGroupCreated(token: "F",
+                                    title: "Chat" + BrowserAgentFolderState.titleMarker,
+                                    color: .blue,
+                                    isCollapsed: false,
+                                    initialTabIds: [300, 301, 302])
+
+        state.removeTabsFromGroups([301])
+
+        XCTAssertEqual(state.normalTabs.map(\.guid), [100, 300, 302, 101, 200, 301])
+        XCTAssertEqual(state.normalTabs.map(\.groupToken), [nil, "F", "F", nil, "A", nil])
+    }
+
+    func testRemoveTabsFromGroups_leavesOrdinaryGroupTabBesideItsGroup() throws {
+        let state = try makeBrowserState()
+        seed(state: state, tabs: [
+            (guid: 100, url: "https://n1.example", token: nil),
+            (guid: 200, url: "https://a1.example", token: "A"),
+            (guid: 201, url: "https://a2.example", token: "A"),
+            (guid: 101, url: "https://n2.example", token: nil),
+        ])
+
+        state.removeTabsFromGroups([201])
+
+        XCTAssertEqual(state.normalTabs.map(\.guid), [100, 200, 201, 101])
+        XCTAssertEqual(state.normalTabs.map(\.groupToken), [nil, "A", nil, nil])
+    }
+
     // MARK: - group-relative order sync
 
     func testGroupRelativeOrderSync_beforeOptimisticMembershipReturnsNil() throws {

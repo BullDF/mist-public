@@ -1416,7 +1416,7 @@ final class ShortcutSettingsPersistenceTests: XCTestCase {
         let bridge = try XCTUnwrap(ChromiumLauncher.sharedInstance().bridge)
         bridge.requestRebuildMainMenu()
         let model = ShortcutsViewModel()
-        for command in [CommandWrapper.PHI_SET_START_PAGE, .PHI_RETURN_TO_START_PAGE, .PHI_CLOSE_PANEL_CHAT,
+        for command in [CommandWrapper.PHI_SET_START_PAGE, .PHI_RETURN_TO_START_PAGE, .PHI_CLOSE_PANEL_CHAT, .PHI_UNPIN_AND_CLOSE_TAB,
                         .PHI_OPEN_MAIL, .PHI_ALTERNATE_NEW_TAB, .IDC_DEV_TOOLS] {
             XCTAssertNotNil(try item(command, in: model).shortcutKey, "\(command)")
             XCTAssertEqual(model.conflicts(for: command).map(\.name), [], "\(command)")

@@ -560,6 +560,13 @@ tab context menu's Set Current Page as Start Page and the sidebar icon's return
 arrow. They apply only in sidebar layouts and only when the action can run;
 otherwise the key stays with the page.
 
+## Unpin and Close
+
+`PHI_UNPIN_AND_CLOSE_TAB` (⌥⌘W) is a Tab menu item, in every layout, acting on
+the focused tab: a pinned tab closes and loses its pin, like the pinned tab
+context menu's Unpin and Close, where ⌘W keeps the pin; any other tab just
+closes.
+
 ## Product Defaults and User Overrides
 
 Mist supplies these defaults before user overrides are applied. The Framework
@@ -575,6 +582,7 @@ exports the differing defaults for Chromium commands:
 | Close Chat (Chat panel) | Command-Shift-E | None |
 | Set Current Page as Start Page | Command-Shift-S | None |
 | Return to Start Page | Command-Shift-H | Home (disabled) |
+| Unpin and Close | Command-Option-W | None |
 | Choose Model (focused Drifter composer) | Command-M | Minimize (disabled) |
 | Choose Effort (focused Drifter composer) | Command-period | Stop (disabled) |
 | Open DevTools | Command-Shift-I | Option-Command-I |

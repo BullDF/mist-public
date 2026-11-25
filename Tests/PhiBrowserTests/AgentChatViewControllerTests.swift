@@ -176,6 +176,83 @@ final class AgentChatViewControllerTests: XCTestCase {
         XCTAssertEqual(submissions, 0)
     }
 
+    func testControlReturnQueuesAndSendsNewMessageNow() throws {
+        let conversation = AgentConversation()
+        conversation.update(items: [], status: .running)
+        let composer = AgentChatComposer()
+        composer.bind(conversation)
+        var queue = AgentMessageQueue()
+        queue.enqueue(AgentQueuedMessage(id: "old", text: "Old"))
+        conversation.updateQueue(queue)
+        conversation.onQueue = { text, attachments, mentions in
+            queue.enqueue(AgentQueuedMessage(id: "new", text: text, attachments: attachments, mentions: mentions))
+            conversation.updateQueue(queue)
+        }
+        var sent: [String] = []
+        conversation.onSendQueuedNow = { sent.append($0) }
+        composer.editor.text = "New"
+        composer.editor.textView.contextMenuKeyDown(try promptKeyEvent(36, flags: .control))
+        XCTAssertEqual(sent, ["new"])
+        XCTAssertEqual(queue.messages.map(\.text), ["Old", "New"])
+        XCTAssertEqual(composer.editor.text, "")
+    }
+
+    func testControlReturnSendsFirstAvailableQueuedMessage() throws {
+        let conversation = AgentConversation()
+        let composer = AgentChatComposer()
+        composer.bind(conversation)
+        var queue = AgentMessageQueue()
+        queue.enqueue(AgentQueuedMessage(id: "delivering", text: "Delivering"))
+        queue.markDelivering("delivering")
+        queue.enqueue(AgentQueuedMessage(id: "first", text: "First"))
+        queue.enqueue(AgentQueuedMessage(id: "second", text: "Second"))
+        queue.pause()
+        conversation.updateQueue(queue)
+        var sent: [String] = []
+        conversation.onSendQueuedNow = { sent.append($0) }
+        composer.editor.textView.contextMenuKeyDown(try promptKeyEvent(76, flags: .control))
+        XCTAssertEqual(sent, ["first"])
+    }
+
+    func testControlReturnWithEmptyQueueDoesNothing() throws {
+        let conversation = AgentConversation()
+        let composer = AgentChatComposer()
+        composer.bind(conversation)
+        var calls = 0
+        conversation.onSendQueuedNow = { _ in calls += 1 }
+        conversation.onQueue = { _, _, _ in calls += 1 }
+        conversation.onSend = { _, _, _ in calls += 1 }
+        composer.editor.textView.contextMenuKeyDown(try promptKeyEvent(36, flags: .control))
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testControlReturnSendsIdleMessageNormally() throws {
+        let conversation = AgentConversation()
+        conversation.update(items: [], status: .idle)
+        let composer = AgentChatComposer()
+        composer.bind(conversation)
+        var sent: [String] = []
+        conversation.onSend = { text, _, _ in sent.append(text) }
+        composer.editor.text = "Hello"
+        composer.editor.textView.contextMenuKeyDown(try promptKeyEvent(36, flags: .control))
+        XCTAssertEqual(sent, ["Hello"])
+        XCTAssertEqual(composer.editor.text, "")
+    }
+
+    func testOtherContextMenuKeyDoesNotSendNow() throws {
+        let input = MistPromptTextView()
+        var calls = 0
+        input.onSendNow = { calls += 1 }
+        input.contextMenuKeyDown(try promptKeyEvent(0, flags: .control))
+        XCTAssertEqual(calls, 0)
+    }
+
+    private func promptKeyEvent(_ code: UInt16, flags: NSEvent.ModifierFlags) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                                      windowNumber: 0, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+                                      isARepeat: false, keyCode: code))
+    }
+
     func testComposerPromptGrowthAndImagePasteLimit() throws {
         let composer = AgentChatComposer()
         composer.onLaunch = { _, _, _ in true }
@@ -183,7 +260,7 @@ final class AgentChatViewControllerTests: XCTestCase {
         editor.text = "one"
         let oneLine = editor.inputHeight
         XCTAssertEqual(oneLine, 64)
-        let lineHeight = ceil(editor.textView.layoutManager!.defaultLineHeight(for: .systemFont(ofSize: 16)))
+        let lineHeight = ceil(editor.textView.layoutManager!.defaultLineHeight(for: AgentChatTypography.font(ofSize: 16)))
         editor.text = "one\ntwo"
         XCTAssertEqual(editor.inputHeight, oneLine + lineHeight + 4)
         editor.text = Array(repeating: "line", count: 8).joined(separator: "\n")
@@ -948,6 +1025,24 @@ final class AgentChatViewControllerTests: XCTestCase {
         }
     }
 
+    /// A new row's text view is filled before SwiftUI sizes it: its code controls wait for a width rather than lay the
+    /// text out a character per line, and its first width places them.
+    func testCodeButtonsWaitForTheViewsFirstWidth() throws {
+        let view = AgentChatTextView(frame: .zero, textContainer: nil)
+        view.textContainer?.widthTracksTextView = true
+        let renderer = MarkdownRenderer(nsFont: .systemFont(ofSize: 14), nsFontHeading: .boldSystemFont(ofSize: 20),
+            nsFontSubheading: .boldSystemFont(ofSize: 17), nsFontSmall: .monospacedSystemFont(ofSize: 12.5, weight: .regular),
+            textNS: .labelColor, dimNS: .secondaryLabelColor)
+        view.textStorage?.setAttributedString(renderer.markdownRuns("~~~\n" + String(repeating: "x", count: 5_000) + "\n~~~", color: .labelColor))
+        view.layout()
+        view.updateCodeControls()
+        XCTAssertTrue(view.codeButtons.isEmpty)
+        XCTAssertEqual(view.layoutManager?.firstUnlaidCharacterIndex(), 0)
+        view.setFrameSize(NSSize(width: 340, height: 600))
+        view.layout()
+        XCTAssertEqual(view.codeButtons.count, 1)
+    }
+
     func testCodeButtonsReuseUpdateCopyAndDisappear() throws {
         let view = AgentChatTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 600), textContainer: nil)
         view.textContainerInset = .zero
@@ -1280,6 +1375,58 @@ final class AgentChatViewControllerTests: XCTestCase {
         XCTAssertTrue(scroll.viewState.expandedPeerMessages.isEmpty)
     }
 
+    /// A selection made with the mouse, in a row's text view or SwiftUI's selectable text, is copied at release and cleared.
+    func testMouseSelectionInTranscriptCopiesAndClearsIt() throws {
+        let conversation = AgentConversation()
+        conversation.update(items: [.init(id: "reply", kind: .assistantText(text: "Copy **this** reply.", isStreaming: false)),
+                                    .init(id: "notice", kind: .notice(text: "Copy this notice.", level: .info))], status: .idle)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let scroll = AgentChatTranscriptScroll()
+        let pasteboard = NSPasteboard(name: .init("mist-tests-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        scroll.copyPasteboard = pasteboard
+        window.contentView = scroll
+        scroll.setContent(AgentChatTranscriptRows(conversation: conversation))
+        window.makeKeyAndOrderFront(nil)
+        scroll.layoutSubtreeIfNeeded()
+        let hosting = try XCTUnwrap(scroll.documentView?.subviews.first as? ThemedHostingView)
+        hosting.layoutSubtreeIfNeeded()
+        func views(in view: NSView, where match: (NSView) -> Bool) -> [NSView] {
+            view.subviews.flatMap { match($0) ? [$0] : views(in: $0, where: match) }
+        }
+        let text = try XCTUnwrap(views(in: hosting) { $0 is AgentChatTextView }.first as? AgentChatTextView)
+        let label = try XCTUnwrap(views(in: hosting) { !($0 is NSTextView) && $0 is NSServicesMenuRequestor }.first)
+        // The test host's window is never key, so a press only focuses it: the selection is set between press and release.
+        func select(in view: NSView, _ select: () -> Void) throws -> String? {
+            pasteboard.clearContents()
+            let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+            func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+                try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            }
+            NSApp.sendEvent(try mouse(.leftMouseDown))
+            select()
+            NSApp.sendEvent(try mouse(.leftMouseUp))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            return pasteboard.string(forType: .string)
+        }
+        XCTAssertTrue(scroll.copyToast.isHidden)
+        XCTAssertEqual(try select(in: text) { text.setSelectedRange(NSRange(location: 5, length: 4)) }, "this")
+        XCTAssertEqual(text.selectedRange().length, 0)
+        XCTAssertFalse(scroll.copyToast.isHidden)
+        XCTAssertEqual(scroll.copyToast.label.stringValue, AgentChatStrings.copiedCharacters(4))
+        XCTAssertTrue(scroll.bounds.contains(scroll.copyToast.frame))
+        XCTAssertEqual(try select(in: label) {
+            window.makeFirstResponder(label)
+            label.setAccessibilitySelectedTextRange(NSRange(location: 5, length: 4))
+        }, "this")
+        XCTAssertEqual(label.accessibilitySelectedTextRange().length, 0)
+        // A plain click selects nothing and copies nothing.
+        XCTAssertNil(try select(in: text) {})
+    }
+
     func testCommandOutputExpansionUpdatesMeasuredHeight() throws {
         let conversation = AgentConversation()
         let text = (1...20).map { "Line \($0) with **bold** and `code`" }.joined(separator: "\n")
@@ -1339,7 +1486,7 @@ final class AgentChatViewControllerTests: XCTestCase {
         XCTAssertEqual(mixed.last?.title, entry.title)
     }
 
-    func testNarrowLaunchRowFoldsBackgroundTasksIntoACircle() {
+    func testNarrowLaunchRowFoldsBackgroundTasksIntoACircle() throws {
         let row = MistDrifterLaunchRow(settings: DrifterSettings(config: .init(folder: URL(fileURLWithPath: "/work"))))
         row.setBackgroundTasks([.init(id: "a", kind: .shell, description: "Build")], onStop: { _ in })
         row.frame = NSRect(x: 0, y: 0, width: 900, height: 28)
@@ -1347,7 +1494,12 @@ final class AgentChatViewControllerTests: XCTestCase {
         XCTAssertNotEqual(row.backgroundButton.imagePosition, .imageOnly)
         XCTAssertGreaterThan(row.backgroundButton.frame.width, 28)
 
-        row.frame.size.width = 360
+        // Just wide enough for model and effort beside the attach button, a folded confirmation and the background
+        // circle, whatever the model's label: the catalog fills from the real CLI while the class runs.
+        let chips = row.subviews.compactMap { $0 as? MistMenuButton }
+        let model = try XCTUnwrap(chips.first { $0.symbolName == "cpu" })
+        let effort = try XCTUnwrap(chips.first { $0.symbolName == "brain" })
+        row.frame.size.width = 40 + 28 + 12 + 28 + 12 + model.frame.width + 12 + effort.frame.width
         row.needsLayout = true
         row.layoutSubtreeIfNeeded()
         XCTAssertEqual(row.backgroundButton.imagePosition, .imageOnly)

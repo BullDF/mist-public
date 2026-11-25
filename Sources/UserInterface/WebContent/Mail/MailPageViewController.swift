@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import MistMailCore
 
-final class MailPageViewController: NSViewController, MistAppPage, NSSplitViewDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class MailPageViewController: NSViewController, MistAppPage, NSSplitViewDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSMenuItemValidation {
     weak var browserState: BrowserState?
     weak var tab: Tab?
     let model: MailPageModel
@@ -66,7 +66,9 @@ final class MailPageViewController: NSViewController, MistAppPage, NSSplitViewDe
     deinit { if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) } }
 
     override func loadView() {
-        view = AgentChatBackgroundView(); view.setFrameSize(NSSize(width: 1100, height: 700))
+        let background = MailPageBackgroundView()
+        background.controller = self
+        view = background; view.setFrameSize(NSSize(width: 1100, height: 700))
         split.isVertical = true; split.dividerStyle = .thin; split.delegate = self
         configureMailboxes(); configureMessages(); configureReader()
         // NSSplitView sizes its panes by frame and resizes them in proportion, so panes added at
@@ -152,7 +154,62 @@ final class MailPageViewController: NSViewController, MistAppPage, NSSplitViewDe
         else { view.window?.makeFirstResponder(table) }
     }
     func refresh() { model.refresh() }
+    @objc func undo(_ sender: Any?) {
+        guard ownsMessageHistoryFocus, model.canUndo else { return }
+        Task { await model.undo() }
+    }
+    @objc func redo(_ sender: Any?) {
+        guard ownsMessageHistoryFocus, model.canRedo else { return }
+        Task { await model.redo() }
+    }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(undo(_:)): return ownsMessageHistoryFocus && model.canUndo
+        case #selector(redo(_:)): return ownsMessageHistoryFocus && model.canRedo
+        default: return true
+        }
+    }
+    private var pageFirstResponder: NSResponder? {
+        guard isViewLoaded, !view.isHiddenOrHasHiddenAncestor, let window = view.window, window.isKeyWindow,
+              let responder = window.firstResponder else { return nil }
+        return responder === window || (responder as? NSView)?.isDescendant(of: view) == true ? responder : nil
+    }
+    private func ownsTextHistory(_ responder: NSResponder) -> Bool {
+        if responder is NSText { return true }
+        guard let composer = composeController, let view = responder as? NSView else { return false }
+        return view.isDescendant(of: composer.view)
+    }
+    private var ownsMessageHistoryFocus: Bool {
+        guard let responder = pageFirstResponder else { return false }
+        return !ownsTextHistory(responder)
+    }
+    func historyMenuEnabled(redo: Bool) -> Bool? {
+        guard let responder = pageFirstResponder else { return nil }
+        if ownsTextHistory(responder) {
+            return redo ? responder.undoManager?.canRedo == true : responder.undoManager?.canUndo == true
+        }
+        return redo ? model.canRedo : model.canUndo
+    }
+    @discardableResult
+    func performMessageHistory(redo: Bool) -> Bool {
+        guard ownsMessageHistoryFocus, redo ? model.canRedo : model.canUndo else { return false }
+        if redo { self.redo(nil) } else { undo(nil) }
+        return true
+    }
+    static func historyShortcut(_ event: NSEvent) -> Bool? {
+        guard let key = ShortcutsKey.eventKeys(for: event)?.canonical, key.characters == "z",
+              key.modifiers == [.command] || key.modifiers == [.command, .shift] else { return nil }
+        return key.modifiers.contains(.shift)
+    }
     func performPageCommand(_ command: CommandWrapper) -> Bool {
+        if command == .IDC_CONTENT_CONTEXT_UNDO || command == .IDC_CONTENT_CONTEXT_REDO {
+            guard let responder = pageFirstResponder else { return false }
+            let redo = command == .IDC_CONTENT_CONTEXT_REDO
+            if ownsTextHistory(responder) {
+                if redo { responder.undoManager?.redo() } else { responder.undoManager?.undo() }
+            } else { performMessageHistory(redo: redo) }
+            return true
+        }
         if command == .IDC_RELOAD || command == .IDC_RELOAD_BYPASSING_CACHE { refresh(); return true }
         guard [.IDC_FIND, .IDC_FIND_NEXT, .IDC_FIND_PREVIOUS, .IDC_ZOOM_PLUS, .IDC_ZOOM_MINUS, .IDC_ZOOM_NORMAL].contains(command) else { return false }
         if let composeController {
@@ -355,6 +412,15 @@ final class MailPageViewController: NSViewController, MistAppPage, NSSplitViewDe
     }
     func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { subview === mailboxPane }
     func splitView(_ splitView: NSSplitView, shouldHideDividerAt dividerIndex: Int) -> Bool { dividerIndex == 0 && mailboxPane.isHidden }
+}
+
+private final class MailPageBackgroundView: AgentChatBackgroundView {
+    weak var controller: MailPageViewController?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let redo = MailPageViewController.historyShortcut(event), controller?.performMessageHistory(redo: redo) == true { return true }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 /// An account's status dot, with the existing sign-in repair action.

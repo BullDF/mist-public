@@ -99,6 +99,31 @@ final class AgentSpaceOverlayPillLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(pill.maxX, size.width - 16)
     }
 
+    func testHitTestLetsHeaderControlsThroughAndGivesThePillPriority() {
+        let overlay = makeOverlay(size: NSSize(width: 1000, height: 700),
+                                  ownership: .agent, caption: "Reading results…")
+        let window = overlay.window
+        window?.isReleasedWhenClosed = false
+        defer { window?.close() }
+
+        let headerControl = NSRect(x: 10, y: 650, width: 30, height: 30)
+        let pill = overlay.controlPillFrameForTesting
+        overlay.hitTestPassthroughHandler = { headerControl.contains($0) || pill.contains($0) }
+
+        let headerPoint = NSPoint(x: headerControl.midX, y: headerControl.midY)
+        let contentPoint = NSPoint(x: 500, y: 350)
+        let pillPoint = NSPoint(x: pill.midX, y: pill.midY)
+        XCTAssertNil(overlay.hitTest(headerPoint))
+        XCTAssertTrue(overlay.hitTest(contentPoint) === overlay)
+        let pillHit = overlay.hitTest(pillPoint)
+        XCTAssertNotNil(pillHit)
+        XCTAssertFalse(pillHit === overlay)
+
+        overlay.update(with: task(ownership: .user, caption: "Reading results…"))
+        XCTAssertNil(overlay.hitTest(headerPoint))
+        XCTAssertNil(overlay.hitTest(contentPoint))
+    }
+
     /// The pane resizes constantly — window resize, sidebar toggle, split view.
     /// Nothing recomputes the pill on those; it has to fall out of the layout.
     func testPillFollowsAPaneResize() {

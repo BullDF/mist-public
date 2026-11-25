@@ -305,6 +305,10 @@ class WebContentViewController: NSViewController {
     /// window's Space has a live agent task, and torn down when the task ends.
     private lazy var agentSpaceOverlay: AgentSpaceOverlayView = {
         let overlay = AgentSpaceOverlayView()
+        overlay.hitTestPassthroughHandler = { [weak self, weak overlay] point in
+            guard let self, let overlay else { return false }
+            return self.shouldPassThroughAgentOverlayToHeader(at: point, in: overlay)
+        }
         overlay.onTakeControl = { [weak self] in
             // A tab in the user's own Space is masked per TAB, from browser
             // reports, and has no task behind it — taking it back is the
@@ -3429,6 +3433,10 @@ class WebContentViewController: NSViewController {
            agentSpaceOverlay.containsControlPill(at: point, from: overlay) {
             return true
         }
+        return shouldPassThroughAgentOverlayToHeader(at: point, in: overlay)
+    }
+
+    private func shouldPassThroughAgentOverlayToHeader(at point: NSPoint, in overlay: NSView) -> Bool {
         guard PhiPreferences.GeneralSettings.loadLayoutMode() != .performance else {
             return false
         }

@@ -425,6 +425,12 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertEqual(AgentChatTextContainer.hardLineRemainder(of: source, from: 11), NSRange(location: 11, length: 15))
         XCTAssertEqual(AgentChatTextContainer.hardLineRemainder(of: source, from: 26), NSRange(location: 26, length: 6))
         XCTAssertEqual(AgentChatTextContainer.hardLineRemainder(of: source, from: 32), NSRange(location: 32, length: 4))
+        XCTAssertEqual(AgentChatTextContainer.hardLineRemainder(of: "ab\r\ncd" as NSString, from: 1), NSRange(location: 1, length: 3))
+        // A hard line far longer than any line fragment is scanned only as far as a token could still share the line.
+        let long = String(repeating: "x", count: 30_000) as NSString
+        XCTAssertEqual(AgentChatTextContainer.hardLineRemainder(of: long, from: 100),
+                       NSRange(location: 100, length: AgentChatTextContainer.scanLimit))
+        XCTAssertEqual(AgentChatTextContainer.hardLineRemainder(of: long, from: 29_990), NSRange(location: 29_990, length: 10))
     }
 
     func testSlashTokenOnALaterSoftLineMovesIntactToNextLine() throws {

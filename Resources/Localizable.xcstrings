@@ -5503,6 +5503,90 @@
         }
       }
     },
+    "mail.actions.undo": {
+      "comment": "Mail banner - Name of the action that reverses a message change",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Undo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Annuler"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Widerrufen"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取り消す"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "撤销"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "復原"
+          }
+        }
+      }
+    },
+    "mail.actions.redo": {
+      "comment": "Mail banner - Name of the action that reapplies an undone message change",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wiederholen"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "やり直す"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重做"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重做"
+          }
+        }
+      }
+    },
     "mail.accounts.settings": {
       "comment": "Mail error banner - Open Mail settings",
       "extractionState": "extracted_with_value",
@@ -35798,7 +35882,7 @@
       }
     },
     "browser.agentChat.unmountFromTab": {
-      "comment": "Agent chat page - Unlink this chat from the tab it is mounted to: that tab's Chat panel goes back to empty, and the chat keeps running in this page",
+      "comment": "Agent chat page - Unlink this chat from the tab it is mounted to: that tab's Chat panel closes, and the chat keeps running in this page",
       "extractionState": "extracted_with_value",
       "localizations": {
         "en": {
@@ -37905,6 +37989,120 @@
           "stringUnit": {
             "state": "translated",
             "value": "複製訊息"
+          }
+        }
+      }
+    },
+    "browser.agentChat.copiedCharacters" : {
+      "comment": "Agent chat - Toast after text selected in the transcript is copied to the clipboard; %d is the number of characters copied",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Copied %d character"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Copied %d characters"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d Zeichen kopiert"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d Zeichen kopiert"
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d caractère copié"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d caractères copiés"
+                }
+              }
+            }
+          }
+        },
+        "ja": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d 文字をコピーしました"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%d 文字をコピーしました"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hans": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已复制 %d 个字符"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已复制 %d 个字符"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已複製 %d 個字元"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "已複製 %d 個字元"
+                }
+              }
+            }
           }
         }
       }
@@ -90004,6 +90202,48 @@
         }
       }
     },
+    "settings.shortcuts.description.unpinAndCloseTab" : {
+      "comment" : "Shortcuts settings - Description of the command that closes the focused tab and removes its pin",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Schließt den aktuellen Tab und löst ihn, falls er angepinnt ist."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Close the current tab, removing its pin if it's pinned."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fermer l'onglet actuel en le désépinglant s'il est épinglé."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "現在のタブを閉じます。固定されている場合は固定も解除します。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭当前标签页；如已固定，则同时取消固定。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "關閉目前分頁；如已釘選，則同時取消釘選。"
+          }
+        }
+      }
+    },
     "settings.shortcuts.description.useSelection" : {
       "comment" : "Shortcuts settings - Description of the useSelection command",
       "extractionState" : "manual",
@@ -97697,6 +97937,48 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "與目前分頁分割畫面"
+          }
+        }
+      }
+    },
+    "sidebar.tabContextMenu.unpinAndCloseTab" : {
+      "comment" : "Pinned tab context menu, Tab menu and shortcuts - Close the tab and remove its pin, where Close keeps the pin",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lösen und schließen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Unpin and Close"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désépingler et fermer"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "固定を解除して閉じる"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消固定并关闭"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消釘選並關閉"
           }
         }
       }

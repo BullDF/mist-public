@@ -298,6 +298,15 @@ extension Tab: ContextMenuRepresentable {
             items.append(closeItem)
         }
 
+        // Close keeps a pin as a closed pinned tab; this one drops the pin too.
+        if isPinned, guidInLocalDB?.isEmpty == false {
+            let unpinAndCloseItem = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.unpinAndCloseTab", value: "Unpin and Close", comment: "Pinned tab context menu, Tab menu and shortcuts - Close the tab and remove its pin, where Close keeps the pin"), action: #selector(SpaceSessionController.unpinAndCloseTab(_:)), keyEquivalent: "")
+            if showsShortcuts {
+                applyShortcut(.PHI_UNPIN_AND_CLOSE_TAB, to: unpinAndCloseItem)
+            }
+            items.append(unpinAndCloseItem)
+        }
+
         let closeOther = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.closeOtherTabs", value: "Close Other Tabs", comment: "Tab context menu - Menu item to close all tabs except the selected one"), action: #selector(SpaceSessionController.closeOther(_:)), keyEquivalent: "")
         if showsShortcuts {
             applyShortcut(.IDC_WINDOW_CLOSE_OTHER_TABS, to: closeOther)
@@ -883,20 +892,13 @@ extension Tab: ContextMenuRepresentable {
 
     @MainActor
     @objc private func removeFromTabGroup() {
-        guard let bridge = ChromiumLauncher.sharedInstance().bridge else {
-            AppLogDebug("[TAB_GROUPS] removeFromTabGroup: no bridge available")
+        guard let state = SpaceSessionControllersManager.shared.getBrowserState(for: windowId) else {
+            AppLogDebug("[TAB_GROUPS] removeFromTabGroup: no window")
             return
         }
-        let state = SpaceSessionControllersManager.shared
-            .getBrowserState(for: windowId)
         let tabIds = splitAwareGroupMemberIds(state: state)
-        bridge.removeTabsFromGroup(withWindowId: Int64(windowId),
-                                   tabIds: tabIds)
+        state.removeTabsFromGroups(tabIds.map(\.intValue))
         AppLogDebug("[TAB_GROUPS] removeFromTabGroup windowId=\(windowId) tabIds=\(tabIds)")
-        for member in tabIds {
-            state?.applyOptimisticGroupMembership(
-                tabId: member.intValue, newToken: nil)
-        }
     }
 
     @MainActor

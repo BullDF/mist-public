@@ -269,6 +269,14 @@ final class AgentConversation: ObservableObject, Identifiable {
         queuePaused = queue.paused
     }
 
+    func queueAndSendNow(text: String, attachments: [AgentAttachment], mentions: [AgentTabMention]) {
+        let previousIDs = Set(queue.map(\.id))
+        onQueue?(text, attachments, mentions)
+        if let message = queue.first(where: { !previousIDs.contains($0.id) }) {
+            onSendQueuedNow?(message.id)
+        }
+    }
+
     private static func defaultTitle(_ prompt: String) -> String {
         String((AgentCodeBlocks.firstTitleLine(in: prompt) ?? "").prefix(60))
     }

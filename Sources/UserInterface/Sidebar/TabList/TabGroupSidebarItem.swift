@@ -233,15 +233,15 @@ extension TabGroupSidebarItem: ContextMenuRepresentable {
 
     @MainActor
     @objc private func ungroupTabs() {
-        let memberIds = members.map { $0.guid }
+        // Every member, including those a collapsed Drifter section hides from its folder.
+        guard let state = browserState else { return }
+        let memberIds = state.normalTabs.filter { $0.groupToken == group.token }.map(\.guid)
         guard !memberIds.isEmpty else { return }
-        let ids: [NSNumber] = memberIds.map { NSNumber(value: Int64($0)) }
         AppLogDebug(
             "[TAB_GROUPS] ungroupTabs windowId=\(windowId) " +
             "token=\(group.token) tabIds=\(memberIds)"
         )
-        bridge?.removeTabsFromGroup(withWindowId: Int64(windowId),
-                                    tabIds: ids)
+        state.removeTabsFromGroups(memberIds)
     }
 
     /// Tears the whole group off into a new window, as dragging its header

@@ -15,6 +15,7 @@ final class AgentSpaceOverlayView: NSView {
     var onTakeControl: (() -> Void)?
     var onHandBack: (() -> Void)?
     var onFinish: (() -> Void)?
+    var hitTestPassthroughHandler: ((NSPoint) -> Bool)?
 
     private var ownership: AgentTaskOwnership = .agent
 
@@ -832,8 +833,9 @@ final class AgentSpaceOverlayView: NSView {
     // MARK: - Input interception
 
     override func hitTest(_ point: NSPoint) -> NSView? {
+        let localPoint = convert(point, from: superview)
         // Always let the pill's controls receive events.
-        let pointInPill = convert(point, to: pill)
+        let pointInPill = convert(localPoint, to: pill)
         if pill.bounds.contains(pointInPill), let hit = super.hitTest(point) {
             return hit
         }
@@ -841,7 +843,8 @@ final class AgentSpaceOverlayView: NSView {
         // interfere with the agent — but taking control requires the explicit
         // "Take control" button, NOT a stray page click. User mode: pass
         // content through so the user can browse.
-        return ownership == .agent ? self : nil
+        guard ownership == .agent, hitTestPassthroughHandler?(localPoint) != true else { return nil }
+        return self
     }
 
     override func mouseDown(with event: NSEvent) {

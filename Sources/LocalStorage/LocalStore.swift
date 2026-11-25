@@ -625,10 +625,9 @@ extension LocalStore {
         // the saving context, so an object-based `removeDuplicates` compared
         // every object against itself and swallowed field edits — pinned
         // URL/title edits never reached the per-space subscribers.
-        let initialTabs = fetchPinnedTabs()
-        var lastSnapshot = initialTabs.map(PinnedTabSnapshot.init)
-        subject.send(initialTabs)
+        var lastSnapshot: [PinnedTabSnapshot] = []
 
+        // Subscribe before the first fetch, so a save between them still refetches.
         let notificationCenter = NotificationCenter.default
         let cancellable = notificationCenter
             .publisher(for: .NSManagedObjectContextDidSave)
@@ -652,6 +651,9 @@ extension LocalStore {
                 lastSnapshot = snapshot
                 subject.send(updatedTabs)
             }
+        let initialTabs = fetchPinnedTabs()
+        lastSnapshot = initialTabs.map(PinnedTabSnapshot.init)
+        subject.send(initialTabs)
 
         return subject
             .handleEvents(receiveCancel: {

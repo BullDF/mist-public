@@ -1186,10 +1186,8 @@ extension LocalStore {
             }
         }
         
-        if let bookmarks = fetchBookmarks() {
-            subject.send(bookmarks)
-        }
-        
+        // Subscribe before the first fetch: a background save landing between
+        // the two would otherwise never reach the subject.
         let notificationCenter = NotificationCenter.default
         let cancellable = notificationCenter
             .publisher(for: .NSManagedObjectContextDidSave)
@@ -1202,7 +1200,10 @@ extension LocalStore {
                 guard let bookmarks = fetchBookmarks() else { return }
                 subject.send(bookmarks)
             }
-        
+        if let bookmarks = fetchBookmarks() {
+            subject.send(bookmarks)
+        }
+
         return subject
             .handleEvents(receiveCancel: {
                 cancellable.cancel()

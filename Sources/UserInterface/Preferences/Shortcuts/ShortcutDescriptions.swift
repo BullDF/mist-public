@@ -180,6 +180,8 @@ extension CommandWrapper {
             return NSLocalizedString("settings.shortcuts.description.setStartPage", value: "Set the focused grouped tab's start page to its current page.", comment: "Shortcuts settings - Description of the command that remembers a grouped tab's current page as its start page")
         case .PHI_RETURN_TO_START_PAGE:
             return NSLocalizedString("settings.shortcuts.description.returnToStartPage", value: "Take the focused grouped tab back to its start page.", comment: "Shortcuts settings - Description of the command that returns a grouped tab to its start page")
+        case .PHI_UNPIN_AND_CLOSE_TAB:
+            return NSLocalizedString("settings.shortcuts.description.unpinAndCloseTab", value: "Close the current tab, removing its pin if it's pinned.", comment: "Shortcuts settings - Description of the command that closes the focused tab and removes its pin")
         case .PHI_OPEN_CLIPBOARD: return Self.openAppDescription(.clipboard)
         case .PHI_MAKE_PRIMARY_WINDOW:
             return NSLocalizedString("settings.shortcuts.description.makePrimaryWindow", value: "Make the focused window the primary window, where links from other apps open.", comment: "Shortcuts settings description for making the focused window primary")

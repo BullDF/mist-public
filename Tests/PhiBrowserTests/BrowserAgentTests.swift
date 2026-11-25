@@ -147,6 +147,17 @@ final class BrowserAgentTests: XCTestCase {
         XCTAssertTrue(DrifterLaunchRequest.readOnlyTools.contains("list_schedules"))
     }
 
+    func testArtifactConsentFollowsConfirmationModes() {
+        XCTAssertTrue(DrifterLaunchRequest.claudeTools.hasSuffix(",Artifact,ArtifactComments,ArtifactData,ArtifactCheck"))
+        for tool in DrifterLaunchRequest.artifactTools {
+            for interaction in [false, true] {
+                XCTAssertFalse(DrifterConfirmation.ask.automaticallyAllows(tool: tool, requiresInteraction: interaction), tool)
+                XCTAssertTrue(DrifterConfirmation.skip.automaticallyAllows(tool: tool, requiresInteraction: interaction), tool)
+            }
+        }
+        XCTAssertFalse(DrifterConfirmation.skip.automaticallyAllows(tool: "AskUserQuestion", requiresInteraction: true))
+    }
+
     func testScheduledPromptsAppearAsPeerMessagesInEveryEngine() {
         let header = "[Scheduled prompt abc12345 (Hourly), due Mon Nov 30 09:00 EST]. This was its only run."
         var sender = AgentMessageSender(id: "abc12345", title: "Hourly", kind: .schedule, note: header)
@@ -1754,6 +1765,11 @@ final class BrowserAgentTests: XCTestCase {
         XCTAssertEqual(AgentMentionText.matches(tabs, query: "cafe").map(\.tabId), [2, 3, 1])
         XCTAssertEqual(AgentMentionText.matches(tabs, query: "").map(\.tabId), [1, 2, 3])
         XCTAssertTrue(AgentMentionText.matches(tabs, query: "missing").isEmpty)
+
+        let pr = AgentTabMention(tabId: 4, title: "fix(agent-chat): recover Autopilot", url: "https://github.test/pull/9")
+        XCTAssertEqual(AgentMentionText.matches(tabs + [pr], query: "agentc").map(\.tabId), [4])
+        XCTAssertEqual(AgentMentionText.matches(tabs + [pr], query: "agent-chat").map(\.tabId), [4])
+        XCTAssertEqual(AgentMentionText.matches(tabs + [pr], query: "fixagent").map(\.tabId), [4])
     }
 
     func testGroupMentionMatchingAndPopupOrder() {

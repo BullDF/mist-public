@@ -98,9 +98,23 @@ final class AgentChatTextContainer: NSTextContainer {
 
     /// A token past the next line break, U+2028 included, can't share this line. A reply's plain lines are one
     /// paragraph, so scanning to the paragraph's bounds for every line fragment made its layout quadratic.
+    /// The scan also stops `scanLimit` characters on, long after the text has filled the widest line, which no token
+    /// that far can share: a 28 KB pasted command is one hard line, and scanning to its end for each of its 1,300
+    /// fragments stalled the transcript whenever its row was laid out.
+    static let scanLimit = 2048
+
+    /// NSString's line terminators, read as UTF-16 straight from the string: a bridged `CharacterSet` lookup per
+    /// character cost more than the scan it bounds.
     static func hardLineRemainder(of source: NSString, from characterIndex: Int) -> NSRange {
-        var end = 0
-        source.getLineStart(nil, end: &end, contentsEnd: nil, for: NSRange(location: characterIndex, length: 0))
+        let length = max(0, min(scanLimit, source.length - characterIndex))
+        var units = [unichar](repeating: 0, count: length)
+        source.getCharacters(&units, range: NSRange(location: characterIndex, length: length))
+        guard let offset = units.firstIndex(where: { [0x0A, 0x0D, 0x85, 0x2028, 0x2029].contains($0) }) else {
+            return NSRange(location: characterIndex, length: length)
+        }
+        var end = characterIndex + offset + 1
+        // CRLF ends one line, as NSString's line ranges count it.
+        if units[offset] == 0x0D, end < source.length, source.character(at: end) == 0x0A { end += 1 }
         return NSRange(location: characterIndex, length: end - characterIndex)
     }
 }

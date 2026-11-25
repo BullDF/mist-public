@@ -323,8 +323,8 @@ extension LocalStore {
 
         let subject = CurrentValueSubject<[Space], Never>([])
         let fetch = { self.getAllSpaces(profileId: profileId) }
-        subject.send(fetch())
 
+        // Subscribe before the first fetch, so a save between them still refetches.
         let cancellable = NotificationCenter.default
             .publisher(for: .NSManagedObjectContextDidSave)
             .filter {
@@ -335,6 +335,7 @@ extension LocalStore {
             }
             .receive(on: DispatchQueue.main)
             .sink { _ in subject.send(fetch()) }
+        subject.send(fetch())
 
         // Snapshot before downstream consumers reconcile observable objects.
         let snapshots = subject.map { spaces -> (spaces: [Space], ids: [String], content: [Space.Content]) in

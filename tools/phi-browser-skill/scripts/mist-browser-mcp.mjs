@@ -839,10 +839,39 @@ export function createServer({ helpers, env = process.env, write = () => {}, log
       tabIds: members.map(t => t.tabId) } })
   }
 
+  async function viewportSize() {
+    try {
+      const value = await helpers.withPageSession(async (client, sid) => {
+        const reply = await client.send('Runtime.evaluate', { expression: '[innerWidth, innerHeight]', returnByValue: true }, sid, 2000)
+        return reply.result?.value
+      })
+      return Array.isArray(value) && value.length === 2 && value.every(n => Number.isFinite(n) && n > 0) ? value : null
+    } catch {
+      return null
+    }
+  }
+
+  async function checkScreenshotViewport(shot, advice) {
+    if (!shot.viewport) return
+    const current = await viewportSize()
+    if (current && current.some((size, i) => Math.abs(size - shot.viewport[i]) > 1)) {
+      throw new Error(`The working tab's viewport changed from ${shot.viewport.join('×')} to ${current.join('×')} since your latest viewport screenshot, so the page may have reflowed and those pixels may point elsewhere. Take a new viewport screenshot, or ${advice}.`)
+    }
+  }
+
+  async function screenshotScale(tab) {
+    const shot = lastShot
+    if (shot?.tabId !== tab.tabId) throw new Error('Take a viewport screenshot of the working tab first; x and y are pixels of your latest one.')
+    await checkScreenshotViewport(shot, 'use a ref from snapshot')
+    return shot.scale
+  }
+
   async function capture(tab, args, save = false) {
     let clip = args.clip
-    if (clip && lastShot?.tabId === tab.tabId) {
-      clip = Object.fromEntries(Object.entries(clip).map(([key, value]) => [key, value / lastShot.scale]))
+    const shot = lastShot
+    if (clip && shot?.tabId === tab.tabId) {
+      await checkScreenshotViewport(shot, 'pass ref for the close-up')
+      clip = Object.fromEntries(Object.entries(clip).map(([key, value]) => [key, value / shot.scale]))
     }
     if (args.ref !== undefined) {
       const hit = await helpers.waitForElement(elementRef(args.ref), { timeout: 3 })
@@ -882,7 +911,9 @@ export function createServer({ helpers, env = process.env, write = () => {}, log
       ] }
     }
     const viewport = !clip && !args.fullPage
-    if (viewport && Number.isFinite(result.scale) && result.scale > 0) lastShot = { tabId: tab.tabId, scale: result.scale }
+    if (viewport && Number.isFinite(result.scale) && result.scale > 0) {
+      lastShot = { tabId: tab.tabId, scale: result.scale, viewport: await viewportSize() }
+    }
     if (save) {
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, Buffer.from(result.data, 'base64'), { flag: args.overwrite ? 'w' : 'wx' })
@@ -1243,25 +1274,23 @@ export function createServer({ helpers, env = process.env, write = () => {}, log
         const options = clickOptions(args)
         if (args.ref !== undefined) result = await helpers.click(elementRef(args.ref), ...options)
         else {
-          if (lastShot?.tabId !== tab.tabId) throw new Error('Take a viewport screenshot of the working tab first; x and y are pixels of your latest one.')
-          result = await helpers.click(args.x / lastShot.scale, args.y / lastShot.scale, ...options)
+          const scale = await screenshotScale(tab)
+          result = await helpers.click(args.x / scale, args.y / scale, ...options)
         }
         break
       }
       case 'drag': {
-        if ((args.ref === undefined || args.toRef === undefined) && lastShot?.tabId !== tab.tabId) {
-          throw new Error('Take a viewport screenshot of the working tab first; x and y are pixels of your latest one.')
-        }
+        const scale = args.ref === undefined || args.toRef === undefined ? await screenshotScale(tab) : null
         const end = (refKey, xKey, yKey) => args[refKey] !== undefined ? elementRef(args[refKey])
-          : [args[xKey] / lastShot.scale, args[yKey] / lastShot.scale]
+          : [args[xKey] / scale, args[yKey] / scale]
         result = await helpers.drag(end('ref', 'x', 'y'), end('toRef', 'toX', 'toY'))
         break
       }
       case 'hover':
         if (args.ref !== undefined) result = await helpers.hover(elementRef(args.ref))
         else {
-          if (lastShot?.tabId !== tab.tabId) throw new Error('Take a viewport screenshot of the working tab first; x and y are pixels of your latest one.')
-          result = await helpers.hover(args.x / lastShot.scale, args.y / lastShot.scale)
+          const scale = await screenshotScale(tab)
+          result = await helpers.hover(args.x / scale, args.y / scale)
         }
         if (!result?.dialog) await settleHiddenPage(helpers)
         break

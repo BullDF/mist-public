@@ -46,7 +46,7 @@ extension LocalStore {
             }
         }
 
-        if let rows = fetch() { subject.send(rows) }
+        // Subscribe before the first fetch, so a save between them still refetches.
         let changes = NotificationCenter.default.publisher(for: .NSManagedObjectContextDidSave)
             .filter { Self.notificationContainsChanges($0, matching: {
                 // A scope change can select a retained collection without
@@ -60,6 +60,7 @@ extension LocalStore {
             .sink { _ in
                 if let rows = fetch() { subject.send(rows) }
             }
+        if let rows = fetch() { subject.send(rows) }
 
         return subject
             .compactMap { $0 }

@@ -211,6 +211,9 @@ final class MailStore {
         try db.execute("INSERT INTO pending VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", [.text(id.uuidString), .text(accountID.uuidString), .real(Date().timeIntervalSince1970), .blob(try encoder.encode(value))])
     }
     func pending<T: Decodable>(accountID: UUID) throws -> [T] { try decodeRows("SELECT payload FROM pending WHERE account_id=? ORDER BY created,rowid", [.text(accountID.uuidString)]) }
+    func pendingOperation(_ id: UUID) throws -> PendingMailOperation? {
+        try decodeRows("SELECT payload FROM pending WHERE id=?", [.text(id.uuidString)]).first
+    }
     func deletePending(_ id: UUID) throws { try db.execute("DELETE FROM pending WHERE id=?", [.text(id.uuidString)]) }
     func decodeRows<T: Decodable>(_ sql: String, _ bindings: [SQLValue] = []) throws -> [T] {
         try db.rows(sql, bindings).map {

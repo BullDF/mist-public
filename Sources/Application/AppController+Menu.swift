@@ -683,6 +683,7 @@ extension AppController {
                 }
                 Self.applyNewTabOrientation(in: subMenu)
                 installOrUpdateStartPageMenuItems(in: subMenu)
+                installOrUpdateUnpinAndCloseMenuItem(in: subMenu)
             } else
 
             if menuRole == .help, let subMenu = menuItem.submenu {
@@ -858,6 +859,25 @@ extension AppController {
     @MainActor @objc func performStartPageCommandFromMenu(_ sender: NSMenuItem) {
         guard let command = CommandWrapper(rawValue: sender.tag) else { return }
         SpaceSessionControllersManager.shared.getActiveWindowState()?.performStartPageCommand(command)
+    }
+
+    /// Unpin and Close, after the start page commands, in every layout. Remove-then-insert keeps this idempotent
+    /// across menu rebuilds.
+    private func installOrUpdateUnpinAndCloseMenuItem(in tabMenu: NSMenu) {
+        let command = CommandWrapper.PHI_UNPIN_AND_CLOSE_TAB
+        tabMenu.items.removeAll { $0.tag == command.rawValue }
+        let anchorTags = [CommandWrapper.IDC_WINDOW_MUTE_SITE, .IDC_WINDOW_PIN_TAB, .IDC_WINDOW_GROUP_TAB,
+                          .PHI_RETURN_TO_START_PAGE, .PHI_SET_START_PAGE].map(\.rawValue)
+        let index = tabMenu.items.lastIndex { anchorTags.contains($0.tag) }.map { $0 + 1 } ?? tabMenu.items.count
+        let item = NSMenuItem(title: NSLocalizedString("sidebar.tabContextMenu.unpinAndCloseTab", value: "Unpin and Close", comment: "Pinned tab context menu, Tab menu and shortcuts - Close the tab and remove its pin, where Close keeps the pin"),
+                              action: #selector(unpinAndCloseFromMenu(_:)), keyEquivalent: "")
+        applyEffectiveShortcut(command, to: item)
+        item.target = self
+        tabMenu.insertItem(item, at: index)
+    }
+
+    @MainActor @objc func unpinAndCloseFromMenu(_ sender: NSMenuItem) {
+        SpaceSessionControllersManager.shared.getActiveWindowState()?.performUnpinAndCloseCommand()
     }
 
     static func installOrUpdateFileMenuItems(
@@ -2742,6 +2762,9 @@ extension AppController {
         if item.action == #selector(performStartPageCommandFromMenu(_:)) {
             guard let command = (item as? NSMenuItem).flatMap({ CommandWrapper(rawValue: $0.tag) }) else { return false }
             return SpaceSessionControllersManager.shared.getActiveWindowState()?.startPageCommandTab(command) != nil
+        }
+        if item.action == #selector(unpinAndCloseFromMenu(_:)) {
+            return SpaceSessionControllersManager.shared.getActiveWindowState()?.focusingTab != nil
         }
 
         // New Conversation only applies while focus is inside the AI sidebar;

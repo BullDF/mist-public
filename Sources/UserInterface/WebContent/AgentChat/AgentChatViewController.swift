@@ -339,7 +339,7 @@ private struct AgentChatPanelOriginButton: View {
     }
     private static var unmountTitle: String {
         NSLocalizedString("browser.agentChat.unmountFromTab", value: "Unmount from Tab",
-                          comment: "Agent chat page - Unlink this chat from the tab it is mounted to: that tab's Chat panel goes back to empty, and the chat keeps running in this page")
+                          comment: "Agent chat page - Unlink this chat from the tab it is mounted to: that tab's Chat panel closes, and the chat keeps running in this page")
     }
 }
 
@@ -618,9 +618,14 @@ final class AgentChatTranscriptScroll: NSScrollView {
     private weak var observedConversation: AgentConversation?
     private var messageSentSubscription: AnyCancellable?
     private(set) var followsBottom = true {
-        didSet { jumpButton.isHidden = followsBottom }
+        didSet {
+            jumpButton.isHidden = followsBottom
+            if !copyToast.isHidden { placeCopyToast() }
+        }
     }
     let jumpButton = AgentChatJumpButton()
+    /// Confirms a selection copied with the mouse, like Claude Code's and Ghostty's note.
+    let copyToast = MistToastView()
     private var jumping = false
     private var expansionOrigin: NSPoint?
     private var updating = false
@@ -637,7 +642,11 @@ final class AgentChatTranscriptScroll: NSScrollView {
         var linkOpens: Int
     }
     private var textClick: TextClick?
-    /// Mouse downs in the window; a later one cancels the collapse a click scheduled.
+    /// The view a press in the transcript landed on, whose selection its release copies.
+    private weak var selectionPress: NSView?
+    /// Where a selection made with the mouse is copied; tests pass their own.
+    var copyPasteboard = NSPasteboard.general
+    /// Mouse downs in the window and copied selections; either cancels the collapse a click scheduled.
     private var clicks = 0
     /// Whether the trackpad gesture under way began over this transcript; its later events don't hit-test again.
     private var gestureOverTranscript = false
@@ -684,6 +693,7 @@ final class AgentChatTranscriptScroll: NSScrollView {
         jumpButton.action = #selector(jumpToBottom)
         jumpButton.isHidden = true
         addSubview(jumpButton)
+        addSubview(copyToast)
         addSubview(markerTicks)
         markerTicks.onJump = { [weak self] id in
             guard let self else { return }
@@ -776,12 +786,18 @@ final class AgentChatTranscriptScroll: NSScrollView {
         guard event.type == .leftMouseUp else {
             clicks += 1
             textClick = nil
-            guard event.clickCount == 1, event.modifierFlags.isDisjoint(with: [.shift, .command, .option, .control]),
-                  let hit = window?.contentView?.hitTest(event.locationInWindow), hit !== hosting, hit.isDescendant(of: hosting),
+            let hit = window?.contentView?.hitTest(event.locationInWindow).flatMap { $0 !== hosting && $0.isDescendant(of: hosting) ? $0 : nil }
+            selectionPress = hit
+            guard event.clickCount == 1, event.modifierFlags.isDisjoint(with: [.shift, .command, .option, .control]), let hit,
                   !sequence(first: hit, next: { $0.superview }).prefix(while: { $0 !== hosting }).contains(where: { $0 is NSControl })
             else { return }
             textClick = TextClick(location: event.locationInWindow, view: hit, viewStateVersion: viewStateVersion, linkOpens: viewState.linkOpens)
             return
+        }
+        if let press = selectionPress {
+            selectionPress = nil
+            // SwiftUI's text gets the release after the monitor, and may still change its selection on it.
+            DispatchQueue.main.async { [weak self, weak press] in self?.copySelection(madeIn: press) }
         }
         guard let click = textClick else { return }
         textClick = nil
@@ -796,6 +812,46 @@ final class AgentChatTranscriptScroll: NSScrollView {
                   viewState.linkOpens == click.linkOpens, (view?.accessibilitySelectedTextRange().length ?? 0) == 0 else { return }
             area.collapse()
         }
+    }
+
+    /// Copies the selection a press made in the transcript and clears it, like Ghostty's copy on select: a drag,
+    /// double or triple click goes to the pasteboard at release. Covers both the rows' text views and SwiftUI's
+    /// selectable text.
+    private func copySelection(madeIn view: NSView?) {
+        guard let view, view.window === window else { return }
+        let pasteboard = copyPasteboard
+        func copied(_ types: [NSPasteboard.PasteboardType], _ write: (NSPasteboard, [NSPasteboard.PasteboardType]) -> Bool) -> Bool {
+            pasteboard.declareTypes(types, owner: nil)
+            return write(pasteboard, types)
+        }
+        if let text = view as? NSTextView {
+            let caret = text.selectedRange().location
+            guard !text.isEditable, text.selectedRanges.contains(where: { $0.rangeValue.length > 0 }),
+                  copied(text.writablePasteboardTypes, text.writeSelection(to:types:)) else { return }
+            text.setSelectedRange(NSRange(location: caret, length: 0))
+        } else {
+            let range = view.accessibilitySelectedTextRange()
+            guard range.location != NSNotFound, range.length > 0, let requestor = view as? NSServicesMenuRequestor,
+                  copied([.rtf, .string], { requestor.writeSelection?(to: $0, types: $1) == true }) else { return }
+            view.setAccessibilitySelectedTextRange(NSRange(location: range.location, length: 0))
+        }
+        clicks += 1
+        copyToast.show(AgentChatStrings.copiedCharacters(pasteboard.string(forType: .string)?.count ?? 0))
+        placeCopyToast()
+    }
+
+    /// At the column's trailing edge over the transcript's bottom, beside the jump button, or above it in a column too
+    /// narrow for both.
+    private func placeCopyToast() {
+        let size = copyToast.intrinsicContentSize
+        let column = columnFrame
+        let width = min(size.width, column.width)
+        var frame = NSRect(x: column.x + column.width - width, y: isFlipped ? bounds.height - 12 - size.height : 12,
+                           width: width, height: size.height)
+        if !jumpButton.isHidden, frame.intersects(jumpButton.frame.insetBy(dx: -8, dy: 0)) {
+            frame.origin.y += (isFlipped ? -1 : 1) * (jumpButton.frame.height + 8)
+        }
+        copyToast.frame = frame
     }
 
     func observe(_ conversation: AgentConversation) {
@@ -901,6 +957,7 @@ final class AgentChatTranscriptScroll: NSScrollView {
                                   y: isFlipped ? bounds.height - 40 : 12, width: 28, height: 28)
         // A shadow with no path is derived from the layer's pixels in an offscreen pass.
         jumpButton.layer?.shadowPath = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: 28, height: 28), transform: nil)
+        if !copyToast.isHidden { placeCopyToast() }
         updating = false
     }
 
@@ -3103,7 +3160,9 @@ final class AgentChatTextView: NSTextView {
     }
 
     func updateCodeControls() {
-        guard let storage = textStorage, let manager = layoutManager, let container = textContainer else { return }
+        // SwiftUI fills a new row's text view before giving it a width, and laying the text out in a 1 pt container
+        // put each character on its own line: 110 ms for a 28 KB command. Its first width reruns this from `layout()`.
+        guard bounds.width >= 1, let storage = textStorage, let manager = layoutManager, let container = textContainer else { return }
         if codeButtons.isEmpty {
             var hasCodeBlock = false
             storage.enumerateAttribute(.markdownCodeBlock, in: NSRange(location: 0, length: storage.length)) { value, _, stop in
@@ -3382,6 +3441,7 @@ final class AgentChatComposer: NSView, ObservableObject {
         }
         editor.onHeightChange = { [weak self] in self?.invalidateIntrinsicContentSize(); self?.needsLayout = true }
         editor.textView.onSubmit = { [weak self] in self?.send() }
+        editor.textView.onSendNow = { [weak self] in self?.sendNow() }
         editor.textView.acceptsAttachments = { [weak self] in self?.canEdit == true }
         editor.textView.onPasteAttachments = { [weak self] in self?.addAttachments(from: $0) ?? false }
         editor.textView.onDropTargetChange = { [weak self] in self?.card.setDropTarget($0) }
@@ -3499,7 +3559,7 @@ final class AgentChatComposer: NSView, ObservableObject {
         status == nil || status == .idle || status?.launchesOnSend == true
     }
 
-    func send() {
+    func send(now: Bool = false) {
         guard canEdit,
               !editor.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else { return }
         let prompt = editor.promptForSend().normalized
@@ -3525,7 +3585,8 @@ final class AgentChatComposer: NSView, ObservableObject {
         // Any message Johnny sends answers a waiting hand-off in place of its Done.
         conversation?.setHandOff(nil)
         if busy {
-            conversation?.onQueue?(prompt.text, attachments, prompt.mentions)
+            if now { conversation?.queueAndSendNow(text: prompt.text, attachments: attachments, mentions: prompt.mentions) }
+            else { conversation?.onQueue?(prompt.text, attachments, prompt.mentions) }
             conversation?.refusePendingPermissions()
         }
         else if let conversation, conversation.status.launchesOnSend {
@@ -3538,6 +3599,16 @@ final class AgentChatComposer: NSView, ObservableObject {
         else if let conversation { conversation.onSend?(prompt.text, attachments, prompt.mentions) }
         else if onLaunch?(prompt.text, attachments, prompt.mentions) != true { return }
         clearDraft()
+    }
+    func sendNow() {
+        if editor.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty {
+            if let conversation, let message = conversation.queue.first(where: { !$0.delivering }) {
+                conversation.messageSent.send()
+                conversation.onSendQueuedNow?(message.id)
+            }
+        } else {
+            send(now: true)
+        }
     }
     @objc private func sendClicked() { send() }
     @objc private func stopClicked() { if busy { conversation?.onStop?() } }
@@ -3602,9 +3673,10 @@ final class AgentChatComposer: NSView, ObservableObject {
         editor.updateSlashCommands()
         browserLaunchRow?.setAttachmentsEnabled(editable)
         // While the agent works, Send queues the message.
-        let clear = conversation != nil && ClaudeCodeClearCommand.matches(editor.text)
+        let text = editor.text
+        let clear = conversation != nil && ClaudeCodeClearCommand.matches(text)
         sendButton.isEnabled = editable && (clear || working || Self.accepts(state))
-            && (!editor.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+            && (text.rangeOfCharacter(from: CharacterSet.whitespacesAndNewlines.inverted) != nil || !attachments.isEmpty)
         stopButton.isHidden = !working
         strip.update(attachments) { [weak self] index in
             guard let self, self.canEdit, self.attachments.indices.contains(index) else { return }

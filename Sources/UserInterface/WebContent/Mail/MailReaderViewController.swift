@@ -79,7 +79,7 @@ final class MailReaderViewController: NSViewController, WKNavigationDelegate, WK
         placeholder.isHidden = false; placeholder.show(message: MailStrings.noSelection); card.isHidden = true; toolbar.isHidden = true
         guard message != nil else { return }
         // The optimistic flag action happens as soon as a message is shown, before downloading its body.
-        if let message, !message.flags.contains(MailFlags.seen) { model.perform(.seen(true), message: message) }
+        if let message, !message.flags.contains(MailFlags.seen) { model.perform(.seen(true), message: message, undoable: false) }
         loadMessage()
     }
     private func loadMessage() {

@@ -239,6 +239,9 @@ final class AgentChatDisplayRowTests: XCTestCase {
                 let card = AgentChatItem(id: "p", kind: .permissionRequest(request))
                 XCTAssertEqual(AgentChatDisplayRow.rows(from: [call, card]).count, 1)
                 XCTAssertEqual(AgentChatDisplayRow.rows(from: [card]), [.item(card)])
+                request.input = .object(["b": .number(2), "a": .number(1), "__artifactConsentAskCanReachUser": .bool(true)])
+                XCTAssertEqual(AgentChatDisplayRow.rows(from: [call, .init(id: "p", kind: .permissionRequest(request))]).count, 1,
+                               "The CLI's hidden fields don't count")
                 request.input = .object(["different": .bool(true)])
                 XCTAssertEqual(AgentChatDisplayRow.rows(from: [call, .init(id: "p", kind: .permissionRequest(request))]).count, 2)
             }

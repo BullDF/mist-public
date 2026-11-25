@@ -83,10 +83,12 @@ struct AgentMentionText: Equatable {
         return nil
     }
 
-    /// Whitespace is ignored on both sides, so `@myp` (an @ query ends at a space) finds "My PRs".
+    /// Only letters and digits count, on both sides, so `@myp` (an @ query ends at a space) finds "My PRs" and
+    /// `@agentc` finds "fix(agent-chat)".
     static func matches(_ tabs: [AgentTabMention], query: String) -> [AgentTabMention] {
         func fold(_ value: String) -> String {
-            value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX")).filter { !$0.isWhitespace }
+            value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+                .filter { $0.isLetter || $0.isNumber }
         }
         let query = fold(query)
         return tabs.enumerated().filter { query.isEmpty || fold($0.element.title).contains(query) || (!$0.element.isGroup && fold($0.element.url).contains(query)) }

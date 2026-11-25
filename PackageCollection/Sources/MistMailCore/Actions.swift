@@ -28,6 +28,30 @@ struct PendingMailOperation: Codable {
     }
 }
 
+/// Pending operations keep their full snapshots on disk. Once replayed, undo needs
+/// only the message identities, original mailboxes and flags.
+struct ReplayedMailOperation {
+    struct Message {
+        let id: UUID
+        let mailboxID: UUID
+        let flags: Set<String>
+    }
+
+    let accountID: UUID
+    let mailboxID: UUID
+    let action: PendingMailAction
+    let before: [Message]
+
+    init(_ operation: PendingMailOperation) {
+        accountID = operation.accountID
+        mailboxID = operation.mailboxID
+        action = operation.action
+        before = operation.before.map {
+            Message(id: $0.id, mailboxID: $0.mailboxID, flags: $0.remote.flags)
+        }
+    }
+}
+
 extension MailEngine {
     @discardableResult
     public func markAllRead(_ mailboxIDs: [UUID]) throws -> [UUID] {
@@ -120,19 +144,32 @@ extension MailEngine {
     }
     public func flushPending(accountID: UUID) async throws { try await replayPending(accountID: accountID) }
     func replayPending(accountID: UUID) async throws {
-        if let task = replayTasks[accountID] { return try await task.value }
-        let task = Task { try await self.performReplay(accountID: accountID) }
+        if let task = replayTasks[accountID] {
+            if !task.isCancelled { return try await task.value }
+            _ = try? await task.value
+            try Task.checkCancellation()
+            return try await replayPending(accountID: accountID)
+        }
+        let task = Task {
+            // An undo awaiting this replay may enqueue its inverse as soon as the task completes.
+            defer { replayTasks[accountID] = nil }
+            try await performReplay(accountID: accountID)
+        }
         replayTasks[accountID] = task
-        defer { replayTasks[accountID] = nil }
         try await task.value
     }
     func performReplay(accountID: UUID) async throws {
+        let generation = generations[accountID]
         do {
             let transport = try await connection(accountID)
             while let operation: PendingMailOperation = try store.pending(accountID: accountID).first {
+                try Task.checkCancellation()
+                inFlightOperations.insert(operation.id)
+                defer { inFlightOperations.remove(operation.id) }
                 do {
                     let box = try store.mailbox(operation.mailboxID)
                     let selected = try await transport.select(box.name)
+                    try Task.checkCancellation()
                     guard operation.uidValidity == nil || selected.uidValidity == operation.uidValidity else { throw MailError.notFound }
                     let source = operation.before.filter { $0.mailboxID == box.id }
                     let uids = source.map { $0.remote.uid }
@@ -150,58 +187,73 @@ extension MailEngine {
                         destination.needsCreation = false; try store.save(destination)
                         let result = try await transport.move(uids, from: box.name, to: destination.name)
                         _ = try account(accountID)
+                        var copies: [UInt32: UUID] = [:]
                         if let result {
                             if let validity = destination.uidValidity, validity != result.uidValidity { try store.resetMailbox(destination.id) }
                             destination.uidValidity = result.uidValidity; try store.save(destination)
-                            let existing = Set(try store.messages(mailboxID: destination.id).map { $0.remote.uid })
+                            var existing = Dictionary(try store.messages(mailboxID: destination.id).map { ($0.remote.uid, $0.id) },
+                                                      uniquingKeysWith: { first, _ in first })
                             for item in source {
-                                if let uid = result.uids[item.remote.uid], !existing.contains(uid) {
-                                    var copy = makeStored(item.remote, mailbox: destination); copy.remote.uid = uid
-                                    copy.plainText = item.plainText; copy.html = item.html; copy.bodyLoaded = item.bodyLoaded && item.inlineFiles.isEmpty
-                                    try store.save(copy)
-                                }
+                                guard let uid = result.uids[item.remote.uid] else { continue }
+                                if let id = existing[uid] { copies[item.remote.uid] = id; continue }
+                                var copy = makeStored(item.remote, mailbox: destination); copy.remote.uid = uid
+                                copy.plainText = item.plainText; copy.html = item.html; copy.bodyLoaded = item.bodyLoaded && item.inlineFiles.isEmpty
+                                try store.save(copy)
+                                existing[uid] = copy.id
+                                copies[item.remote.uid] = copy.id
                             }
                             try changed([destination.id])
                         }
-                        for item in source { try store.deleteMessage(item.id) }
+                        for item in source {
+                            try store.deleteMessage(item.id)
+                            if let copy = copies[item.remote.uid] { movedTo[item.id] = copy }
+                            else if let header = item.remote.messageID {
+                                movesWithoutCopyUID[item.id] = UnmappedMailMove(destination: destination.id, messageID: header)
+                            }
+                        }
                     }
-                    try store.deletePending(operation.id); try changed(Set(operation.before.map(\.mailboxID)))
+                    try store.deletePending(operation.id)
+                    replayedOperations[operation.id] = ReplayedMailOperation(operation)
+                    try changed(Set(operation.before.map(\.mailboxID)))
                 } catch {
                     let failure = error as? MailError ?? .cannotConnect
                     if failure.isPermanent { try rollback(operation); emit(.actionFailed(operationID: operation.id, error: failure)) }
                     else { throw error }
                 }
             }
-        } catch { await failed(accountID, error); throw error }
+        } catch { await failed(accountID, error, generation: generation); throw error }
     }
     func rollback(_ operation: PendingMailOperation) throws {
         let pending: [PendingMailOperation] = try store.pending(accountID: operation.accountID)
         var later = Array(pending.drop(while: { $0.id != operation.id }).dropFirst())
-        for original in operation.before {
-            guard var current = try? store.message(original.id) else { continue }
-            if let (flag, _) = operation.action.flagChange {
-                if original.remote.flags.contains(flag) { current.remote.flags.insert(flag) } else { current.remote.flags.remove(flag) }
-            } else { current.hidden = original.hidden }
-            // Later snapshots were taken over this failed optimistic change. Rebase
-            // their rollback values too, so two refused toggles restore the server state.
-            for index in later.indices {
-                for beforeIndex in later[index].before.indices where later[index].before[beforeIndex].id == original.id {
-                    if let (flag, _) = operation.action.flagChange {
-                        if current.remote.flags.contains(flag) { later[index].before[beforeIndex].remote.flags.insert(flag) }
-                        else { later[index].before[beforeIndex].remote.flags.remove(flag) }
-                    } else { later[index].before[beforeIndex].hidden = current.hidden }
+        try store.db.transaction {
+            for original in operation.before {
+                guard var current = try? store.message(original.id) else { continue }
+                if let (flag, _) = operation.action.flagChange {
+                    if original.remote.flags.contains(flag) { current.remote.flags.insert(flag) } else { current.remote.flags.remove(flag) }
+                } else { current.hidden = original.hidden }
+                // Later snapshots were taken over this optimistic change. Rebase
+                // their rollback values too, so two refused toggles restore the server state.
+                for index in later.indices {
+                    for beforeIndex in later[index].before.indices where later[index].before[beforeIndex].id == original.id {
+                        if let (flag, _) = operation.action.flagChange {
+                            if current.remote.flags.contains(flag) { later[index].before[beforeIndex].remote.flags.insert(flag) }
+                            else { later[index].before[beforeIndex].remote.flags.remove(flag) }
+                        } else { later[index].before[beforeIndex].hidden = current.hidden }
+                    }
+                    later[index].apply(to: &current)
                 }
-                later[index].apply(to: &current)
+                try store.saveWithoutTransaction(current)
             }
-            try store.save(current)
+            for value in later { try store.savePending(value, id: value.id, accountID: value.accountID) }
+            try store.deletePending(operation.id)
         }
-        for value in later { try store.savePending(value, id: value.id, accountID: value.accountID) }
-        try store.deletePending(operation.id); try changed(Set(operation.before.map(\.mailboxID)))
+        try changed(Set(operation.before.map(\.mailboxID)))
     }
     func invalidatePending(mailboxID: UUID) throws {
         let box = try store.mailbox(mailboxID)
         let operations: [PendingMailOperation] = try store.pending(accountID: box.accountID)
-        for operation in operations where operation.mailboxID == mailboxID {
+        for operation in operations where operation.mailboxID == mailboxID && !inFlightOperations.contains(operation.id) {
             try store.deletePending(operation.id); emit(.actionFailed(operationID: operation.id, error: .notFound))
         }
     }

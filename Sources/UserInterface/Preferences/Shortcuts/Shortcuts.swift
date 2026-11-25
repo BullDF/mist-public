@@ -158,6 +158,7 @@ enum CommandWrapper: Int, Equatable {
     case PHI_SET_START_PAGE          = 90041
     case PHI_RETURN_TO_START_PAGE    = 90042
     case PHI_CLOSE_PANEL_CHAT        = 90043
+    case PHI_UNPIN_AND_CLOSE_TAB     = 90044
     case PHI_OPEN_MAIL               = 90031
     case PHI_DRIFTER_MODEL_MENU      = 90032
     case PHI_DRIFTER_EFFORT_MENU     = 90033
@@ -666,6 +667,7 @@ extension Shortcuts {
         .PHI_SET_START_PAGE: .init(characters: "s", modifiers: [.command, .shift]),
         // ⇧⌘H was Chromium's Home, which Mist disables.
         .PHI_RETURN_TO_START_PAGE: .init(characters: "h", modifiers: [.command, .shift]),
+        .PHI_UNPIN_AND_CLOSE_TAB: .init(characters: "w", modifiers: [.command, .option]),
 
         // PHI
         .PHI_TOGGLE_SIDEBAR: .init(characters: "s", modifiers: [.command]),

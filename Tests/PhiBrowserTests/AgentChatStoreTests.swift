@@ -316,6 +316,22 @@ final class AgentChatStoreTests: XCTestCase {
 
         try store.clear(later.id)
         XCTAssertEqual(collapsed, [], "/clear keeps the panel on the fresh chat")
+
+        let mounted = try store.createEmpty(tabId: 5)
+        open.formUnion([5, 105])
+        XCTAssertTrue(store.mount(mounted.id, to: 105))
+        store.unmount(mounted.id)
+        XCTAssertEqual(collapsed, [105], "Unmount from Tab closes the panel")
+        XCTAssertNotNil(store.conversation(for: mounted.id), "The chat keeps running in its own tab")
+
+        collapsed = []
+        let replaced = try store.createEmpty(tabId: 6)
+        let current = try store.createEmpty(tabId: 60)
+        open.formUnion([6, 60, 106])
+        store.setPanelChat(replaced.id, for: 106)
+        store.setPanelChat(current.id, for: 106)
+        store.unmount(replaced.id)
+        XCTAssertEqual(collapsed, [], "Unmounting a chat the panel no longer shows keeps the panel")
     }
 
     @MainActor func testDeletionRefusesUnsafeRecordsAndFolders() throws {
