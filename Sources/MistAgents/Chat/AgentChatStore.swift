@@ -27,6 +27,7 @@ final class AgentChatStore: ObservableObject {
     var now: () -> Date = Date.init
     private var browserPreviewExpiryTimer: Timer?
     private(set) var browserPreviewExpiryDeadline: Date?
+    private var hiddenBrowserPreviews: Set<UUID> = []
     typealias BrowserSessionFactory = @MainActor (DrifterLaunchRequest, AgentConversation, URL) -> AnyObject
     @MainActor struct Entry {
         let conversation: AgentConversation
@@ -480,6 +481,10 @@ final class AgentChatStore: ObservableObject {
         if let chatId { unseenCompletions.remove(chatId) }
     }
     private var statusBindings: [UUID: AnyCancellable] = [:]
+    private var checkInBindings: [UUID: [AnyCancellable]] = [:]
+    private var checkIns: DrifterBackgroundCheckIns
+    private var checkInTimer: Timer?
+    private var pendingCheckIns: Set<UUID> = []
     private var engineBindings: [UUID: AnyCancellable] = [:]
     private let launchSettings: DrifterLaunchSettings
     private let placeholderStyle: (DrifterEngine) -> AgentChatPlaceholderStyle
@@ -526,6 +531,8 @@ final class AgentChatStore: ObservableObject {
          chatTabs: @escaping () -> [(chatId: UUID, tabId: Int)] = { [] },
          browserSessionFactory: BrowserSessionFactory? = nil) {
         self.route = route
+        let configuredInterval = UserDefaults.standard.double(forKey: "DrifterBackgroundCheckInInterval")
+        checkIns = DrifterBackgroundCheckIns(interval: configuredInterval >= 10 && configuredInterval.isFinite ? configuredInterval : 1800)
         self.launchSettings = launchSettings
         self.placeholderStyle = placeholderStyle
         self.tabIsKept = tabIsKept
@@ -797,11 +804,25 @@ final class AgentChatStore: ObservableObject {
         conversation.onOpenLink = { [weak self] url in self?.openLink(url, chatId: id) }
         #endif
         var previousStatus = conversation.status
+        checkIns.states[id, default: .init()].idleSince = now()
+        checkInBindings[id] = [
+            conversation.$backgroundTasks.removeDuplicates().sink { [weak self] tasks in
+                guard let self, !self.terminated else { return }
+                self.checkIns.tasks(tasks, id: id, now: self.now())
+                self.scheduleCheckInTimer()
+            },
+            conversation.$queue.map { $0.isEmpty }.removeDuplicates().sink { [weak self] _ in self?.scheduleCheckInTimer() },
+            conversation.$handOff.map { $0 == nil }.removeDuplicates().sink { [weak self] _ in self?.scheduleCheckInTimer() }
+        ]
         #if !MIST_CLAUDE_CODE_HOSTLESS_TESTS
         let principalId = entry.browserPreview?.principalId
         #endif
         statusBindings[conversation.id] = conversation.$status.sink { [weak self] status in
             guard let self, let entry = self.entries[conversation.id] else { return }
+            if previousStatus != status {
+                self.checkIns.status(status, previous: previousStatus, id: id, now: self.now())
+                self.scheduleCheckInTimer()
+            }
             let turnActive: Bool?
             switch status {
             case .running, .awaitingPermission: turnActive = true
@@ -839,13 +860,20 @@ final class AgentChatStore: ObservableObject {
                 }
             }
             #endif
-            if previousStatus == .running, status == .idle, !self.isTabActive(entry.tabId),
+            if previousStatus != status, status == .idle, let dot = self.checkIns.states[id]?.pendingDot {
+                self.checkIns.states[id]?.pendingDot = nil
+                if dot { self.unseenCompletions.insert(id) } else { self.unseenCompletions.remove(id) }
+            } else if previousStatus == .running, status == .idle, !self.isTabActive(entry.tabId),
                !self.visiblePanels.values.contains(conversation.id) {
                 self.unseenCompletions.insert(conversation.id)
             } else if status != .idle, self.unseenCompletions.contains(conversation.id) {
                 // A running agent republishes its status with every streamed update, and any write to this
                 // published set, even removing a missing id, refreshes every store observer.
                 self.unseenCompletions.remove(conversation.id)
+            }
+            if [.running, .awaitingPermission].contains(previousStatus),
+               ![.running, .awaitingPermission, .idle].contains(status) {
+                self.checkIns.states[id]?.pendingDot = nil
             }
             let previous = previousStatus
             previousStatus = status
@@ -959,12 +987,21 @@ final class AgentChatStore: ObservableObject {
             message = prepared
         } else { message = messageToDeliver }
         // A message that wakes a Slack thread's chat says that the turn's final reply posts there.
-        if let sender = message.sender, sender.kind != .slack,
+        if let sender = message.sender, sender.kind != .slack, sender.kind != .checkIn,
            AgentChatTranscriptText.wakePostsToSlack(entry.conversation.items,
                                                     queued: [entry.conversation.unsent].compactMap { $0 } + entry.conversation.queue) {
             message.sender?.postsToSlack = true
         }
-        guard entry.conversation.deliver(message) else { return .failure(.notTaken(listedId)) }
+        let priorDot = checkIns.states[target]?.pendingDot
+        if message.sender?.kind == .checkIn && status == .idle {
+            checkIns.states[target]?.pendingDot = unseenCompletions.contains(target)
+        } else if message.sender?.kind != .checkIn {
+            checkIns.states[target]?.pendingDot = nil
+        }
+        guard entry.conversation.deliver(message) else {
+            checkIns.states[target]?.pendingDot = priorDot
+            return .failure(.notTaken(listedId))
+        }
         return .success((listedId, entry.conversation.title,
                          status == .running || status == .awaitingPermission ? "queued" : "started"))
     }
@@ -1362,6 +1399,18 @@ final class AgentChatStore: ObservableObject {
         entries[id]?.browserPreview?.cardAspect = aspect
     }
 
+    /// Whether the chat header's toggle hid the chat's preview cards. Kept in memory until shown again or the chat has
+    /// no cards left, so the next cards show again.
+    func isBrowserPreviewHidden(_ id: UUID) -> Bool {
+        hiddenBrowserPreviews.contains(id) && entries[id]?.browserPreview?.cards.isEmpty == false
+    }
+
+    func setBrowserPreviewHidden(_ id: UUID, _ hidden: Bool) {
+        guard let preview = entries[id]?.browserPreview, !preview.cards.isEmpty, isBrowserPreviewHidden(id) != hidden else { return }
+        if hidden { hiddenBrowserPreviews.insert(id) } else { hiddenBrowserPreviews.remove(id) }
+        notifyBrowserPreviewChanged(windowId: preview.windowId)
+    }
+
     func dismissBrowserPreview(_ id: UUID, tabId: Int) {
         guard var preview = entries[id]?.browserPreview else { return }
         preview.dismiss(tabId: tabId)
@@ -1475,6 +1524,55 @@ final class AgentChatStore: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
     }
 
+    private func scheduleCheckInTimer() {
+        DispatchQueue.main.async { [weak self] in self?.armCheckInTimer() }
+    }
+
+    private func eligibleForCheckIn(_ chat: AgentConversation) -> Bool {
+        chat.status == .idle && chat.queue.isEmpty && chat.unsent == nil && chat.handOff == nil && !chat.backgroundTasks.isEmpty
+    }
+
+    private func armCheckInTimer() {
+        checkInTimer?.invalidate()
+        checkInTimer = nil
+        guard !terminated else { return }
+        let deadline = entries.compactMap { id, entry in
+            !pendingCheckIns.contains(id) && eligibleForCheckIn(entry.conversation) ? checkIns.deadline(id) : nil
+        }.min()
+        guard let deadline else { return }
+        let timer = Timer(fire: deadline, interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fireDueBackgroundCheckIns() }
+        }
+        checkInTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func fireDueBackgroundCheckIns() {
+        guard !terminated else { return }
+        let date = now()
+        for (id, entry) in entries where !pendingCheckIns.contains(id) && eligibleForCheckIn(entry.conversation) {
+            guard let deadline = checkIns.deadline(id), deadline <= date else { continue }
+            pendingCheckIns.insert(id)
+            Task { [weak self] in
+                guard let self else { return }
+                self.pendingCheckIns.remove(id)
+                guard !self.terminated, let current = self.entries[id]?.conversation,
+                      self.eligibleForCheckIn(current), let deadline = self.checkIns.deadline(id),
+                      deadline <= self.now() else { self.armCheckInTimer(); return }
+                let date = self.now()
+                let message = self.checkIns.message(current.backgroundTasks, id: id, now: date) {
+                    self.backgroundTasks(for: id)?.checkInOutput(for: $0)
+                }
+                self.checkIns.retry(id, now: date)
+                if !(await self.deliverExternalMessage(message, to: id)) {
+                    self.checkIns.retry(id, now: self.now())
+                }
+                self.armCheckInTimer()
+            }
+        }
+        armCheckInTimer()
+    }
+
     func expireBrowserPreviewCards() {
         let date = now()
         var windows = Set<Int>()
@@ -1504,6 +1602,8 @@ final class AgentChatStore: ObservableObject {
     }
 
     func notifyBrowserPreviewChanged(windowId: Int) {
+        // Every change to a chat's cards posts here, so a chat whose cards are gone shows its next ones.
+        hiddenBrowserPreviews = hiddenBrowserPreviews.filter { entries[$0]?.browserPreview?.cards.isEmpty == false }
         NotificationCenter.default.post(name: .browserAgentPreviewDidChange, object: self,
                                         userInfo: ["windowId": windowId])
     }
@@ -1681,6 +1781,10 @@ final class AgentChatStore: ObservableObject {
         removeFromPanelHistory(id)
         visiblePanels = visiblePanels.filter { $0.value != id }
         statusBindings[id] = nil
+        checkInBindings[id] = nil
+        checkIns.states[id] = nil
+        pendingCheckIns.remove(id)
+        scheduleCheckInTimer()
         idleTabs[id] = nil
         unseenCompletions.remove(id)
         if let entry = entries.removeValue(forKey: id) {
@@ -1712,6 +1816,11 @@ final class AgentChatStore: ObservableObject {
 
     func terminate() {
         terminated = true
+        checkInTimer?.invalidate()
+        checkInTimer = nil
+        checkInBindings.removeAll()
+        checkIns.states.removeAll()
+        pendingCheckIns.removeAll()
         browserPreviewExpiryTimer?.invalidate()
         browserPreviewExpiryTimer = nil
         browserPreviewExpiryDeadline = nil
@@ -1757,6 +1866,7 @@ final class AgentChatStore: ObservableObject {
     }
 
     deinit {
+        checkInTimer?.invalidate()
         browserPreviewExpiryTimer?.invalidate()
         pendingWindowClose?.cancel()
         pendingCloses.values.forEach { $0.cancel() }

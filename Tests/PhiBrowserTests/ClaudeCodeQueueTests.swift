@@ -4,6 +4,30 @@ import XCTest
 #endif
 
 final class ClaudeCodeQueueTests: XCTestCase {
+    func testTaskWakeAddsNoRowAndCheckInAddsOneRowPerTask() {
+        for kind in [AgentMessageSender.Kind.task, .checkIn] {
+            var sender = AgentMessageSender(id: "check", title: "Mist", kind: kind, note: "Check")
+            sender.checkInTasks = kind == .checkIn ? ["Build", "Serve"] : []
+            let expected = kind == .checkIn ? ["Check-in: \"Build\" still running", "Check-in: \"Serve\" still running"] : []
+            func summaries(_ items: [AgentChatItem]) -> [String] {
+                items.compactMap {
+                    guard case let .taskNotification(summary, status) = $0.kind, status == .running else { return nil }
+                    return summary
+                }
+            }
+            var transcript = ClaudeCodeTranscript()
+            transcript.userSent(text: "Check", attachments: [], sender: sender)
+            XCTAssertEqual(summaries(transcript.items), expected)
+            XCTAssertEqual(transcript.items.count, expected.count)
+            XCTAssertEqual(transcript.status, .running)
+            var queued = ClaudeCodeTranscript()
+            queued.queuedMessageTaken(.init(text: "Check", sender: sender))
+            XCTAssertEqual(summaries(queued.items), expected)
+            XCTAssertEqual(queued.items.count, expected.count)
+            XCTAssertEqual(queued.status, .running)
+        }
+        XCTAssertEqual(AgentChatStrings.taskNotification("Check-in: \"Build\" still running"), "Check-in: “Build” still running")
+    }
     @MainActor func testPeerDeliveryWrapsTransformedBodyAndKeepsSenderThroughQueueReplay() throws {
         var lines: [ClaudeCodeJSON] = []
         let session = session { lines.append($0) }, conversation = session.conversation

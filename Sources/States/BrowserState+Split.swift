@@ -594,14 +594,23 @@ extension BrowserState {
     /// other in that order and reports the split back through
     /// `handleSplitCreated`. Returns the new split ID on success.
     ///
+    /// The split stands where `anchorTabId` (default: the left pane) stands,
+    /// in its tab group; the other pane moves next to it.
+    ///
     /// Chromium pivots the split on whichever tab is already active, so the
     /// active tab never bounces HIDDEN → VISIBLE (which
     /// `RenderWidgetHostViewCocoa` does not always cleanly resume from — the
     /// previously-focused tab's pane then renders blank).
     @discardableResult
-    func createSplit(leftTabId: Int, rightTabId: Int, layout: SplitLayout) -> String? {
-        ChromiumLauncher.sharedInstance().bridge?.createSplit(
+    func createSplit(leftTabId: Int,
+                     rightTabId: Int,
+                     layout: SplitLayout,
+                     anchorTabId: Int? = nil) -> String? {
+        let anchor = anchorTabId ?? leftTabId
+        guard anchor == leftTabId || anchor == rightTabId else { return nil }
+        return ChromiumLauncher.sharedInstance().bridge?.createSplit(
             withTabIds: [NSNumber(value: Int64(leftTabId)), NSNumber(value: Int64(rightTabId))],
+            anchorTabId: Int64(anchor),
             layout: layout.rawValue,
             windowId: windowId.int64Value)
     }
@@ -1165,7 +1174,8 @@ extension BrowserState {
             case .left:
                 splitId = createSplit(leftTabId: attachedLiveTab.guid,
                                       rightTabId: partnerTabId,
-                                      layout: layout)
+                                      layout: layout,
+                                      anchorTabId: partnerTabId)
             case .right:
                 splitId = createSplit(leftTabId: partnerTabId,
                                       rightTabId: attachedLiveTab.guid,
@@ -1392,7 +1402,8 @@ extension BrowserState {
         case .left:
             createdSplitId = createSplit(leftTabId: tab.guid,
                                          rightTabId: pending.partnerTabId,
-                                         layout: pending.layout)
+                                         layout: pending.layout,
+                                         anchorTabId: pending.partnerTabId)
         }
         // Closed-split drop: both panes were just materialized here, so they
         // sit at the tail of the strip. Record the requested drop index

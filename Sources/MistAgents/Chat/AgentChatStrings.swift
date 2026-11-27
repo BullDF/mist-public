@@ -13,6 +13,8 @@ enum AgentChatStrings {
     static var markerRemove: String { NSLocalizedString("browser.agentChat.markerRemove", value: "Remove marker", comment: "Chat marker list - Remove this bookmark") }
     static var markerRename: String { NSLocalizedString("browser.agentChat.markerRename", value: "Rename", comment: "Chat marker list - Edit this bookmark's name") }
     static var markerList: String { NSLocalizedString("browser.agentChat.markerList", value: "Markers", comment: "Chat header - Open the list of named bookmarks") }
+    static var hidePreviews: String { NSLocalizedString("browser.agent.preview.hideAll", value: "Hide tab previews", comment: "Chat header - Hide this chat's tab preview cards") }
+    static var showPreviews: String { NSLocalizedString("browser.agent.preview.showAll", value: "Show tab previews", comment: "Chat header - Show this chat's hidden tab preview cards again") }
     static var markerName: String { NSLocalizedString("browser.agentChat.markerName", value: "Marker name", comment: "Chat marker - Name field placeholder and accessibility label") }
     static func markerNumber(_ position: Int) -> String {
         String(format: NSLocalizedString("browser.agentChat.markerNumber", value: "Marker %d", comment: "Chat marker - Default name for a message without text; %d is its position among the chat's markers"), position)
@@ -493,6 +495,8 @@ enum AgentChatStrings {
          NSLocalizedString("browser.agentChat.taskNotification.monitor.scriptFailedExit", value: "Monitor “%1$@” script failed (exit %2$d)", comment: "Claude Code background task notification: %1$@ is the task's description; %2$d is its exit code"), .number),
         (try! NSRegularExpression(pattern: #"\AMonitor "(.+)" stopped\z"#, options: .dotMatchesLineSeparators),
          NSLocalizedString("browser.agentChat.taskNotification.monitor.stopped", value: "Monitor “%@” stopped", comment: "Claude Code background task notification: %@ is the task's description"), .one),
+        (try! NSRegularExpression(pattern: #"\ACheck-in: "(.+)" still running\z"#, options: .dotMatchesLineSeparators),
+         NSLocalizedString("browser.agentChat.taskNotification.checkIn", value: "Check-in: “%@” still running", comment: "Row for Mist's check-in on an idle agent chat's background task: %@ is the still-running task's description"), .one),
     ]
 
     /// An unrecognized summary shows only its first line.

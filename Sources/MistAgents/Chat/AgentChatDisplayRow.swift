@@ -66,6 +66,8 @@ enum AgentChatDisplayRow: Identifiable, Equatable {
             run.removeAll()
         }
         for item in items {
+            // Codex can end a turn with an empty final message (a background check-in it answers silently), which drew a blank gap.
+            if case let .assistantText(text, _) = item.kind, text.allSatisfy(\.isWhitespace) { continue }
             if case let .permissionRequest(request) = item.kind, request.status != .pending,
                !["AskUserQuestion", "ExitPlanMode"].contains(request.toolName),
                (toolsByName[request.toolName] ?? []).contains(where: { cache.input($0) == toolInput(of: request) }) { continue }

@@ -154,18 +154,14 @@ final class MailPageViewController: NSViewController, MistAppPage, NSSplitViewDe
         else { view.window?.makeFirstResponder(table) }
     }
     func refresh() { model.refresh() }
-    @objc func undo(_ sender: Any?) {
-        guard ownsMessageHistoryFocus, model.canUndo else { return }
-        Task { await model.undo() }
-    }
-    @objc func redo(_ sender: Any?) {
-        guard ownsMessageHistoryFocus, model.canRedo else { return }
-        Task { await model.redo() }
-    }
+    /// Edit ▸ Undo and Redo send `undo:` and `redo:`, which reach this controller before the window: a focused text
+    /// field or the composer takes its own text history, everything else the message actions'.
+    @objc func undo(_ sender: Any?) { performHistory(redo: false) }
+    @objc func redo(_ sender: Any?) { performHistory(redo: true) }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(undo(_:)): return ownsMessageHistoryFocus && model.canUndo
-        case #selector(redo(_:)): return ownsMessageHistoryFocus && model.canRedo
+        case #selector(undo(_:)): return historyMenuEnabled(redo: false) == true
+        case #selector(redo(_:)): return historyMenuEnabled(redo: true) == true
         default: return true
         }
     }
@@ -193,7 +189,15 @@ final class MailPageViewController: NSViewController, MistAppPage, NSSplitViewDe
     @discardableResult
     func performMessageHistory(redo: Bool) -> Bool {
         guard ownsMessageHistoryFocus, redo ? model.canRedo : model.canUndo else { return false }
-        if redo { self.redo(nil) } else { undo(nil) }
+        Task { if redo { await model.redo() } else { await model.undo() } }
+        return true
+    }
+    @discardableResult
+    private func performHistory(redo: Bool) -> Bool {
+        guard let responder = pageFirstResponder else { return false }
+        if ownsTextHistory(responder) {
+            if redo { responder.undoManager?.redo() } else { responder.undoManager?.undo() }
+        } else { performMessageHistory(redo: redo) }
         return true
     }
     static func historyShortcut(_ event: NSEvent) -> Bool? {
@@ -203,12 +207,7 @@ final class MailPageViewController: NSViewController, MistAppPage, NSSplitViewDe
     }
     func performPageCommand(_ command: CommandWrapper) -> Bool {
         if command == .IDC_CONTENT_CONTEXT_UNDO || command == .IDC_CONTENT_CONTEXT_REDO {
-            guard let responder = pageFirstResponder else { return false }
-            let redo = command == .IDC_CONTENT_CONTEXT_REDO
-            if ownsTextHistory(responder) {
-                if redo { responder.undoManager?.redo() } else { responder.undoManager?.undo() }
-            } else { performMessageHistory(redo: redo) }
-            return true
+            return performHistory(redo: command == .IDC_CONTENT_CONTEXT_REDO)
         }
         if command == .IDC_RELOAD || command == .IDC_RELOAD_BYPASSING_CACHE { refresh(); return true }
         guard [.IDC_FIND, .IDC_FIND_NEXT, .IDC_FIND_PREVIOUS, .IDC_ZOOM_PLUS, .IDC_ZOOM_MINUS, .IDC_ZOOM_NORMAL].contains(command) else { return false }

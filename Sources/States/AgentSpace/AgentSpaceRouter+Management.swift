@@ -451,13 +451,15 @@ extension AgentSpaceRouter {
                 return encode(["ok": true])
             }
             guard preview.readingTabIds.contains(tabId), preview.tabId != tabId else { return encode(["ok": true]) }
+            // Unmount before capturing: mounted out of sight, the page left its first capture unanswered
+            // for seconds; unmounted, it keeps its real size and answers at once.
+            AgentChatStore.shared.reportReadTab(principalId: context.driverPrincipalId, tabId: tabId, reading: false)
+            guard let owner = state.browserAgentPreview, owner.visibleCardChat == id,
+                  AgentChatStore.shared.entry(for: id)?.browserPreview?.cards.contains(where: { $0.tabId == tabId }) == true else {
+                return encode(["ok": true])
+            }
             Task { @MainActor in
-                // Unmount before capturing: mounted out of sight, the page left its first capture unanswered
-                // for seconds; unmounted, it keeps its real size and answers at once.
-                AgentChatStore.shared.reportReadTab(principalId: context.driverPrincipalId, tabId: tabId, reading: false)
-                if AgentChatStore.shared.entry(for: id)?.browserPreview?.cards.contains(where: { $0.tabId == tabId }) == true {
-                    await state.ensureBrowserAgentPreview().captureStill(tab)
-                }
+                await owner.captureStill(tab, for: id)
                 ExtensionMessaging.shared.sendResponse(encode(["ok": true]), requestId: context.requestId)
             }
             return nil

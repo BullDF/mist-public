@@ -21,6 +21,7 @@ class WebContentContainerViewController: NSViewController {
     private var cancellables = Set<AnyCancellable>()
     private var isSubscriptionsSetup = false
     private var updatingBrowserAgentPreview = false
+    private var browserAgentCardRefresh: Task<Void, Never>?
     private weak var presentedBrowserAgentPreviewStack: BrowserAgentPreviewStack?
     
     /// Tab identifier -> WebContentViewController mapping
@@ -54,6 +55,7 @@ class WebContentContainerViewController: NSViewController {
         for controller in webContentControllers.values {
             controller.collapseContentFullscreenForConcealment()
         }
+        hideBrowserAgentPreview()
     }
 
     private weak var currentWebContentController: WebContentViewController? {
@@ -763,7 +765,8 @@ class WebContentContainerViewController: NSViewController {
                 return windowId == state.windowId
             }
             .sink { [weak self] _ in self?.updateBrowserAgentPreview() }.store(in: &cancellables)
-        for name in [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+        for name in [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                     NSWindow.didChangeOcclusionStateNotification] {
             NotificationCenter.default.publisher(for: name).sink { [weak self] notification in
                 guard let self, self.hasBrowserAgentPreviewWork,
                       let window = notification.object as? NSWindow, window === self.view.window else { return }
@@ -1318,7 +1321,8 @@ class WebContentContainerViewController: NSViewController {
         let controller = candidates.first {
             guard let card = $0.browserAgentPreviewStack, let tab = $0.associatedTab,
                   let id = MistApps.address(tab.url)?.chatId,
-                  AgentChatStore.shared.entry(for: id)?.browserPreview?.cards.isEmpty == false else { return false }
+                  AgentChatStore.shared.entry(for: id)?.browserPreview?.cards.isEmpty == false,
+                  !AgentChatStore.shared.isBrowserPreviewHidden(id) else { return false }
             return card.isDescendant(of: current.view)
         }
         guard let controller, let stack = controller.browserAgentPreviewStack,
@@ -1361,12 +1365,29 @@ class WebContentContainerViewController: NSViewController {
         }
         stack.onContentChanged = { [weak self] in self?.updateBrowserAgentPreview() }
         stack.show(items, aspect: preview.cardAspect ?? 10 / 16)
-        let owner = state.ensureBrowserAgentPreview()
+        let owner = browserAgentPreviewOwner(in: state)
         owner.onFrame = { [weak self] tabId, image in
-            self?.presentedBrowserAgentPreviewStack?.card(for: tabId)?.setImage(image)
+            self?.presentedBrowserAgentPreviewStack?.setImage(image, for: tabId)
         }
         let liveCardTabs = liveTab.flatMap { stack.visibleTabIds.contains($0.guid) ? [$0] : nil } ?? []
-        owner.updateScreencasts(activeWorkingTabs + (visible ? liveCardTabs : []))
+        let arrived = visible && owner.visibleCardChat != id
+        owner.visibleCardChat = visible ? id : nil
+        owner.updateScreencasts(visible ? liveCardTabs.filter { tab in activeWorkingTabs.contains { $0 === tab } } : [])
+        if arrived {
+            let tabs = items.filter { $0.mount == .still || $0.mount == .live }.map(\.tab)
+            let previousRefresh = browserAgentCardRefresh
+            previousRefresh?.cancel()
+            browserAgentCardRefresh = Task { @MainActor [weak self, weak state] in
+                // Let the outgoing refresh release its temporary mount before borrowing another page.
+                await previousRefresh?.value
+                defer { if !Task.isCancelled { self?.browserAgentCardRefresh = nil } }
+                for tab in tabs {
+                    guard !Task.isCancelled, owner.visibleCardChat == id else { return }
+                    guard state?.tabs.contains(where: { $0 === tab }) == true else { continue }
+                    await owner.refreshStill(tab)
+                }
+            }
+        }
     }
 
 
@@ -1403,16 +1424,22 @@ class WebContentContainerViewController: NSViewController {
         let tabs = (activeWorkingTabs + activeReadTabs + BrowserAgentRecordings.shared.recordedTabs(windowId: state.windowId))
             .filter { seen.insert($0.guid).inserted }
         guard !tabs.isEmpty || state.browserAgentPreview != nil else { return }
+        browserAgentPreviewOwner(in: state).updateMounts(tabs)
+    }
+
+    private func browserAgentPreviewOwner(in state: BrowserState) -> BrowserAgentTabPreview {
         let owner = state.ensureBrowserAgentPreview()
         owner.holder = { [weak self] in self?.browserAgentPageHolder }
         owner.realSize = { [weak self] in self?.currentWebPanelSizeWithoutChatPanel }
-        owner.updateMounts(tabs)
+        return owner
     }
 
     private func hideBrowserAgentPreview() {
         if let card = presentedBrowserAgentPreviewStack, !card.isHidden { card.isHidden = true }
         presentedBrowserAgentPreviewStack = nil
-        browserState?.browserAgentPreview?.updateScreencasts(activeWorkingTabs)
+        browserAgentCardRefresh?.cancel()
+        browserState?.browserAgentPreview?.visibleCardChat = nil
+        browserState?.browserAgentPreview?.updateScreencasts([])
     }
     
     /// Resolve the controller owning `tab`'s content WITHOUT the

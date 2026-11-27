@@ -3,7 +3,7 @@ import Foundation
 enum AgentTaskFinishStatus: String, Codable, Sendable { case done, blocked }
 
 struct AgentMessageSender: Codable, Equatable, Sendable {
-    enum Kind: String, Codable, Sendable { case peer, parent, report, question, slack, task, schedule }
+    enum Kind: String, Codable, Sendable { case peer, parent, report, question, slack, task, schedule, checkIn }
     let id: String
     let title: String
     var kind: Kind = .peer
@@ -17,7 +17,7 @@ struct AgentMessageSender: Codable, Equatable, Sendable {
     var header: String {
         let text: String
         switch kind {
-        case .task: text = note ?? "Background task \(label)"
+        case .task, .checkIn: text = note ?? "Background task \(label)"
         case .slack: return "[" + (note ?? Self.slackNote(place: "in his DM with you", publicThread: false)) + "]"
         case .schedule:
             let header = note ?? "[Scheduled prompt \(label)]"
@@ -56,7 +56,15 @@ struct AgentMessageSender: Codable, Equatable, Sendable {
         + "Keep it concise and make it stand on its own, and never post it with slack_send_message, which posts as Johnny. "
         + "A turn without finish_task posts nothing"
 
-    private enum CodingKeys: String, CodingKey { case id, title, kind, reportsPaused, taskStatus, note, postsToSlack }
+    /// A check-in's still-running tasks, by description: each shows as a task notification row when the check-in is taken.
+    var checkInTasks: [String] = []
+    var checkInItems: [AgentChatItem] {
+        checkInTasks.map {
+            AgentChatItem(id: "check-in:" + UUID().uuidString, kind: .taskNotification(summary: "Check-in: \"\($0)\" still running", status: .running))
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, title, kind, reportsPaused, taskStatus, note, postsToSlack, checkInTasks }
     init(id: String, title: String, kind: Kind = .peer, reportsPaused: Bool = false, note: String? = nil) {
         self.id = id; self.title = title; self.kind = kind; self.reportsPaused = reportsPaused
         self.note = note
@@ -70,6 +78,7 @@ struct AgentMessageSender: Codable, Equatable, Sendable {
         taskStatus = try values.decodeIfPresent(AgentTaskFinishStatus.self, forKey: .taskStatus)
         note = try values.decodeIfPresent(String.self, forKey: .note)
         postsToSlack = try values.decodeIfPresent(Bool.self, forKey: .postsToSlack) ?? false
+        checkInTasks = try values.decodeIfPresent([String].self, forKey: .checkInTasks) ?? []
     }
     func agentText(_ text: String) -> String { header + "\n\n" + text }
 }

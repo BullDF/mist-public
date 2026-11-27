@@ -12,6 +12,7 @@ final class AgentChatViewController: NSViewController, MistAppPage {
     private var pageVisible = false
     let composer = AgentChatComposer()
     private(set) var previewStack: BrowserAgentPreviewStack?
+    private var previewObserver: AnyCancellable?
     private var pageTrailingConstraint: NSLayoutConstraint?
     private let pageLayout = DrifterChatPageLayout()
     private let mountAnchor = AgentChatMountAnchor()
@@ -57,7 +58,8 @@ final class AgentChatViewController: NSViewController, MistAppPage {
             hosting = MistKitHostingView(rootView: DrifterChatPage(conversation: entry.conversation, settings: settings, composer: composer, layout: pageLayout,
                                                                        origin: .init(store: store, chatId: id, anchor: mountAnchor), panel: presentation == .panel,
                                                                        onTranscriptScroll: { [weak self] in self?.setTranscript($0) },
-                                                                       onRevealMarker: { [weak self] in self?.revealMarker($0) }))
+                                                                       onRevealMarker: { [weak self] in self?.revealMarker($0) },
+                                                                       onTogglePreviews: { [store] in store.setBrowserPreviewHidden(id, !store.isBrowserPreviewHidden(id)) }))
         } else {
             hosting = MistKitHostingView(rootView: MistPlaceholder(message: AgentChatStrings.unavailable)
                 .frame(maxWidth: .infinity, maxHeight: .infinity))
@@ -84,8 +86,20 @@ final class AgentChatViewController: NSViewController, MistAppPage {
             view.addSubview(card)
             previewStack = card
         }
+        // The store posts after every change to a chat's cards, the header toggle's included.
+        previewObserver = presentation == .page
+            ? NotificationCenter.default.publisher(for: .browserAgentPreviewDidChange).sink { [weak self] _ in self?.refreshPreviewToggle() }
+            : nil
+        refreshPreviewToggle()
         view.addSubview(findBar, positioned: .above, relativeTo: nil)
         onPreviewVisibilityChanged?()
+    }
+
+    private func refreshPreviewToggle() {
+        let hasCards = presentation == .page && conversationId.flatMap { store.entry(for: $0)?.browserPreview?.cards.isEmpty == false } == true
+        let hidden = hasCards && conversationId.map(store.isBrowserPreviewHidden) == true
+        if pageLayout.hasPreviewCards != hasCards { pageLayout.hasPreviewCards = hasCards }
+        if pageLayout.previewsHidden != hidden { pageLayout.previewsHidden = hidden }
     }
 
     func setTranscript(_ scroll: AgentChatTranscriptScroll) {
@@ -202,6 +216,9 @@ final class AgentChatViewController: NSViewController, MistAppPage {
 /// How far the chat page runs under the preview cards' leading edge (`viewDidLayout`).
 private final class DrifterChatPageLayout: ObservableObject {
     @Published var cardOverlap: CGFloat = 0
+    /// Whether the chat has preview cards, which the header's toggle hides and shows.
+    @Published var hasPreviewCards = false
+    @Published var previewsHidden = false
 }
 
 private struct DrifterChatPage: View {
@@ -214,6 +231,7 @@ private struct DrifterChatPage: View {
     var panel = false
     var onTranscriptScroll: (AgentChatTranscriptScroll) -> Void = { _ in }
     var onRevealMarker: (String) -> Void = { _ in }
+    var onTogglePreviews: () -> Void = {}
     var body: some View {
         VStack(spacing: 0) {
             if !panel {
@@ -230,6 +248,13 @@ private struct DrifterChatPage: View {
                     if conversation.status == .awaitingPermission { Text(AgentChatStrings.waiting(for: conversation.items)).mistText(.secondary) }
                     HStack(spacing: 4) {
                         AgentChatMarkerListButton(markers: conversation.markers, conversation: conversation, jump: onRevealMarker).equatable()
+                        if layout.hasPreviewCards {
+                            let title = layout.previewsHidden ? AgentChatStrings.showPreviews : AgentChatStrings.hidePreviews
+                            Button(action: onTogglePreviews) {
+                                Image(systemName: layout.previewsHidden ? "rectangle.on.rectangle" : "rectangle.on.rectangle.slash")
+                            }.buttonStyle(.mistIcon).customTooltip(title).accessibilityLabel(title)
+                                .accessibilityIdentifier("agentChat.previewToggle")
+                        }
                         origin
                     }
                 }.lineLimit(1).padding(.vertical, 14).agentChatColumn(panel: panel)
@@ -385,7 +410,7 @@ enum AgentChatTerminalFont {
     @MainActor private static func metrics(scale: CGFloat) -> (lineHeight: CGFloat, capHeight: CGFloat) {
         if let cached = cachedMetrics[scale] { return cached }
         let font = font(scale: scale)
-        let metrics = (MistTileCard<EmptyView, EmptyView>.lineHeight(font), font.capHeight)
+        let metrics = (MistTileCardMetrics.lineHeight(font), font.capHeight)
         cachedMetrics[scale] = metrics
         return metrics
     }
@@ -457,8 +482,12 @@ struct AgentChatFindHighlight: Equatable {
         shifted(past: Array(lines.prefix(index)))
     }
 
-    /// Apply marks in UTF-16 coordinates across spans, retaining fonts, dim text and links.
     static func styled(_ line: ClaudeCodeToolSummary.Line, highlight: Self?, secondary: Color, group: Bool = false, scale: CGFloat = 1) -> Text {
+        Text(styledString(line, highlight: highlight, secondary: secondary, group: group, scale: scale))
+    }
+
+    /// Apply marks in UTF-16 coordinates across spans, retaining fonts, dim text and links.
+    static func styledString(_ line: ClaudeCodeToolSummary.Line, highlight: Self?, secondary: Color, group: Bool = false, scale: CGFloat = 1) -> AttributedString {
         let source = line.text
         var output = AttributedString(source)
         func range(_ nsRange: NSRange) -> Range<AttributedString.Index>? {
@@ -498,7 +527,7 @@ struct AgentChatFindHighlight: Equatable {
                 }
             }
         }
-        return Text(output)
+        return output
     }
 }
 
@@ -1755,7 +1784,7 @@ struct AgentChatTranscriptRow: View, Equatable {
     /// font's ascent above its capitals.
     @MainActor static func capInset(textScale: CGFloat) -> CGFloat {
         let font = AgentChatTypography.font(ofSize: AgentChatTypography.bodySize * textScale)
-        let leading: CGFloat = MistTileCard<EmptyView, EmptyView>.lineHeight(font) * (AgentChatTypography.lineHeightMultiple - 1)
+        let leading: CGFloat = MistTileCardMetrics.lineHeight(font) * (AgentChatTypography.lineHeightMultiple - 1)
         return 4 + leading + (font.ascender - font.capHeight)
     }
 
@@ -2260,7 +2289,7 @@ struct AgentChatPermissionCard: View {
     }
 
     var body: some View {
-        MistTileCard(symbol: symbol, firstLineHeight: MistTileCard<EmptyView, EmptyView>.lineHeight(.systemFont(ofSize: NSFont.systemFontSize * textScale)),
+        MistTileCard(symbol: symbol, firstLineHeight: MistTileCardMetrics.lineHeight(.systemFont(ofSize: NSFont.systemFontSize * textScale)),
                      padding: EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)) {
             VStack(alignment: .leading, spacing: 10) {
                 if request.toolName == "AskUserQuestion" {
@@ -2434,18 +2463,32 @@ struct AgentChatToolGroupView: View {
     var body: some View {
         let headers = Self.lines(tools, folder: folder, memory: memory, open: open, expanded: false)
         let children = expanded ? childHighlights(after: headers) : []
+        let backgroundable = background != nil && tools.contains(where: \.canBackground)
+        let terminalFont = Font(AgentChatTerminalFont.font(scale: textScale))
+        // The summary and running command flow around Run in background.
         MistTileCard(symbol: symbol, firstLineHeight: AgentChatTerminalFont.lineHeight(scale: textScale),
-                     capHeight: AgentChatTerminalFont.capHeight(scale: textScale)) {
-            VStack(alignment: .leading, spacing: 5) {
+                     capHeight: AgentChatTerminalFont.capHeight(scale: textScale),
+                     flowText: backgroundable ? flowHeaders(headers, font: terminalFont) : []) {
+            if backgroundable {
                 Button { toggle() } label: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        styled(headers[0], highlight: findHighlight?.line(0, in: headers))
-                        if headers.count > 1 {
-                            styled(headers[1], highlight: findHighlight?.line(1, in: headers))
-                                .foregroundStyle(colors.resolve(.textSecondary))
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    Color.clear.contentShape(Rectangle())
                 }.buttonStyle(.plain).agentChatHand()
+                    .accessibilityLabel(Text(verbatim: headers.map(\.text).joined(separator: "\n")))
+            } else {
+                Button { toggle() } label: {
+                    styled(headers[0], highlight: findHighlight?.line(0, in: headers))
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain).agentChatHand().font(terminalFont)
+            }
+        } detail: {
+            VStack(alignment: .leading, spacing: 5) {
+                if !backgroundable, headers.count > 1 {
+                    Button { toggle() } label: {
+                        styled(headers[1], highlight: findHighlight?.line(1, in: headers))
+                            .foregroundStyle(colors.resolve(.textSecondary))
+                            .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    }.buttonStyle(.plain).agentChatHand()
+                }
                 if expanded {
                     ForEach(Array(tools.enumerated()), id: \.element.toolUseId) { index, tool in
                         AgentChatToolView(tool: tool, folder: folder, viewState: viewState, grouped: true,
@@ -2455,10 +2498,10 @@ struct AgentChatToolGroupView: View {
                         .buttonStyle(.plain).foregroundStyle(colors.resolve(.textSecondary))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }.font(Font(AgentChatTerminalFont.font(scale: textScale)))
+            }.font(terminalFont)
         } trailing: {
             HStack(spacing: 8) {
-                if let background, tools.contains(where: \.canBackground) {
+                if backgroundable, let background {
                     Button(AgentChatStrings.runInBackground) {
                         for tool in tools where tool.canBackground { background(tool.toolUseId) }
                     }.buttonStyle(.mist(.secondary, size: .regular)).agentChatHand()
@@ -2483,6 +2526,19 @@ struct AgentChatToolGroupView: View {
     }
     private func styled(_ line: ClaudeCodeToolSummary.Line, highlight: AgentChatFindHighlight?) -> Text {
         AgentChatFindHighlight.styled(line, highlight: highlight, secondary: colors.resolve(.textSecondary), group: true, scale: textScale)
+    }
+
+    private func flowHeaders(_ headers: [ClaudeCodeToolSummary.Line], font: Font) -> [AttributedString] {
+        let secondary = colors.resolve(.textSecondary)
+        return headers.enumerated().map { index, header in
+            var text = AgentChatFindHighlight.styledString(header, highlight: findHighlight?.line(index, in: headers),
+                                                            secondary: secondary, group: true, scale: textScale)
+            for run in text.runs {
+                if run.font == nil { text[run.range].font = font }
+                if index == 1, run.foregroundColor == nil { text[run.range].foregroundColor = secondary }
+            }
+            return text
+        }
     }
 }
 

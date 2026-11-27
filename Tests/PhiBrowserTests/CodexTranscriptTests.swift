@@ -5,6 +5,16 @@ import XCTest
 #endif
 
 final class CodexTranscriptTests: XCTestCase {
+    func testCheckInStartsTurnWithOneRowPerTask() {
+        var sender = AgentMessageSender(id: "check", title: "Mist", kind: .checkIn, note: "Check")
+        sender.checkInTasks = ["Build"]
+        var transcript = CodexTranscript()
+        transcript.userSent(text: "Check", attachments: [], sender: sender)
+        XCTAssertEqual(transcript.items.map(\.kind), [.taskNotification(summary: "Check-in: \"Build\" still running", status: .running)])
+        XCTAssertEqual(transcript.status, .running)
+        transcript.queuedMessageTaken(.init(text: "Check", sender: sender))
+        XCTAssertEqual(transcript.items.count, 2)
+    }
     private func backgroundItem(tool: String = "run_in_background", completed: Bool = true, failed: Bool = false) -> CodexJSON {
         let result = CodexJSON.object(["taskId": .string("task-abc123"), "outputFile": .string("/chat/Tasks/task-abc123.log")])
         return .object(["method": .string(completed ? "item/completed" : "item/started"), "params": .object([

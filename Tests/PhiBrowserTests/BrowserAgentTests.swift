@@ -223,6 +223,21 @@ final class BrowserAgentTests: XCTestCase {
         XCTAssertTrue(task.taskId.range(of: "^task-[a-z0-9]{6}$", options: .regularExpression) != nil)
     }
 
+    @MainActor func testBackgroundCheckInOutputIncludesBoundedCommandTail() async throws {
+        let runner = try taskRunner()
+        defer { runner.stopAll(immediately: true) }
+        let task = try runner.start(kind: .command, command: "for i in {1..30}; do echo line-$i; done; sleep 5", description: "Build")
+        await eventually { runner.checkInOutput(for: task.taskId)?.tail?.contains("line-30") == true }
+        let output = try XCTUnwrap(runner.checkInOutput(for: task.taskId))
+        XCTAssertEqual(output.path, task.outputFile)
+        let tail = try XCTUnwrap(output.tail)
+        XCTAssertTrue(tail.hasPrefix("(earlier output is in the output file)\n"))
+        XCTAssertFalse(tail.contains("line-10\n"))
+        XCTAssertTrue(tail.contains("line-30"))
+        let monitor = try runner.start(kind: .monitor, command: "sleep 5", description: "Watch")
+        XCTAssertNil(runner.checkInOutput(for: monitor.taskId)?.tail)
+    }
+
     @MainActor func testMonitorBatchesStdoutAndEndsOnce() async throws {
         let runner = try taskRunner()
         defer { runner.stopAll(immediately: true) }

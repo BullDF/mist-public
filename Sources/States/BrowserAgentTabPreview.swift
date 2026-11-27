@@ -6,14 +6,18 @@ import SnapKit
 /// One window's out-of-sight pages, image streams, and serial captures.
 @MainActor
 final class BrowserAgentTabPreview {
+    private static let waitForPaint = "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
     var holder: (() -> NSView?)?
     var realSize: (() -> CGSize?)?
+    var visibleCardChat: UUID?
     private struct Mount {
         let tab: Tab
         let page: NSView
         let target: String
     }
     private var wanted: [Tab] = []
+    private var refreshing: [Tab] = []
     private var mounts: [Int: Mount] = [:]
     private var streams: [Int: BrowserAgentScreencast] = [:]
     private var streamTabs: [Tab] = []
@@ -27,7 +31,7 @@ final class BrowserAgentTabPreview {
         return tab.crashState == nil && !tab.isDiscarded && !tab.isUnloaded
     }
 
-    var hasActivity: Bool { !mounts.isEmpty || !streams.isEmpty }
+    var hasActivity: Bool { !mounts.isEmpty || !streams.isEmpty || !refreshing.isEmpty }
     func isBorrowing(tabId: Int) -> Bool {
         guard let mount = mounts[tabId] else { return false }
         return mount.page.superview === holder?()
@@ -41,7 +45,8 @@ final class BrowserAgentTabPreview {
             release()
             return
         }
-        let ids = Set(wanted.map(\.guid))
+        var ids = Set<Int>()
+        let tabs = (wanted + refreshing).filter { ids.insert($0.guid).inserted }
         for (id, mount) in mounts {
             if !ids.contains(id) || !Self.hasLivePage(mount.tab)
                 || mount.page !== mount.tab.webContentWrapper?.nativeView
@@ -51,7 +56,7 @@ final class BrowserAgentTabPreview {
                 mounts[id] = nil
             }
         }
-        for tab in wanted {
+        for tab in tabs {
             guard Self.hasLivePage(tab), let page = tab.webContentWrapper?.nativeView,
                   let target = tab.webContentWrapper?.devToolsTargetId, !target.isEmpty else { continue }
             guard page.superview === host || page.window == nil || page.isHiddenOrHasHiddenAncestor else { continue }
@@ -107,28 +112,62 @@ final class BrowserAgentTabPreview {
         }
     }
 
-    func captureStill(_ tab: Tab) async {
+    func refreshStill(_ tab: Tab) async {
+        guard let chat = visibleCardChat, !Task.isCancelled, Self.hasLivePage(tab),
+              let page = tab.webContentWrapper?.nativeView,
+              let target = tab.webContentWrapper?.devToolsTargetId, !target.isEmpty else { return }
+        if !isBorrowing(tabId: tab.guid), page.window == nil || page.isHiddenOrHasHiddenAncestor {
+            refreshing.append(tab)
+            defer {
+                refreshing.removeAll { $0 === tab }
+                reconcile()
+            }
+            reconcile()
+            guard let mount = mounts[tab.guid], mount.page === page, mount.target == target else { return }
+            do {
+                let session = try await AppDevToolsPageSession.open(targetId: target, timeout: 1)
+                defer { session.close() }
+                guard visibleCardChat == chat, !Task.isCancelled,
+                      Self.hasLivePage(tab), tab.webContentWrapper?.devToolsTargetId == target,
+                      isBorrowing(tabId: tab.guid) else { return }
+                AgentUserSpaceDriveRegistry.shared.appWillSendPageCommand(toTab: tab.guid)
+                let result = try await session.command("Runtime.evaluate", params: [
+                    "expression": Self.waitForPaint, "awaitPromise": true], timeout: 2)
+                guard result["exceptionDetails"] == nil, isBorrowing(tabId: tab.guid),
+                      Self.hasLivePage(tab), tab.webContentWrapper?.devToolsTargetId == target else { return }
+            } catch {
+                return
+            }
+        }
+        // The temporary mount has been removed. The page keeps its painted size.
+        await captureStill(tab, for: chat)
+    }
+
+    func captureStill(_ tab: Tab, for chat: UUID) async {
         do {
             // Leave room for the session handshake and capture in the read's reply timeout.
             let deadline = Date().addingTimeInterval(0.5)
             while capturing {
-                guard Date() < deadline else { throw CaptureError.unavailable }
+                guard visibleCardChat == chat, Date() < deadline else { return }
                 try await Task.sleep(nanoseconds: 20_000_000)
             }
-            guard Self.hasLivePage(tab), let target = tab.webContentWrapper?.devToolsTargetId,
+            guard visibleCardChat == chat, !Task.isCancelled,
+                  Self.hasLivePage(tab), let target = tab.webContentWrapper?.devToolsTargetId,
                   !target.isEmpty else { throw CaptureError.unavailable }
             capturing = true
             defer { capturing = false }
             let session = try await AppDevToolsPageSession.open(targetId: target, timeout: 1,
                 maxMessageBytes: PageScreenshotService.maxBase64Bytes + 1024)
             defer { session.close() }
-            guard Self.hasLivePage(tab), tab.webContentWrapper?.devToolsTargetId == target else {
+            guard visibleCardChat == chat, !Task.isCancelled,
+                  Self.hasLivePage(tab), tab.webContentWrapper?.devToolsTargetId == target else {
                 throw CaptureError.unavailable
             }
             AgentUserSpaceDriveRegistry.shared.appWillSendPageCommand(toTab: tab.guid)
             let result = try await session.command("Page.captureScreenshot",
                 params: ["format": "jpeg", "quality": 90], timeout: 5)
-            guard Self.hasLivePage(tab), tab.webContentWrapper?.devToolsTargetId == target,
+            guard visibleCardChat == chat, !Task.isCancelled,
+                  Self.hasLivePage(tab), tab.webContentWrapper?.devToolsTargetId == target,
                   let encoded = result["data"] as? String, let data = Data(base64Encoded: encoded),
                   let source = CGImageSourceCreateWithData(data as CFData, nil),
                   let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { throw CaptureError.unavailable }
@@ -202,7 +241,7 @@ final class BrowserAgentTabPreview {
             if captureCover != nil || stream != nil {
                 AgentUserSpaceDriveRegistry.shared.appWillSendPageCommand(toTab: tab.guid)
                 _ = try? await session.command("Runtime.evaluate", params: [
-                    "expression": "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
+                    "expression": Self.waitForPaint,
                     "awaitPromise": true], timeout: 0.5, closeOnTimeout: false)
             }
             if stream != nil, let frame { try? updateViewportStill(frame, tabId: tab.guid) }

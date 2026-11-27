@@ -262,7 +262,8 @@ struct AgentChatItem: Codable, Identifiable, Equatable, Sendable {
     enum BackgroundState: Codable, Equatable, Sendable { case running, finished }
     enum PermissionStatus: Codable, Equatable, Sendable { case pending, allowed, denied }
     enum NoticeLevel: Codable, Equatable, Sendable { case info, error }
-    enum TaskNotificationStatus: Codable, Equatable, Sendable { case completed, failed, stopped }
+    /// `running` marks a background check-in's row: the task hasn't ended.
+    enum TaskNotificationStatus: Codable, Equatable, Sendable { case completed, failed, stopped, running }
 
     var settled: Self {
         var item = self

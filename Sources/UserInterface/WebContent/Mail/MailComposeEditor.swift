@@ -7,7 +7,10 @@ final class MailComposeEditor: MailRichTextEditor {
     static var usesNativeCID: Bool { !WKWebView.handlesURLScheme("cid") }
     let model: MailComposeModel
     private var signatureUpdate: Task<Void, Never>?
-
+    /// WebKit registers the body's edits with this view's undo manager. Its own keeps them out of the window's,
+    /// which the window's text fields share, and lets them go with the compose pane.
+    private let editingUndoManager = UndoManager()
+    override var undoManager: UndoManager? { editingUndoManager }
 
     init(model: MailComposeModel) {
         self.model = model

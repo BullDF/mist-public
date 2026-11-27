@@ -543,6 +543,122 @@ final class AgentChatStoreTests: XCTestCase {
 
     @MainActor private func settleReports() async throws { try await Task.sleep(nanoseconds: 30_000_000) }
 
+    func testBackgroundCheckInMessageListsTasksAndOutput() {
+        var checkIns = DrifterBackgroundCheckIns(interval: 1800)
+        let id = UUID(), date = Date(timeIntervalSince1970: 1000)
+        let tasks = [AgentBackgroundTask(id: "one", kind: .shell, description: "Build"),
+                     AgentBackgroundTask(id: "two", kind: .task, description: "Native")]
+        checkIns.tasks(tasks, id: id, now: date)
+        let message = checkIns.message(tasks, id: id, now: date.addingTimeInterval(1800)) { task in
+            task == "one" ? (path: "/chat/Tasks/one.log", tail: "first\nsecond") : nil
+        }
+        XCTAssertEqual(message.text, "- one (shell) \"Build\": started 30 min ago, output file /chat/Tasks/one.log\n  first\n  second\n- two (task) \"Native\": started 30 min ago")
+        XCTAssertEqual(message.sender?.note, "Check-in from Mist, not a completion: this chat has been idle for 30 min while background work it started is still running. Make sure each task below is still making progress: read its output and look at its processes. If one is stuck (waiting on a lock, on input, or on a process that will never exit), stop it and get the work done another way. If it is making progress or is meant to keep running (a server, a watcher), leave it and end your turn. Don't message Johnny, post to Slack or call finish_task just to say it is still running. The next check-in comes after another 30 min idle.")
+    }
+
+    @MainActor func testBackgroundCheckInTimingSlackAndCompletionDots() async throws {
+        let family = try Family()
+        defer { family.cleanUp() }
+        let store = family.store, chat = family.top
+        var clock = Date().addingTimeInterval(3600)
+        store.now = { clock }
+        let tasks = [AgentBackgroundTask(id: "task-123", kind: .shell, description: "Build")]
+        let slack = AgentChatItem(id: "slack", kind: .peerMessage(name: "Slack", body: "Hello"))
+        chat.update(items: [slack], status: .running, backgroundTasks: tasks)
+        chat.update(items: [slack], status: .idle, backgroundTasks: tasks)
+        store.markSeen(tabId: 1)
+        var received: [AgentQueuedMessage] = []
+        chat.onDeliver = { message in
+            received.append(message)
+            if message.sender?.kind == .checkIn { chat.update(items: chat.items, status: .running, backgroundTasks: tasks) }
+            return true
+        }
+        clock.addTimeInterval(1799); store.fireDueBackgroundCheckIns(); try await settleReports()
+        XCTAssertTrue(received.isEmpty)
+        clock.addTimeInterval(1); store.fireDueBackgroundCheckIns(); try await settleReports()
+        XCTAssertEqual(received.count, 1)
+        let message = try XCTUnwrap(received.first)
+        XCTAssertEqual(message.sender?.kind, .checkIn)
+        XCTAssertEqual(message.text, "- task-123 (shell) \"Build\": started 30 min ago")
+        XCTAssertEqual(message.sender?.checkInTasks, ["Build"])
+        XCTAssertEqual(message.sender?.postsToSlack, false)
+        XCTAssertFalse(message.sender?.header.contains(AgentMessageSender.slackWakeNote) ?? true)
+        XCTAssertTrue(message.sender?.header.contains("idle for 30 min") ?? false)
+        chat.update(items: chat.items, status: .idle, backgroundTasks: tasks)
+        XCTAssertFalse(store.unseenCompletions.contains(chat.id))
+        clock.addTimeInterval(1800); store.fireDueBackgroundCheckIns(); try await settleReports()
+        XCTAssertEqual(received.count, 2)
+        let delivered = await store.deliverExternalMessage(.init(text: "Other", sender: .init(id: "peer", title: "Peer")), to: chat.id)
+        XCTAssertTrue(delivered)
+        chat.update(items: chat.items, status: .idle, backgroundTasks: tasks)
+        XCTAssertTrue(store.unseenCompletions.contains(chat.id))
+        store.markSeen(tabId: 1)
+        clock.addTimeInterval(1800); store.fireDueBackgroundCheckIns(); try await settleReports()
+        chat.update(items: chat.items, status: .failed("Stopped"), backgroundTasks: tasks)
+        chat.update(items: chat.items, status: .running, backgroundTasks: tasks)
+        chat.update(items: chat.items, status: .idle, backgroundTasks: tasks)
+        XCTAssertTrue(store.unseenCompletions.contains(chat.id))
+        clock.addTimeInterval(1800); store.fireDueBackgroundCheckIns(); try await settleReports()
+        chat.update(items: chat.items, status: .idle, backgroundTasks: tasks)
+        XCTAssertTrue(store.unseenCompletions.contains(chat.id))
+    }
+
+    @MainActor func testBackgroundCheckInEligibilityClockAndRetry() async throws {
+        let family = try Family()
+        defer { family.cleanUp() }
+        let store = family.store, chat = family.top
+        var clock = Date().addingTimeInterval(3600)
+        store.now = { clock }
+        let tasks = [AgentBackgroundTask(id: "watch", kind: .monitor, description: "Watch")]
+        var count = 0
+        chat.onDeliver = { _ in count += 1; return false }
+        chat.update(items: [], status: .running, backgroundTasks: tasks)
+        clock.addTimeInterval(1200)
+        chat.update(items: [], status: .idle, backgroundTasks: tasks)
+        clock.addTimeInterval(1799); store.fireDueBackgroundCheckIns(); try await settleReports()
+        XCTAssertEqual(count, 0)
+        clock.addTimeInterval(1)
+        var queue = AgentMessageQueue(); queue.enqueue(.init(text: "Paused")); queue.pause(); chat.updateQueue(queue)
+        store.fireDueBackgroundCheckIns(); try await settleReports(); XCTAssertEqual(count, 0)
+        chat.updateQueue(.init())
+        chat.setHandOff(.init(message: "Wait", tab: nil))
+        store.fireDueBackgroundCheckIns(); try await settleReports(); XCTAssertEqual(count, 0)
+        chat.setHandOff(nil)
+        for status in [AgentConversationStatus.running, .awaitingPermission] {
+            chat.update(items: [], status: status, backgroundTasks: tasks)
+            store.fireDueBackgroundCheckIns(); try await settleReports(); XCTAssertEqual(count, 0)
+        }
+        chat.update(items: [], status: .idle, backgroundTasks: [])
+        clock.addTimeInterval(1800); store.fireDueBackgroundCheckIns(); try await settleReports(); XCTAssertEqual(count, 0)
+        chat.update(items: [], status: .idle, backgroundTasks: tasks)
+        clock.addTimeInterval(1799); store.fireDueBackgroundCheckIns(); try await settleReports(); XCTAssertEqual(count, 0)
+        clock.addTimeInterval(1); store.fireDueBackgroundCheckIns(); try await settleReports(); XCTAssertEqual(count, 1)
+        store.fireDueBackgroundCheckIns(); try await settleReports(); XCTAssertEqual(count, 1)
+        clock.addTimeInterval(1800); store.fireDueBackgroundCheckIns(); try await settleReports(); XCTAssertEqual(count, 2)
+    }
+
+    @MainActor func testBackgroundCheckInRechecksClockBeforeDelivery() async throws {
+        let family = try Family()
+        defer { family.cleanUp() }
+        let store = family.store, chat = family.top
+        var clock = Date().addingTimeInterval(3600)
+        store.now = { clock }
+        let tasks = [AgentBackgroundTask(id: "one", kind: .task, description: "Work")]
+        var count = 0
+        chat.onDeliver = { _ in count += 1; return true }
+        chat.update(items: [], status: .running, backgroundTasks: tasks)
+        chat.update(items: [], status: .idle, backgroundTasks: tasks)
+        clock.addTimeInterval(1800)
+        store.fireDueBackgroundCheckIns()
+        chat.update(items: [], status: .running, backgroundTasks: tasks)
+        chat.update(items: [], status: .idle, backgroundTasks: tasks)
+        try await settleReports()
+        XCTAssertEqual(count, 0)
+        clock.addTimeInterval(1800)
+        store.fireDueBackgroundCheckIns(); try await settleReports()
+        XCTAssertEqual(count, 1)
+    }
+
     @MainActor func testIdleClosingTabClosesAfterLifetimeOnceNothingHoldsIt() async throws {
         let family = try Family()
         defer { family.cleanUp() }
@@ -1783,6 +1899,36 @@ final class AgentChatStoreTests: XCTestCase {
         XCTAssertTrue(store.conversation(for: conversation.id) === conversation)
         XCTAssertTrue(store.entry(for: conversation.id)?.settings === settings)
         XCTAssertEqual(store.entry(for: conversation.id)?.tabId, 42)
+    }
+
+    @MainActor func testHiddenPreviewCardsStayHiddenUntilShownOrTheChatHasNone() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AgentChatStore(route: .init(baseDirectory: directory), tabExists: { _ in true },
+            windowId: { _ in 1 }, browserSessionFactory: { _, _, _ in FakeSession() })
+        defer { store.terminate() }
+        let conversation = AgentConversation()
+        store.register(.init(conversation: conversation,
+            settings: DrifterSettings(config: .init(), running: false), tabId: 42,
+            session: FakeSession(), browserPreview: .init(principalId: "p", windowId: 1)))
+        conversation.update(items: [], status: .running)
+        store.setBrowserPreviewHidden(conversation.id, true)
+        XCTAssertFalse(store.isBrowserPreviewHidden(conversation.id), "A chat with no cards has nothing to hide")
+        store.reportWorkingTab(principalId: "p", tabId: 7, live: true)
+        let posted = expectation(forNotification: .browserAgentPreviewDidChange, object: store)
+        store.setBrowserPreviewHidden(conversation.id, true)
+        wait(for: [posted], timeout: 1)
+        XCTAssertTrue(store.isBrowserPreviewHidden(conversation.id))
+        store.reportWorkingTab(principalId: "p", tabId: 8, live: true)
+        XCTAssertTrue(store.isBrowserPreviewHidden(conversation.id), "A new card joins the hidden ones")
+        store.setBrowserPreviewHidden(conversation.id, false)
+        XCTAssertFalse(store.isBrowserPreviewHidden(conversation.id))
+        store.setBrowserPreviewHidden(conversation.id, true)
+        store.dismissBrowserPreview(conversation.id, tabId: 7)
+        store.dismissBrowserPreview(conversation.id, tabId: 8)
+        store.reportWorkingTab(principalId: "p", tabId: 9, live: true)
+        XCTAssertEqual(store.entry(for: conversation.id)?.browserPreview?.cards.map(\.tabId), [9])
+        XCTAssertFalse(store.isBrowserPreviewHidden(conversation.id), "Cards after the chat had none show again")
     }
 
     @MainActor func testBrowserFolderSurvivesRestartAndTracksTurnsWithoutPreviewCards() throws {

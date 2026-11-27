@@ -16,34 +16,34 @@ from pak import BROTLI, Pak
 
 
 PHI = re.compile(r"(?<![A-Za-z])Phi(?![A-Za-z])")
-NTP_LOGO_ID = 20335
-NTP_PAGE_ID = 20353
-NTP_SHELL_ID = 20351
-GAMES_PAGE_ID = 40079
+NTP_LOGO_ID = 21358
+NTP_PAGE_ID = 21370
+NTP_SHELL_ID = 21368
+GAMES_PAGE_ID = 42109
 GAMES_HOST = b'<div id="phi-games-host"></div>'
 GAMES_BUNDLE = re.compile(rb'(<script type="text/plain" id="phi-games-js">).+?(</script>)', re.DOTALL)
 NTP_LOGO_SHA256 = "7a8758f191c76bc2308d68344758937d758b46cb96e638380335374d364f0c2c"
 NTP_MARKER = 'data-mist-logo="1"'
 PNG_MARKER = b"mist-logo\x001"
 PNG_TARGETS = {
-    ("chrome_100_percent.pak", 14315): ("3aceda2c5fd5de00457eed36ed3f10f9e68b5dcc56f686a3110ad93089fabcae", "product-logo-32.png"),
-    ("chrome_200_percent.pak", 14315): ("86f0a7180b98be39e6a4bd8dcbf750756ecd7f23b8868188fc17c2dde1fd4fc0", "product-logo-64.png"),
+    ("chrome_100_percent.pak", 15315): ("3aceda2c5fd5de00457eed36ed3f10f9e68b5dcc56f686a3110ad93089fabcae", "product-logo-32.png"),
+    ("chrome_200_percent.pak", 15315): ("86f0a7180b98be39e6a4bd8dcbf750756ecd7f23b8868188fc17c2dde1fd4fc0", "product-logo-64.png"),
     ("chrome_100_percent.pak", 356): ("e0a57722ca9efe17794d2e86c36f7c7e14a5c54bcc3c41722b0cb256dc80f71a", "product-logo-16.png"),
     ("chrome_200_percent.pak", 356): ("3aceda2c5fd5de00457eed36ed3f10f9e68b5dcc56f686a3110ad93089fabcae", "product-logo-32.png"),
-    ("chrome_100_percent.pak", 14304): ("0be841f2a30dc8cddd1de19247ba6e6f2bfa3d3fc488139793265f3104a78b4f", "swirl-gray-16.png"),
-    ("chrome_200_percent.pak", 14304): ("5dcbece03509f273eda67302f604d2f2bc5d9ee9754b6a73dada894abf01e129", "swirl-gray-32.png"),
-    ("chrome_100_percent.pak", 40263): ("6f5d760aa5368b7ef3349c957f6f8ab08defb6e91d44bef0d022d1d329293228", "swirl-faint-16.png"),
-    ("chrome_200_percent.pak", 40263): ("1e7b76e3538465b80f5b5ee350a1501b22953d2c4a0fa5316dfe354c0cc812ca", "swirl-faint-32.png"),
-    ("chrome_100_percent.pak", 40261): ("d42d7f4f157f9a7f17f1ef27124631a68ff0a2aece5411f6981cacda41e13b32", "wordmark-black-78x32.png"),
-    ("chrome_200_percent.pak", 40261): ("ac1b8ffc048b5c28cf84a8734161c59b9a7ccb9c2bad1097747636a74b257089", "wordmark-black-155x64.png"),
-    ("chrome_100_percent.pak", 40262): ("461ced0be370da3d07814bb2ed5a372554e28f2ebbc975090e2efc5fc472cc9b", "wordmark-white-78x32.png"),
-    ("chrome_200_percent.pak", 40262): ("6077a2595dc14725d29e85e4cbfa921877ebe4d8d16c3ed46c02e16cbbc9ccbf", "wordmark-white-155x64.png"),
+    ("chrome_100_percent.pak", 15304): ("0be841f2a30dc8cddd1de19247ba6e6f2bfa3d3fc488139793265f3104a78b4f", "swirl-gray-16.png"),
+    ("chrome_200_percent.pak", 15304): ("5dcbece03509f273eda67302f604d2f2bc5d9ee9754b6a73dada894abf01e129", "swirl-gray-32.png"),
+    ("chrome_100_percent.pak", 42291): ("6f5d760aa5368b7ef3349c957f6f8ab08defb6e91d44bef0d022d1d329293228", "swirl-faint-16.png"),
+    ("chrome_200_percent.pak", 42291): ("1e7b76e3538465b80f5b5ee350a1501b22953d2c4a0fa5316dfe354c0cc812ca", "swirl-faint-32.png"),
+    ("chrome_100_percent.pak", 42289): ("d42d7f4f157f9a7f17f1ef27124631a68ff0a2aece5411f6981cacda41e13b32", "wordmark-black-78x32.png"),
+    ("chrome_200_percent.pak", 42289): ("ac1b8ffc048b5c28cf84a8734161c59b9a7ccb9c2bad1097747636a74b257089", "wordmark-black-155x64.png"),
+    ("chrome_100_percent.pak", 42290): ("461ced0be370da3d07814bb2ed5a372554e28f2ebbc975090e2efc5fc472cc9b", "wordmark-white-78x32.png"),
+    ("chrome_200_percent.pak", 42290): ("6077a2595dc14725d29e85e4cbfa921877ebe4d8d16c3ed46c02e16cbbc9ccbf", "wordmark-white-155x64.png"),
 }
 # Original hash, canvas width/height, fill, square side, vertical offset.
 SVG_TARGETS = {
-    51304: ("04d70869c1bf276cf0ed26ae9e44dc9af2a101434ed8f2fdb0d2a70fd92055d8", 32, 32, "#D2D2D2", 32, 0),
-    14163: ("4a27a9381f4ccad1c559b689aaeaf4fc23be4021d4636773e4aa546bf55b7b97", 1024, 1024, "#505050", 1024, 0),
-    15197: ("abbea48068feec7cabd1c2e1a29f3ffb294a3b326ff39bfa85c7adb7f5eccb85", 35, 41, "black", 35, 3),
+    53274: ("04d70869c1bf276cf0ed26ae9e44dc9af2a101434ed8f2fdb0d2a70fd92055d8", 32, 32, "#D2D2D2", 32, 0),
+    15163: ("4a27a9381f4ccad1c559b689aaeaf4fc23be4021d4636773e4aa546bf55b7b97", 1024, 1024, "#505050", 1024, 0),
+    16197: ("abbea48068feec7cabd1c2e1a29f3ffb294a3b326ff39bfa85c7adb7f5eccb85", 35, 41, "black", 35, 3),
 }
 PHI_PRODUCT_SHA256 = "8db5c8ab96a2923762f4c47bf06633596d3a4eef8e9a8cb54b0b6175c6a86148"
 PHI_PRODUCT = re.compile(rb'<g id="phi-product"[^>]*>.*?</g>', re.DOTALL)

@@ -633,7 +633,8 @@ final class SplitTabDropContainer: NSView {
         if zone.isPrimarySlot {
             state.createSplit(leftTabId: draggedTabId,
                               rightTabId: focusedTabId,
-                              layout: zone.layout)
+                              layout: zone.layout,
+                              anchorTabId: focusedTabId)
         } else {
             state.createSplit(leftTabId: focusedTabId,
                               rightTabId: draggedTabId,
@@ -658,7 +659,8 @@ final class SplitTabDropContainer: NSView {
             if zone.isPrimarySlot {
                 state.createSplit(leftTabId: liveTab.guid,
                                   rightTabId: focusedTabId,
-                                  layout: zone.layout)
+                                  layout: zone.layout,
+                                  anchorTabId: focusedTabId)
             } else {
                 state.createSplit(leftTabId: focusedTabId,
                                   rightTabId: liveTab.guid,

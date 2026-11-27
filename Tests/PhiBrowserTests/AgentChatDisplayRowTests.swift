@@ -105,6 +105,15 @@ final class AgentChatDisplayRowTests: XCTestCase {
         XCTAssertEqual(AgentChatToolGroupKind.status([running]), .failed)
     }
 
+    func testEmptyAssistantTextShowsNoRow() {
+        let reply = AgentChatItem(id: "reply", kind: .assistantText(text: "Still running.", isStreaming: false))
+        let end = AgentChatItem(id: "end", kind: .turnEnd(durationMilliseconds: 1, finishedAt: Date(timeIntervalSince1970: 0), stopped: false))
+        let items = [reply, AgentChatItem(id: "empty", kind: .assistantText(text: "", isStreaming: false)), end,
+                     AgentChatItem(id: "blank", kind: .assistantText(text: " \n", isStreaming: false)),
+                     AgentChatItem(id: "started", kind: .assistantText(text: "", isStreaming: true))]
+        XCTAssertEqual(AgentChatDisplayRow.rows(from: items), [.item(reply), .item(end)])
+    }
+
     func testFileEditShowsOnlyOnceItsPathStreamed() {
         let cwd = URL(fileURLWithPath: "/project", isDirectory: true)
         let memory = AgentMemoryFiles(folders: [cwd.appendingPathComponent("memory", isDirectory: true)])

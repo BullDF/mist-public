@@ -82,14 +82,19 @@ struct ClaudeCodeTranscript {
     mutating func userSent(text: String, attachments: [AgentAttachment], mentions: [AgentTabMention] = [], sender: AgentMessageSender? = nil) {
         beginTurn()
         didRequestStop = false
-        append(sender.map { .peerMessage(name: $0.label, body: text) } ?? .userMessage(text: text, images: attachments.images))
-        items[items.count - 1].mentions = mentions
-        items[items.count - 1].files = attachments.files
+        if sender?.kind == .checkIn { items += sender?.checkInItems ?? [] }
+        else if sender?.kind != .task {
+            append(sender.map { .peerMessage(name: $0.label, body: text) } ?? .userMessage(text: text, images: attachments.images))
+            items[items.count - 1].mentions = mentions
+            items[items.count - 1].files = attachments.files
+        }
         status = .running
     }
 
     mutating func queuedMessageTaken(_ message: AgentQueuedMessage) {
         beginAutomaticTurnIfIdle()
+        if message.sender?.kind == .checkIn { items += message.sender?.checkInItems ?? [] }
+        guard message.sender?.kind != .task, message.sender?.kind != .checkIn else { return }
         append(message.sender.map { .peerMessage(name: $0.label, body: message.text) } ?? .userMessage(text: message.text, images: message.attachments.images))
         items[items.count - 1].mentions = message.mentions
         items[items.count - 1].files = message.attachments.files

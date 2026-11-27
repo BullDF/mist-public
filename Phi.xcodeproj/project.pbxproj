@@ -60,6 +60,7 @@
 		A02611030000000000000204 /* MistSlackService+Shared.swift in Sources */ = {isa = PBXBuildFile; fileRef = A02611030000000000000104 /* MistSlackService+Shared.swift */; };
 		A61103000000000000000002 /* AgentChatMessaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61103000000000000000001; };
 		A61104000000000000000002 /* DrifterSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61104000000000000000001; };
+		A61104000000000000000004 /* DrifterBackgroundCheckIns.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61104000000000000000003; };
 		A61105000000000000000002 /* DrifterScheduleRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61105000000000000000001; };
 		A61105000000000000000004 /* DrifterNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61105000000000000000003; };
 		A61103000000000000000006 /* AgentChatTranscriptText.swift in Sources */ = {isa = PBXBuildFile; fileRef = A61103000000000000000005; };
@@ -818,6 +819,7 @@
 		A02611030000000000000104 /* MistSlackService+Shared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MistSlackService+Shared.swift"; sourceTree = "<group>"; };
 		A61103000000000000000001 /* AgentChatMessaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatMessaging.swift; sourceTree = "<group>"; };
 		A61104000000000000000001 /* DrifterSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/MistAgents/Chat/DrifterSchedule.swift; sourceTree = SOURCE_ROOT; };
+		A61104000000000000000003 /* DrifterBackgroundCheckIns.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/MistAgents/Chat/DrifterBackgroundCheckIns.swift; sourceTree = SOURCE_ROOT; };
 		A61105000000000000000001 /* DrifterScheduleRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/MistAgents/Schedules/DrifterScheduleRunner.swift; sourceTree = SOURCE_ROOT; };
 		A61105000000000000000003 /* DrifterNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/MistAgents/Schedules/DrifterNotifier.swift; sourceTree = SOURCE_ROOT; };
 		A61103000000000000000005 /* AgentChatTranscriptText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatTranscriptText.swift; sourceTree = "<group>"; };
@@ -2756,6 +2758,7 @@
 				AC2526000000000000000004 /* AgentChatStrings.swift */,
 				AC2526000000000000000003 /* AgentChatStore.swift */,
 				A61104000000000000000001 /* DrifterSchedule.swift */,
+				A61104000000000000000003 /* DrifterBackgroundCheckIns.swift */,
 				A61105000000000000000001 /* DrifterScheduleRunner.swift */,
 				A61105000000000000000003 /* DrifterNotifier.swift */,
 				AC4800000000000000000001 /* AgentChatLink.swift */,
@@ -3253,6 +3256,7 @@
 				AE2726000000000000000011 /* AgentMessageQueue.swift in Sources */,
 				A61103000000000000000002 /* AgentChatMessaging.swift in Sources */,
 				A61104000000000000000002 /* DrifterSchedule.swift in Sources */,
+				A61104000000000000000004 /* DrifterBackgroundCheckIns.swift in Sources */,
 				A61105000000000000000002 /* DrifterScheduleRunner.swift in Sources */,
 				A61105000000000000000004 /* DrifterNotifier.swift in Sources */,
 				A61103000000000000000006 /* AgentChatTranscriptText.swift in Sources */,

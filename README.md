@@ -12,12 +12,12 @@ Drifter, Mail and Clipboard are built-in apps that open as ordinary tabs, so the
 
 - **Home.** ⇧⌘D opens Drifter's home page: a composer that starts a chat in a new tab, every ongoing chat with its live status (working, needs you, running in background), scheduled prompts, and a searchable history of past chats.
 - **One agent, three engines.** Each chat runs Claude Code (`claude`), Codex (`codex app-server`) or Gemini CLI (`gemini --acp`), picked by the model in its composer, with an effort level and a confirmation mode. Every chat gets Mist's own MCP server, `mistbrowser`, which drives tabs, reads and writes mail, works in Slack and talks to other chats; a Mist feature is added there once and every engine and model gets it.
-- **Browser work.** Tabs a chat opens go into a tab group under its chat in the sidebar and close 5 minutes after the agent last used them; a page I already have open is reused instead of opened again. Each tab the agent works or reads shows as a preview card beside the transcript, and it can record the tab it works to an MP4 with its pointer and clicks drawn in.
+- **Browser work.** Tabs a chat opens go into a tab group under its chat in the sidebar and close 5 minutes after the agent last used them; a page I already have open is reused instead of opened again. Each tab the agent works or reads shows as a preview card beside the transcript (a header button hides them), and it can record the tab it works to an MP4 with its pointer and clicks drawn in.
 - **Chats that work together.** A chat can spawn child chats, up to three levels deep, which open as background tabs in its group and report back when their turns end. Any chat can list, read and message the others.
 - **Chat panel.** Every tab has its own Chat panel that starts a chat with the tab already mentioned. A chat moves between its full tab and a panel (Show in Chat Panel, Mount to Tab, Unmount from Tab, or ⇧⌘F to switch), and both share one draft. An agent can mount its own chat to a tab too.
 - **Composer.** `@` mentions open tabs and tab groups, `/` completes commands and skills, fenced code blocks edit in place, and images and files attach. Messages sent while the agent works queue up and stay editable, and ⌃Return sends one right away.
 - **Transcript.** Native markdown with tables, code blocks and LaTeX math; grouped tool rows with readable summaries; permission, question and plan-approval cards; background tasks and context usage; named markers to jump between; find (⌘F) and text zoom (⌘= / ⌘−). Selecting text copies it on release, like a terminal. `/context`, `/model`, `/effort`, `/compact`, `/mcp` and `/clear` render as native rows.
-- **Hand-offs and background work.** An agent hands me a step it can't do (a sign-in, 2FA, a CAPTCHA) with a Done card and waits. Long commands run in the background and wake the chat when they finish, on every engine.
+- **Hand-offs and background work.** An agent hands me a step it can't do (a sign-in, 2FA, a CAPTCHA) with a Done card and waits. Long commands run in the background and wake the chat when they finish, on every engine, and a Claude command already running moves there with one button. A chat left idle for 30 minutes with background work still running gets a check-in.
 - **Schedules and notifications.** An agent can schedule a prompt once or on a cron, to run in its own chat or start a fresh one; schedules survive relaunches, and a run missed while the Mac slept runs late. Agents can also post a macOS notification that opens their chat.
 - **Memory and skills.** Chats start in Drifter's home folder (my agent-memory repo when it's there, otherwise a folder in Mist's app data), whose `memory/` and `skills/` both engines share, along with the skills of any repo a chat works in. They also load every MCP server and claude.ai connector the CLIs load, and Claude chats turn on Remote Control, so I can follow and answer them from claude.ai.
 - **Chats persist.** They save as they run and resume their session when their tab comes back, across relaunches too. The sidebar lists them under Drifter, and the History menu lists recent ones.
@@ -26,7 +26,7 @@ Drifter, Mail and Clipboard are built-in apps that open as ordinary tabs, so the
 
 ### Mail
 
-- **A native mail client** (⇧⌘M) for plain IMAP/SMTP accounts with passwords (a Gmail app password works): three panes, All Inboxes, All Sent, All Trash and All Junk across accounts, search, Mark All as Read, notifications for new mail, and unread counts on its pinned tab. ⌘Z and ⇧⌘Z undo and redo message actions such as delete, archive, move and mark read.
+- **A native mail client** (⇧⌘M) for plain IMAP/SMTP accounts with passwords (a Gmail app password works): three panes, All Inboxes, All Sent, All Trash and All Junk across accounts, search, Mark All as Read, notifications for new mail, and unread counts on its pinned tab. ⌘Z and ⇧⌘Z undo and redo message actions such as delete, archive, move and mark read, and typing while composing.
 - **Rich-text compose** opens inline in a pane, not a window, with fonts, colors, attachments and a rich-text signature per account. Drafts autosave, survive a relaunch, and sync through IMAP.
 - **HTML mail** renders with JavaScript off, with find and body zoom, and attachments show as file cards.
 - **Accounts sync** between Macs through Mist Sync, passwords and signatures included.
@@ -57,7 +57,7 @@ Shares one item, text, an image or a file up to 10 MB, between my Macs through M
 There are no prebuilt releases: Mist is built from source. Requirements: an Apple Silicon Mac on macOS 15 or later and Xcode 27.1. Drifter needs the Claude Code CLI for Claude models and the Codex CLI for GPT models, each signed in, and Gemini CLI with a `GEMINI_API_KEY` in the `.env` of Drifter's home folder (`~/Library/Application Support/com.bulldf.mist/MistAgents/Drifter/`) for Gemini models.
 
 ```sh
-./scripts/download_phi_framework.sh --version v2.18.0  # Chromium framework from Phi's releases into Frameworks/
+./scripts/download_phi_framework.sh --version v2.19.0  # Chromium framework from Phi's releases into Frameworks/
 mist/scripts/install.sh                                # build, install and launch /Applications/Mist.app
 mist/scripts/install.sh --dev                          # or a separate Mist Dev.app with its own settings and data
 ```

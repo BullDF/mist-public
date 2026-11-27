@@ -124,12 +124,19 @@ class MistRowView: NSTableRowView {
         let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self)
         addTrackingArea(area)
         hoverArea = area
+        readHover()
     }
-    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); hovered = true }
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); readHover() }
     override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); hovered = false }
     // A reused or hidden row under the pointer gets no exit.
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); hovered = false }
     override func viewDidHide() { super.viewDidHide(); hovered = false }
+    /// Scrolling rebuilds the area as rows slide under a still pointer, and a rebuilt area sends no exit for a
+    /// pointer it already lost, so every row the pointer crossed stayed shaded: the hover is read from the pointer.
+    private func readHover() {
+        guard let window, !isHiddenOrHasHiddenAncestor else { return }
+        hovered = NSApp.isActive && isFrontmost(at: window.mouseLocationOutsideOfEventStream)
+    }
 }
 
 /// A sidebar row's content, for an outline or table using `MistRowView(style: .sidebar)`: an optional symbol or custom

@@ -189,7 +189,7 @@ final class BrowserAgentPreviewStack: NSView {
     struct Item {
         let tab: Tab
         let mount: BrowserAgentPreviewState.Mount
-        let still: CGImage?
+        var still: CGImage?
         var chat: AgentChatMiniatureView.Source? = nil
         var engine: DrifterEngine? { chat?.engine }
     }
@@ -234,6 +234,12 @@ final class BrowserAgentPreviewStack: NSView {
     }
 
     func card(for tabId: Int) -> BrowserAgentPreviewCard? { cards[tabId] }
+
+    func setImage(_ image: CGImage, for tabId: Int) {
+        guard let index = items.firstIndex(where: { $0.tab.guid == tabId && $0.chat == nil }) else { return }
+        items[index].still = image
+        cards[tabId]?.setImage(image)
+    }
 
     func layoutCards(pageSize: CGSize) {
         let chipHeight = MistButton.Size.regular.height

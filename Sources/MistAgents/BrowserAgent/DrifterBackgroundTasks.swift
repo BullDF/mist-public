@@ -47,6 +47,11 @@ final class DrifterBackgroundTasks {
         running.map { .init(id: $0.id, kind: $0.kind == .command ? .shell : .monitor, description: $0.label) }
     }
 
+    func checkInOutput(for id: String) -> (path: String, tail: String?)? {
+        guard let task = running.first(where: { $0.id == id }) else { return nil }
+        return (task.output.path, task.kind == .command ? Self.outputTail(task.tail, lines: 20, bytes: 2000) : nil)
+    }
+
     func start(kind: Kind, command: String, description: String? = nil, timeout: TimeInterval? = nil) throws -> (taskId: String, outputFile: String) {
         guard let environment else { throw Failure(message: "Mist hasn't finished starting this chat.") }
         guard running.count < 16 else { throw Failure(message: "This chat already runs 16 background tasks; stop one first.") }
@@ -256,18 +261,22 @@ final class DrifterBackgroundTasks {
         }
     }
 
-    private static func duration(_ seconds: TimeInterval) -> String {
+    nonisolated static func duration(_ seconds: TimeInterval) -> String {
         seconds.truncatingRemainder(dividingBy: 60) == 0 ? "\(Int(seconds / 60)) min" : "\(Int(seconds)) s"
     }
 
-    private static func outputTail(_ data: Data) -> String {
+    private static func outputTail(_ data: Data, lines maxLines: Int = 40, bytes maxBytes: Int = 8100) -> String {
         guard !data.isEmpty else { return "(no output)" }
         let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines)
         guard !text.isEmpty else { return "(no output)" }
         let lines = text.components(separatedBy: "\n")
-        var body = lines.suffix(40).joined(separator: "\n")
-        let cut = data.count >= 65536 || lines.count > 40 || body.utf8.count > 8100
-        if body.utf8.count > 8100 { body = String(decoding: Array(body.utf8.suffix(8100)), as: UTF8.self) }
+        var body = lines.suffix(maxLines).joined(separator: "\n")
+        let cut = data.count >= 65536 || lines.count > maxLines || body.utf8.count > maxBytes
+        if body.utf8.count > maxBytes {
+            var bytes = Array(body.utf8.suffix(maxBytes))
+            while String(bytes: bytes, encoding: .utf8) == nil && !bytes.isEmpty { bytes.removeFirst() }
+            body = String(decoding: bytes, as: UTF8.self)
+        }
         return (cut ? "(earlier output is in the output file)\n" : "") + body
     }
 

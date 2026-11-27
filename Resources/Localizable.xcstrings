@@ -36007,6 +36007,90 @@
         }
       }
     },
+    "browser.agent.preview.hideAll": {
+      "comment": "Chat header - Hide this chat's tab preview cards",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide tab previews"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tab-Vorschauen ausblenden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer les aperçus d’onglets"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブのプレビューを非表示"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隐藏标签页预览"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隱藏分頁預覽"
+          }
+        }
+      }
+    },
+    "browser.agent.preview.showAll": {
+      "comment": "Chat header - Show this chat's hidden tab preview cards again",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show tab previews"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tab-Vorschauen einblenden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher les aperçus d’onglets"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タブのプレビューを表示"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示标签页预览"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示分頁預覽"
+          }
+        }
+      }
+    },
     "browser.agent.confirmation.ask": {
       "comment": "Browser Agent - Launch setting or error",
       "extractionState": "extracted_with_value",
@@ -40167,6 +40251,48 @@
           "stringUnit": {
             "state": "translated",
             "value": "監視器「%@」已停止"
+          }
+        }
+      }
+    },
+    "browser.agentChat.taskNotification.checkIn": {
+      "comment": "Row for Mist's check-in on an idle agent chat's background task: %@ is the still-running task's description",
+      "extractionState": "extracted_with_value",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check-in: “%@” still running"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zwischenstand: „%@“ läuft noch"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point d’étape : « %@ » toujours en cours"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "進捗確認：“%@”は実行中です"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "进度检查：“%@”仍在运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "進度檢查：「%@」仍在執行"
           }
         }
       }

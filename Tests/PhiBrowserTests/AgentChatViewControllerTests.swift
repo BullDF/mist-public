@@ -2096,6 +2096,37 @@ final class AgentChatViewControllerTests: XCTestCase {
         XCTAssertTrue(storage.isEqual(to: new))
     }
 
+    func testBackgroundableToolGroupKeepsHeightWhenCommandFitsBesideButton() {
+        let width: CGFloat = 880
+        let command = "echo example"
+        XCTAssertEqual(runningBashGroupHeight(command, width: width, background: { _ in }),
+                       runningBashGroupHeight(command, width: width), accuracy: 1)
+    }
+
+    func testBackgroundableToolGroupWrapsCommandWithoutIncreasingHeight() {
+        let width: CGFloat = 400
+        let command = "printf '%s' alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima"
+        let control = NSHostingController(rootView: Button(AgentChatStrings.runInBackground, action: {})
+            .buttonStyle(.mist(.secondary, size: .regular)))
+        let button = control.sizeThatFits(in: NSSize(width: width, height: 10_000))
+        // The plain card already reserves room for the dot. The button adds its width and the gap before the dot.
+        let narrowWidth = width - button.width - 8
+        let flowed = runningBashGroupHeight(command, width: width, background: { _ in })
+        let narrow = runningBashGroupHeight(command, width: narrowWidth)
+        let short = runningBashGroupHeight("echo example", width: width, background: { _ in })
+        XCTAssertGreaterThan(flowed, short, "The command should wrap beside the button")
+        XCTAssertLessThanOrEqual(flowed, narrow)
+    }
+
+    private func runningBashGroupHeight(_ command: String, width: CGFloat, background: ((String) -> Void)? = nil) -> CGFloat {
+        let tool = AgentChatItem.ToolCall(toolUseId: "bash", name: "Bash", inputSummary: command,
+                                          inputJSON: #"{"command":"\#(command)"}"#, canBackground: true)
+        let host = NSHostingController(rootView: AgentChatToolGroupView(tools: [tool], folder: URL(fileURLWithPath: "/"),
+                                                                        viewState: AgentChatTranscriptViewState(),
+                                                                        background: background))
+        return host.sizeThatFits(in: NSSize(width: width, height: 10_000)).height
+    }
+
     func testStreamingUpdatesHeightsAndExpansion() throws {
         let conversation = longTranscript()
         let scroll = transcriptScroll(conversation)

@@ -428,10 +428,10 @@ extension MistItemRow where Trailing == EmptyView {
     }
 }
 
-/// Content beside a symbol tile at the top of an inner card, with trailing content (a status dot) beside the content's
-/// first line: an activity entry in a log or transcript. A one-line entry's line is centered on the tile. Flat, so a
-/// long list of them stays cheap to draw.
-struct MistTileCard<Content: View, Trailing: View>: View {
+/// An activity entry with a symbol tile, content, optional detail, and trailing content beside the first line.
+/// Plain content and detail share a column. Flow paragraphs start beside the trailing control and wrap underneath it,
+/// with the content view serving as their tap target.
+struct MistTileCard<Content: View, Detail: View, Trailing: View>: View {
     static var tileSide: CGFloat { 28 }
     let symbol: String
     /// The height of the content's first line, which is centered on the tile while the content is one line tall.
@@ -443,78 +443,222 @@ struct MistTileCard<Content: View, Trailing: View>: View {
     /// Whether the content ends in a plain line of text, whose baseline the bottom padding counts from; false when it
     /// ends in a filled line (a diff's tint), which keeps the padding below the fill.
     var endsInText = true
+    var flowText: [AttributedString] = []
     var padding = EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
     @ViewBuilder var content: Content
+    /// Lines following the content, 5 pt below it (the transcript's line spacing); empty detail takes no room.
+    @ViewBuilder var detail: Detail
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        MistTileCardLayout(tileSide: Self.tileSide, firstLineHeight: firstLineHeight, capHeight: capHeight, endsInText: endsInText) {
+        MistTileCardLayout(tileSide: Self.tileSide, firstLineHeight: firstLineHeight, capHeight: capHeight, endsInText: endsInText,
+                           flowsText: !flowText.isEmpty) {
             MistIconTile(content: .symbol(symbol), side: Self.tileSide)
             content.frame(maxWidth: .infinity, alignment: .leading)
-            trailing
+            ForEach(flowText.indices, id: \.self) { paragraph in
+                let tokens = Self.tokens(in: flowText[paragraph])
+                ForEach(tokens.indices, id: \.self) { index in
+                    Text(tokens[index].text)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .layoutValue(key: MistTileCardPart.self, value: .token(paragraph: paragraph, glued: tokens[index].glued))
+                }
+            }
+            detail.frame(maxWidth: .infinity, alignment: .leading).layoutValue(key: MistTileCardPart.self, value: .detail)
+            trailing.layoutValue(key: MistTileCardPart.self, value: .trailing)
         }
         .padding(padding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .mistCardBackground(.inner)
     }
 
-    /// A font's line height, as text views lay out its lines; cached, since rows ask on every render.
-    @MainActor static func lineHeight(_ font: NSFont) -> CGFloat {
+    /// A paragraph's words, each with the spaces after it. A word longer than `MistTileCardFlow.longWord` characters
+    /// comes as one token per character, glued to the one before, so the flow can break it where a line ends.
+    private static func tokens(in paragraph: AttributedString) -> [(text: AttributedString, glued: Bool)] {
+        let characters = paragraph.characters
+        var tokens: [(text: AttributedString, glued: Bool)] = []
+        func append(_ range: Range<AttributedString.Index>) {
+            let wordEnd = characters[range].lastIndex { !$0.isWhitespace }.map { characters.index(after: $0) } ?? range.upperBound
+            guard characters.distance(from: range.lowerBound, to: wordEnd) > MistTileCardFlow.longWord else {
+                tokens.append((AttributedString(paragraph[range]), false))
+                return
+            }
+            var index = range.lowerBound
+            while index < wordEnd {
+                let next = characters.index(after: index)
+                let end = next == wordEnd ? range.upperBound : next
+                tokens.append((AttributedString(paragraph[index..<end]), index != range.lowerBound))
+                index = next
+            }
+        }
+        var start = characters.startIndex
+        var inSpaces = false
+        var hasWord = false
+        for index in characters.indices {
+            let isSpace = characters[index].isWhitespace
+            if !isSpace {
+                if inSpaces && hasWord {
+                    append(start..<index)
+                    start = index
+                }
+                hasWord = true
+            }
+            inSpaces = isSpace
+        }
+        if start < characters.endIndex {
+            append(start..<characters.endIndex)
+        }
+        return tokens
+    }
+}
+
+/// A font's line height, as text views lay out its lines, for a `MistTileCard`'s `firstLineHeight`; cached, since rows
+/// ask on every render.
+@MainActor enum MistTileCardMetrics {
+    private static var lineHeights: [String: CGFloat] = [:]
+
+    static func lineHeight(_ font: NSFont) -> CGFloat {
         let key = "\(font.fontName) \(font.pointSize)"
-        if let cached = MistTileCardLineHeights.values[key] { return cached }
+        if let cached = lineHeights[key] { return cached }
         let height = ceil(NSLayoutManager().defaultLineHeight(for: font))
-        MistTileCardLineHeights.values[key] = height
+        lineHeights[key] = height
         return height
     }
 }
 
-@MainActor private enum MistTileCardLineHeights {
-    static var values: [String: CGFloat] = [:]
-}
-
-extension MistTileCard where Trailing == EmptyView {
-    init(symbol: String, firstLineHeight: CGFloat, capHeight: CGFloat? = nil,
-         padding: EdgeInsets = EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12), @ViewBuilder content: () -> Content) {
-        self.init(symbol: symbol, firstLineHeight: firstLineHeight, capHeight: capHeight, padding: padding,
-                  content: content, trailing: { EmptyView() })
+extension MistTileCard where Detail == EmptyView {
+    init(symbol: String, firstLineHeight: CGFloat, capHeight: CGFloat? = nil, endsInText: Bool = true,
+         padding: EdgeInsets = EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12),
+         @ViewBuilder content: () -> Content, @ViewBuilder trailing: () -> Trailing) {
+        self.init(symbol: symbol, firstLineHeight: firstLineHeight, capHeight: capHeight, endsInText: endsInText, padding: padding,
+                  content: content, detail: { EmptyView() }, trailing: trailing)
     }
 }
 
-/// Lays out a `MistTileCard`'s tile, content and trailing content in a row: the tile at the top, the content beside
-/// it (its first line centered on the tile, or its text block starting at the tile's top once it runs past a line)
-/// and the trailing content centered on the content's first line, but never above the tile's top, so a control taller
-/// than the line (Run in background) keeps the card's padding.
+extension MistTileCard where Detail == EmptyView, Trailing == EmptyView {
+    init(symbol: String, firstLineHeight: CGFloat, capHeight: CGFloat? = nil,
+         padding: EdgeInsets = EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12), @ViewBuilder content: () -> Content) {
+        self.init(symbol: symbol, firstLineHeight: firstLineHeight, capHeight: capHeight, padding: padding,
+                  content: content, detail: { EmptyView() }, trailing: { EmptyView() })
+    }
+}
+
+private enum MistTileCardPart: LayoutValueKey, Equatable {
+    case content, token(paragraph: Int, glued: Bool), detail, trailing
+    static let defaultValue = MistTileCardPart.content
+}
+
+/// Centers a single line on the tile and aligns a taller text block's capitals with the tile's top. The trailing
+/// content stays beside the first line and never rises above the tile. Plain content and detail are measured in the
+/// narrowed column. Flow tokens use that column beside the control and the full column below it, as does the detail.
 private struct MistTileCardLayout: Layout {
     let tileSide: CGFloat
     let firstLineHeight: CGFloat
     let capHeight: CGFloat?
     let endsInText: Bool
+    let flowsText: Bool
     private let spacing: CGFloat = 10
-
+    private let lineSpacing: CGFloat = 5
     private struct Frames {
         var size: CGSize
         var content: CGRect
+        var detail: CGRect?
         var trailing: CGRect?
+        var tokens: [MistTileCardFlow.Placement] = []
     }
 
     private func frames(_ width: CGFloat?, _ subviews: Subviews) -> Frames {
-        let trailing = subviews.count > 2 ? subviews[2].sizeThatFits(.unspecified) : nil
-        let besideContent = tileSide + spacing + (trailing.map { spacing + $0.width } ?? 0)
-        let contentProposal = ProposedViewSize(width: width.map { max(0, $0 - besideContent) }, height: nil)
-        let content = subviews[1].dimensions(in: contentProposal)
-        let firstBaseline = content[.firstTextBaseline], lastBaseline = content[.lastTextBaseline]
-        let top: CGFloat
-        if let capHeight, lastBaseline > firstBaseline + 1 {
-            top = capHeight - firstBaseline
-        } else {
-            top = max(0, (tileSide - firstLineHeight) / 2)
+        let detailView = subviews.first { $0[MistTileCardPart.self] == .detail }
+        let trailing = subviews.first { $0[MistTileCardPart.self] == .trailing }.map { $0.sizeThatFits(.unspecified) }
+            .flatMap { $0.width > 0 ? $0 : nil }
+        let besideTile = tileSide + spacing
+        let besideTrailing = besideTile + (trailing.map { spacing + $0.width } ?? 0)
+        if flowsText {
+            return flowed(width, subviews, detail: detailView, trailing: trailing, inset: besideTile)
         }
-        let bottom = capHeight != nil && endsInText ? lastBaseline : content.height
+        func measure(_ view: LayoutSubview, inset: CGFloat) -> ViewDimensions {
+            view.dimensions(in: ProposedViewSize(width: width.map { max(0, $0 - inset) }, height: nil))
+        }
+        let content = measure(subviews[1], inset: besideTrailing)
+        let detail = detailView.map { measure($0, inset: besideTrailing) }.flatMap { $0.height > 0 ? $0 : nil }
+        return stacked(content, detail, trailing: trailing, width: width ?? besideTrailing + content.width)
+    }
+
+    /// The content's top beside the tile: a one-line text block's line centered on the tile, a longer one's first
+    /// capitals level with the tile's top.
+    private func top(_ content: ViewDimensions, multiline: Bool) -> CGFloat {
+        if let capHeight, multiline || content[.lastTextBaseline] > content[.firstTextBaseline] + 1 {
+            return capHeight - content[.firstTextBaseline]
+        }
+        return max(0, (tileSide - firstLineHeight) / 2)
+    }
+
+    /// Where the bottom padding counts from for a text block placed at `y`.
+    private func bottom(_ text: ViewDimensions, at y: CGFloat) -> CGFloat {
+        y + (capHeight != nil && endsInText ? text[.lastTextBaseline] : text.height)
+    }
+
+    private func stacked(_ content: ViewDimensions, _ detail: ViewDimensions?, trailing: CGSize?, width: CGFloat) -> Frames {
+        let top = top(content, multiline: detail != nil)
+        let detailFrame = detail.map { CGRect(x: tileSide + spacing, y: top + content.height + lineSpacing, width: $0.width, height: $0.height) }
+        let textBottom = max(tileSide, detail.map { bottom($0, at: detailFrame!.minY) } ?? bottom(content, at: top))
+        let trailingFrame = trailing.map {
+            CGRect(x: width - $0.width, y: max(0, top + (firstLineHeight - $0.height) / 2),
+                   width: $0.width, height: $0.height)
+        }
         // A whole-point height keeps the card's outline crisp.
-        let size = CGSize(width: width ?? besideContent + content.width, height: max(tileSide, (top + bottom).rounded()))
-        return Frames(size: size, content: CGRect(x: tileSide + spacing, y: top, width: content.width, height: content.height),
-                      trailing: trailing.map { CGRect(x: size.width - $0.width, y: max(0, top + (firstLineHeight - $0.height) / 2),
-                                                       width: $0.width, height: $0.height) })
+        return Frames(size: CGSize(width: width, height: textBottom.rounded()),
+                      content: CGRect(x: tileSide + spacing, y: top, width: content.width, height: content.height),
+                      detail: detailFrame, trailing: trailingFrame)
+    }
+
+    private func flowed(_ offeredWidth: CGFloat?, _ subviews: Subviews, detail detailView: LayoutSubview?,
+                        trailing: CGSize?, inset: CGFloat) -> Frames {
+        let tokenViews = subviews.dropFirst(2).compactMap { view -> (LayoutSubview, Int, Bool)? in
+            guard case let .token(paragraph, glued) = view[MistTileCardPart.self] else { return nil }
+            return (view, paragraph, glued)
+        }
+        let tokens = tokenViews.map { view, paragraph, glued in
+            MistTileCardFlow.Token(paragraph: paragraph, glued: glued, metrics: metrics(of: view, width: nil))
+        }
+        let trailingInset = trailing.map { spacing + $0.width } ?? 0
+        let idealWidth = { inset + trailingInset + (Dictionary(grouping: tokens, by: \.paragraph).values
+            .map { $0.reduce(0) { $0 + $1.metrics.size.width } }.max() ?? 0) }
+        let width = offeredWidth.flatMap { $0.isFinite ? $0 : nil } ?? idealWidth()
+        let fullWidth = max(0, width - inset)
+        let narrowWidth = max(0, fullWidth - trailingInset)
+        let detail = detailView.map { $0.dimensions(in: ProposedViewSize(width: fullWidth, height: nil)) }
+            .flatMap { $0.height > 0 ? $0 : nil }
+        func layout(at top: CGFloat) -> (MistTileCardFlow.Result, CGRect?) {
+            let trailingFrame = trailing.map {
+                CGRect(x: width - $0.width, y: max(0, top + (firstLineHeight - $0.height) / 2),
+                       width: $0.width, height: $0.height)
+            }
+            let flow = MistTileCardFlow.layout(tokens, fullWidth: fullWidth, narrowWidth: narrowWidth,
+                                               trailing: trailingFrame, capHeight: capHeight, top: top, lineSpacing: lineSpacing) {
+                metrics(of: tokenViews[$0].0, width: $1)
+            }
+            return (flow, trailingFrame)
+        }
+        var (flow, trailingFrame) = layout(at: max(0, (tileSide - firstLineHeight) / 2))
+        if let capHeight, let firstLine = flow.lines.first, flow.isMultiline || detail != nil {
+            (flow, trailingFrame) = layout(at: capHeight - firstLine.firstBaseline)
+        }
+        let content = flow.lines.reduce(CGRect.null) { $0.union($1.frame) }
+        let detailY = max(flow.lines.last?.frame.maxY ?? 0, trailingFrame?.maxY ?? 0) + lineSpacing
+        let detailFrame = detail.map { CGRect(x: inset, y: detailY, width: fullWidth, height: $0.height) }
+        let textBottom = detail.map { bottom($0, at: detailY) }
+            ?? flow.lines.last.map { capHeight != nil && endsInText ? $0.lastBaselineY : $0.frame.maxY } ?? 0
+        let height = max(tileSide, trailingFrame?.maxY ?? 0, textBottom)
+        return Frames(size: CGSize(width: width, height: height.rounded()),
+                      content: content.isNull ? CGRect(x: inset, y: 0, width: 0, height: 0) : content.offsetBy(dx: inset, dy: 0),
+                      detail: detailFrame, trailing: trailingFrame, tokens: flow.placements)
+    }
+
+    private func metrics(of view: LayoutSubview, width: CGFloat?) -> MistTileCardFlow.Metrics {
+        let dimensions = view.dimensions(in: ProposedViewSize(width: width, height: nil))
+        return .init(size: CGSize(width: dimensions.width, height: dimensions.height),
+                     firstBaseline: dimensions[.firstTextBaseline], lastBaseline: dimensions[.lastTextBaseline])
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -523,12 +667,143 @@ private struct MistTileCardLayout: Layout {
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let frames = frames(bounds.width, subviews)
-        subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: tileSide, height: tileSide))
-        subviews[1].place(at: CGPoint(x: bounds.minX + frames.content.minX, y: bounds.minY + frames.content.minY),
-                          proposal: ProposedViewSize(width: frames.content.width, height: nil))
-        if let trailing = frames.trailing {
-            subviews[2].place(at: CGPoint(x: bounds.minX + trailing.minX, y: bounds.minY + trailing.minY), proposal: ProposedViewSize(trailing.size))
+        func place(_ subview: LayoutSubview, _ frame: CGRect, proposal: ProposedViewSize) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          proposal: proposal)
         }
+        subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: tileSide, height: tileSide))
+        place(subviews[1], frames.content,
+              proposal: ProposedViewSize(width: frames.content.width, height: flowsText ? frames.content.height : nil))
+        let empty = CGRect(x: frames.content.minX, y: frames.content.maxY, width: 0, height: 0)
+        var tokenIndex = 0
+        for subview in subviews.dropFirst(2) {
+            switch subview[MistTileCardPart.self] {
+            case .token:
+                let token = frames.tokens[tokenIndex]
+                let frame = token.frame.offsetBy(dx: tileSide + spacing, dy: 0)
+                // Use the same proposal as measurement so a token keeps its line breaks.
+                place(subview, frame, proposal: ProposedViewSize(width: token.proposedWidth, height: nil))
+                tokenIndex += 1
+            case .detail:
+                let frame = frames.detail ?? empty
+                place(subview, frame, proposal: ProposedViewSize(width: frame.width, height: nil))
+            case .trailing, .content:
+                let frame = frames.trailing ?? empty
+                place(subview, frame, proposal: ProposedViewSize(width: frame.width,
+                      height: subview[MistTileCardPart.self] == .trailing ? frame.height : nil))
+            }
+        }
+    }
+}
+
+enum MistTileCardFlow {
+    struct Metrics {
+        var size: CGSize
+        var firstBaseline: CGFloat
+        var lastBaseline: CGFloat
+    }
+
+    /// Words longer than this many characters break between any two characters where a line ends.
+    static let longWord = 16
+
+    struct Token {
+        var paragraph: Int
+        /// The token continues the previous token's word: a character of a long word.
+        var glued = false
+        var metrics: Metrics
+    }
+
+    struct Placement {
+        var frame: CGRect
+        var proposedWidth: CGFloat?
+    }
+
+    struct Line {
+        var frame: CGRect
+        var firstBaseline: CGFloat
+        var lastBaselineY: CGFloat
+    }
+
+    struct Result {
+        var placements: [Placement] = []
+        var lines: [Line] = []
+
+        var isMultiline: Bool {
+            lines.count > 1 || lines.contains { $0.lastBaselineY > $0.frame.minY + $0.firstBaseline + 1 }
+        }
+    }
+
+    static func layout(_ tokens: [Token], fullWidth: CGFloat, narrowWidth: CGFloat, trailing: CGRect?,
+                       capHeight: CGFloat?, top: CGFloat, lineSpacing: CGFloat,
+                       measure: (Int, CGFloat) -> Metrics) -> Result {
+        var result = Result()
+        var y = top
+        var line: [Int] = []
+        var used: CGFloat = 0
+        var lineWidth: CGFloat = 0
+        /// A line is narrow while its capitals would sit level with the trailing content or within a line spacing below it.
+        func width(forLineStartingWith index: Int) -> CGFloat {
+            let capitalsTop = y + (capHeight.map { tokens[index].metrics.firstBaseline - $0 } ?? 0)
+            return trailing.map { capitalsTop < $0.maxY + lineSpacing } == true ? narrowWidth : fullWidth
+        }
+        func add(_ index: Int) {
+            if line.isEmpty { lineWidth = width(forLineStartingWith: index) }
+            line.append(index)
+            used += tokens[index].metrics.size.width
+        }
+        /// Places the current line's tokens on their shared first baseline.
+        func finishLine() {
+            guard !line.isEmpty else { return }
+            let baseline = line.map { tokens[$0].metrics.firstBaseline }.max() ?? 0
+            let descent = line.map { tokens[$0].metrics.size.height - tokens[$0].metrics.firstBaseline }.max() ?? 0
+            var x: CGFloat = 0
+            for index in line {
+                let metrics = tokens[index].metrics
+                let frame = CGRect(origin: CGPoint(x: x, y: y + baseline - metrics.firstBaseline), size: metrics.size)
+                result.placements.append(Placement(frame: frame, proposedWidth: nil))
+                x += metrics.size.width
+            }
+            let frame = CGRect(x: 0, y: y, width: used, height: baseline + descent)
+            result.lines.append(Line(frame: frame, firstBaseline: baseline, lastBaselineY: y + baseline))
+            y = frame.maxY
+            line = []
+            used = 0
+        }
+        var paragraph = tokens.first?.paragraph
+        var start = 0
+        while start < tokens.count {
+            // A word: this token and the glued tokens continuing it.
+            var end = start + 1
+            while end < tokens.count, tokens[end].glued, tokens[end].paragraph == tokens[start].paragraph { end += 1 }
+            if tokens[start].paragraph != paragraph {
+                finishLine()
+                y += lineSpacing
+                paragraph = tokens[start].paragraph
+            }
+            let wordWidth = tokens[start..<end].reduce(0) { $0 + $1.metrics.size.width }
+            if !line.isEmpty && used + wordWidth > lineWidth { finishLine() }
+            if line.isEmpty { lineWidth = width(forLineStartingWith: start) }
+            if used + wordWidth <= lineWidth {
+                for index in start..<end { add(index) }
+            } else if end - start == 1 {
+                // A single token wider than an empty line wraps inside itself.
+                let wrapped = measure(start, lineWidth)
+                let frame = CGRect(x: 0, y: y, width: lineWidth, height: wrapped.size.height)
+                result.placements.append(Placement(frame: frame, proposedWidth: lineWidth))
+                result.lines.append(Line(frame: frame, firstBaseline: wrapped.firstBaseline, lastBaselineY: y + wrapped.lastBaseline))
+                y = frame.maxY
+            } else {
+                // A long word wider than an empty line fills each line with its characters, and the next word follows
+                // its last character.
+                for index in start..<end {
+                    if !line.isEmpty && used + tokens[index].metrics.size.width > lineWidth { finishLine() }
+                    add(index)
+                }
+            }
+            start = end
+        }
+        finishLine()
+        return result
     }
 }
 
